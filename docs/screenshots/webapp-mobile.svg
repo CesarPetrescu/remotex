@@ -1,0 +1,26 @@
+<svg width="900" height="840" viewBox="0 0 900 840" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Remotex mobile webapp preview">
+  <rect width="900" height="840" rx="16" fill="#F4F1EA"/>
+
+  <rect x="290" y="40" width="320" height="760" rx="38" fill="#FFFFFF" stroke="#1A1A1A" stroke-width="3"/>
+  <rect x="395" y="56" width="110" height="18" rx="9" fill="#1A1A1A"/>
+
+  <rect x="316" y="96" width="268" height="54" rx="8" fill="#EBE6DA"/>
+  <text x="334" y="128" fill="#1A1A1A" font-family="monospace" font-size="16">Mobile Web · Session List</text>
+
+  <rect x="316" y="168" width="268" height="110" rx="10" fill="#F4F1EA" stroke="#9A958A"/>
+  <rect x="316" y="292" width="268" height="110" rx="10" fill="#F4F1EA" stroke="#9A958A"/>
+  <rect x="316" y="416" width="268" height="110" rx="10" fill="#F4F1EA" stroke="#9A958A"/>
+
+  <rect x="316" y="550" width="268" height="160" rx="16" fill="#111111"/>
+  <text x="336" y="582" fill="#E8DFD0" font-family="monospace" font-size="14">Approval sheet</text>
+  <rect x="336" y="598" width="228" height="12" rx="6" fill="#6A6660"/>
+  <rect x="336" y="620" width="190" height="12" rx="6" fill="#6A6660"/>
+  <rect x="336" y="650" width="228" height="36" rx="8" fill="#D97642"/>
+
+  <text x="316" y="738" fill="#6B6B66" font-family="monospace" font-size="12">Illustrative preview generated from wireframe structure (mobile).</text>
+
+  <text x="70" y="180" fill="#3A3A3A" font-family="monospace" font-size="15">Variant focus:</text>
+  <text x="70" y="208" fill="#6B6B66" font-family="monospace" font-size="14">• session list</text>
+  <text x="70" y="236" fill="#6B6B66" font-family="monospace" font-size="14">• approval bottom sheet</text>
+  <text x="70" y="264" fill="#6B6B66" font-family="monospace" font-size="14">• terminal cockpit</text>
+</svg>
