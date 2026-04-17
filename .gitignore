@@ -3,3 +3,13 @@ dist
 .DS_Store
 .vite
 *.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Prototype runtime
+relay.db
+demo-config.toml
