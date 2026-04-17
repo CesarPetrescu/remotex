@@ -1,33 +1,61 @@
-# Remotex Wireframes
+# Remotex
 
-A low-fidelity React prototype exploring the UX of **Remotex**, a remote-control client for Codex daemons.
+Remotex is a remote-control client for [Codex](https://github.com/openai/codex)
+daemons. It lets you reach the Codex sessions running on your home rig,
+work laptop, or a rented server from any browser — desktop or mobile —
+through a small relay you control.
 
-This project is focused on interaction design and information architecture, with four interface surfaces and three variants per surface:
+This repository holds two things that live side by side:
 
-- Systems architecture
-- Desktop web
-- Mobile web
-- Android
+- **`src/` — the wireframe prototype.** A React + Vite app that explores
+  the UX across four surfaces (systems, desktop web, mobile web, Android)
+  with three variants each. Everything is low-fidelity and intentionally
+  sketchy; it is a conversation piece, not a finished UI.
+- **`prototype/` — the working vertical slice.** A real relay, a real
+  daemon, and a single-file web UI that talk to each other end-to-end.
+  Codex itself is currently mocked behind an adapter; see
+  [`prototype/README.md`](prototype/README.md) for the full story.
 
 ## Screenshots
 
-### Desktop Web (illustrative preview)
+Captured from the live wireframe app via Playwright (Chromium,
+`npm run screenshots`). Re-run that script any time the UI changes and
+the PNGs will update.
 
-![Remotex desktop web preview](docs/screenshots/webapp-desktop.svg)
+### Desktop web
 
-### Mobile Web (illustrative preview)
+![Remotex desktop web wireframe](docs/screenshots/webapp-desktop.png)
 
-![Remotex mobile web preview](docs/screenshots/webapp-mobile.svg)
+1440 × 900 viewport · all three desktop variants stacked (tri-pane
+workspace, multi-session console, deployment / machines pool).
 
-> Note: These visuals are static preview assets derived from the current wireframe structure.
+### Mobile web
 
-## Tech Stack
+![Remotex mobile web wireframe](docs/screenshots/webapp-mobile.png)
+
+390 × 844 viewport · the three mobile variants stacked (card stack,
+approval sheet, live turn view).
+
+## Surfaces covered by the wireframes
+
+| Surface      | What it explores                                                    |
+| ------------ | ------------------------------------------------------------------- |
+| Systems      | Topology, trust boundaries, relay / daemon / client roles.          |
+| Desktop web  | Machine list → session → live turn, approvals, diffs, settings.     |
+| Mobile web   | One-hand card stack, approval sheets, compact live turn view.       |
+| Android      | Native-feeling variants of the mobile flow.                         |
+
+Each surface ships three variants so tradeoffs are visible side by side
+instead of hidden behind design-doc prose.
+
+## Tech stack
 
 - React 18
 - Vite 5
-- Plain CSS
+- Plain CSS (no component library)
+- Playwright (dev-only, for the screenshot script)
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
@@ -40,13 +68,14 @@ This project is focused on interaction design and information architecture, with
 npm install
 ```
 
-### Run in development
+### Run the wireframes in development
 
 ```bash
 npm run dev
 ```
 
-By default, Vite serves the app at `http://localhost:5173`.
+Vite serves the app at `http://localhost:5173`. Your tab selection and
+tweaks panel state persist in `localStorage`.
 
 ### Build for production
 
@@ -54,24 +83,57 @@ By default, Vite serves the app at `http://localhost:5173`.
 npm run build
 ```
 
-### Preview production build
+### Preview the production build
 
 ```bash
 npm run preview
 ```
 
-## Project Structure
+### Regenerate the README screenshots
 
-- `src/App.jsx` — App shell, tab navigation, and tweak controls.
-- `src/panels/SystemsPanel.jsx` — System topology and trust flows.
-- `src/panels/DesktopPanel.jsx` — Desktop workspace wireframes.
-- `src/panels/MobilePanel.jsx` — Mobile workflow wireframes.
-- `src/panels/AndroidPanel.jsx` — Android-specific wireframes.
-- `src/styles.css` — Global design tokens and layout styles.
-- `docs/screenshots/` — README preview images.
+With the dev server running:
 
-## Current Status
+```bash
+npm run screenshots
+```
 
-- Prototype / exploration phase (`v0.1`)
-- Not production-ready
-- Designed for rapid iteration and layout discussion
+This drives a headless Chromium via Playwright, visits each relevant
+tab, and writes PNGs into `docs/screenshots/`. The script expects the
+dev server on `http://localhost:5173`; override with
+`URL=http://host:port npm run screenshots`.
+
+## Project layout
+
+```
+.
+├── src/
+│   ├── App.jsx                app shell, tab nav, tweaks panel
+│   ├── main.jsx               React entry
+│   ├── styles.css             design tokens + layout
+│   └── panels/
+│       ├── SystemsPanel.jsx
+│       ├── DesktopPanel.jsx
+│       ├── MobilePanel.jsx
+│       └── AndroidPanel.jsx
+├── prototype/                 working relay + daemon + web UI slice
+├── docs/
+│   └── screenshots/           README images (PNG, regenerated by script)
+├── scripts/
+│   └── capture-screenshots.mjs  Playwright screenshot driver
+├── index.html
+├── vite.config.js
+└── package.json
+```
+
+## Status
+
+- `v0.1` — exploration phase.
+- Wireframes are intentionally low-fidelity; nothing here is a spec.
+- The prototype slice works end-to-end against a mock Codex adapter;
+  wiring it to a real `codex app-server` is the next big step.
+- Expect surfaces, variants, and the relay protocol to keep moving.
+
+## License
+
+No license has been chosen yet. Treat the repository as
+"all rights reserved" until one is added.
