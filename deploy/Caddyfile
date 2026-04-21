@@ -1,0 +1,13 @@
+{
+	# Set ACME email via env when running publicly, e.g.
+	# ACME_EMAIL=you@example.com docker compose --profile tls up -d
+	email {$ACME_EMAIL:you@example.invalid}
+}
+
+{$REMOTEX_HOSTNAME:localhost} {
+	encode gzip
+
+	# WebSocket upgrade is transparent through reverse_proxy; the relay
+	# owns its own auth and framing.
+	reverse_proxy relay:8080
+}

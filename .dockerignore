@@ -1,0 +1,16 @@
+**/.git
+**/.github
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+**/.venv
+**/.ruff_cache
+**/.pytest_cache
+**/.mypy_cache
+**/.vite
+**/.idea
+**/.vscode
+**/relay.db*
+**/demo-config.toml
+docs/screenshots/*.png

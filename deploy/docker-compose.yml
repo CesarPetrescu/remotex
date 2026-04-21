@@ -1,0 +1,52 @@
+name: remotex
+
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.relay
+    image: remotex/relay:local
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - relay-data:/data
+    ports:
+      # Bind to localhost only by default; front with Caddy (profile `tls`)
+      # or your own reverse proxy for anything public.
+      - "127.0.0.1:8080:8080"
+    networks:
+      - remotex
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - relay
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      REMOTEX_HOSTNAME: ${REMOTEX_HOSTNAME:-localhost}
+    networks:
+      - remotex
+
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  remotex:
+    driver: bridge
