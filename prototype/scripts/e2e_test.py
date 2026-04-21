@@ -23,7 +23,6 @@ from aiohttp import web
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from daemon.adapters import MockCodexAdapter  # noqa: E402
 from daemon.client import DaemonClient  # noqa: E402
 from daemon.config import Config  # noqa: E402
 from relay.app import DEMO_BRIDGE_TOKEN, DEMO_USER_TOKEN, make_app  # noqa: E402

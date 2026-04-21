@@ -16,7 +16,7 @@ import shlex
 import time
 import uuid
 from dataclasses import dataclass
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator
 
 
 @dataclass

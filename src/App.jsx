@@ -25,7 +25,7 @@ export default function App() {
     try {
       const saved = localStorage.getItem(PERSIST_TAB);
       if (saved && TABS.some((t) => t.key === saved)) return saved;
-    } catch (e) {}
+    } catch {}
     return 'sys';
   });
 
@@ -33,7 +33,7 @@ export default function App() {
   const [tweaksOpen, setTweaksOpen] = useState(false);
 
   useEffect(() => {
-    try { localStorage.setItem(PERSIST_TAB, active); } catch (e) {}
+    try { localStorage.setItem(PERSIST_TAB, active); } catch {}
   }, [active]);
 
   useEffect(() => {

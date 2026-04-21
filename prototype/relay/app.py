@@ -22,7 +22,6 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
-from typing import Any
 
 from aiohttp import WSMsgType, web
 

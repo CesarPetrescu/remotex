@@ -14,7 +14,7 @@ async function capture(tabKey, viewport, filename, deviceScaleFactor = 2) {
   const page = await context.newPage();
 
   await page.addInitScript((key) => {
-    try { localStorage.setItem('remotex.tab', key); } catch (e) {}
+    try { localStorage.setItem('remotex.tab', key); } catch {}
   }, tabKey);
 
   await page.goto(URL, { waitUntil: 'networkidle' });

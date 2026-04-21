@@ -8,7 +8,7 @@ from typing import Awaitable, Callable
 
 import aiohttp
 
-from .adapters import SessionAdapter, SessionEvent, build_adapter
+from .adapters import SessionAdapter, build_adapter
 from .config import Config
 
 log = logging.getLogger("daemon.client")
