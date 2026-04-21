@@ -5,7 +5,17 @@ import globals from 'globals';
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**', 'prototype/**', 'docs/**'],
+    ignores: [
+      'dist/**',
+      '**/dist/**',
+      'node_modules/**',
+      '**/node_modules/**',
+      'prototype/**',
+      'apps/**',
+      'android/**',
+      'deploy/**',
+      'docs/**',
+    ],
   },
   js.configs.recommended,
   {

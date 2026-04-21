@@ -99,7 +99,15 @@ export default function App() {
               : 'no session'}
           </div>
           <div className="stream">
-            <EventStream events={session.events} pending={session.pending} />
+            <EventStream
+              events={session.events}
+              pending={session.pending}
+              placeholder={
+                session.status === 'connected'
+                  ? 'send a prompt to start…'
+                  : 'Load hosts, pick one, open a session.'
+              }
+            />
           </div>
           <Composer
             disabled={session.status !== 'connected' || session.pending}

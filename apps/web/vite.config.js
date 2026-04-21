@@ -1,16 +1,19 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Dev server proxies /api and /ws to the relay running on :8080.
-// Override with VITE_RELAY_URL at build time to point production builds
-// at a different origin.
+// Dev server proxies /api and /ws to the relay. Override the target
+// port with RELAY_PORT=... if your relay doesn't sit on :8080.
+const relayPort = process.env.RELAY_PORT || '8080';
+const relayHttp = `http://127.0.0.1:${relayPort}`;
+const relayWs = `ws://127.0.0.1:${relayPort}`;
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5174,
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8080', changeOrigin: true },
-      '/ws': { target: 'ws://127.0.0.1:8080', ws: true, changeOrigin: true },
+      '/api': { target: relayHttp, changeOrigin: true },
+      '/ws': { target: relayWs, ws: true, changeOrigin: true },
     },
   },
 });

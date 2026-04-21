@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-export default function EventStream({ events, pending }) {
+export default function EventStream({ events, pending, placeholder }) {
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -8,7 +8,7 @@ export default function EventStream({ events, pending }) {
   }, [events]);
 
   if (!events.length) {
-    return <div className="empty">Load hosts, pick one, open a session.</div>;
+    return <div className="empty">{placeholder || 'Load hosts, pick one, open a session.'}</div>;
   }
 
   return (
