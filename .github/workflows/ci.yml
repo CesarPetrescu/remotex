@@ -14,39 +14,63 @@ jobs:
   web-lint:
     name: Web · ESLint
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        workspace:
+          - { name: wireframes, dir: "." }
+          - { name: client, dir: "apps/web" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-      - run: npm ci
-      - run: npm run lint
+          cache-dependency-path: ${{ matrix.workspace.dir }}/package-lock.json
+      - working-directory: ${{ matrix.workspace.dir }}
+        run: npm ci
+      - working-directory: ${{ matrix.workspace.dir }}
+        run: npm run lint
 
   web-build:
     name: Web · Vite build
     runs-on: ubuntu-latest
     needs: web-lint
+    strategy:
+      matrix:
+        workspace:
+          - { name: wireframes, dir: "." }
+          - { name: client, dir: "apps/web" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-      - run: npm ci
-      - run: npm run build
+          cache-dependency-path: ${{ matrix.workspace.dir }}/package-lock.json
+      - working-directory: ${{ matrix.workspace.dir }}
+        run: npm ci
+      - working-directory: ${{ matrix.workspace.dir }}
+        run: npm run build
 
   web-audit:
     name: Web · npm audit (prod)
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        workspace:
+          - { name: wireframes, dir: "." }
+          - { name: client, dir: "apps/web" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-      - run: npm ci
-      - run: npm audit --omit=dev
+          cache-dependency-path: ${{ matrix.workspace.dir }}/package-lock.json
+      - working-directory: ${{ matrix.workspace.dir }}
+        run: npm ci
+      - working-directory: ${{ matrix.workspace.dir }}
+        run: npm audit --omit=dev
 
   backend-lint:
     name: Backend · ruff
