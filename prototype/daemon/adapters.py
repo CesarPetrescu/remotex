@@ -182,19 +182,21 @@ class StdioCodexAdapter(SessionAdapter):
     """Bridges `codex app-server` stdio JSON-RPC onto relay SessionEvents.
 
     Lifetime = one relay session = one Codex thread. The adapter performs
-    the initialize → initialized → thread/start handshake on ``start()``,
-    then stays resident; each client ``turn-start`` frame maps to one
-    ``turn/start`` request and the resulting notification stream is
-    forwarded until ``turn/completed`` arrives.
+    the initialize → initialized → thread/start (or thread/resume) on
+    ``start()``, then stays resident; each client ``turn-start`` frame
+    maps to one ``turn/start`` request and the resulting notification
+    stream is forwarded until ``turn/completed`` arrives.
     """
 
     def __init__(
         self,
         codex_binary: str = "codex",
         default_cwd: str | None = None,
+        resume_thread_id: str | None = None,
     ) -> None:
         self.binary = codex_binary
         self._cwd = default_cwd or os.path.expanduser("~")
+        self._resume_thread_id = resume_thread_id
         self._proc: asyncio.subprocess.Process | None = None
         self._queue: asyncio.Queue[SessionEvent | None] = asyncio.Queue()
         self._reader_task: asyncio.Task | None = None
@@ -231,11 +233,21 @@ class StdioCodexAdapter(SessionAdapter):
         model_hint = init.get("userAgent", "codex app-server")
         await self._notify("initialized", {})
 
-        thread = await self._request("thread/start", {
-            "cwd": self._cwd,
-            "ephemeral": False,
-        })
-        self._thread_id = thread["thread"]["id"]
+        if self._resume_thread_id:
+            # Reattach to an existing thread from disk so prior turns are
+            # in codex's context window.
+            resp = await self._request("thread/resume", {
+                "threadId": self._resume_thread_id,
+            })
+            thread = {"thread": resp.get("thread", {"id": self._resume_thread_id}),
+                      "model": resp.get("model"),
+                      "cwd": resp.get("cwd", self._cwd)}
+        else:
+            thread = await self._request("thread/start", {
+                "cwd": self._cwd,
+                "ephemeral": False,
+            })
+        self._thread_id = thread["thread"].get("id", self._resume_thread_id)
         # Enable streamed reasoning summaries for every turn by default.
         self._reasoning_summary = "auto"
         await self._queue.put(SessionEvent("session-started", {
@@ -531,10 +543,99 @@ def _summarize_reasoning(content) -> str:
     return ""
 
 
-def build_adapter(mode: str, codex_binary: str, default_cwd: str = "") -> SessionAdapter:
+def build_adapter(
+    mode: str,
+    codex_binary: str,
+    default_cwd: str = "",
+    resume_thread_id: str | None = None,
+) -> SessionAdapter:
     mode = (mode or "stdio").lower()
     if mode == "mock":
         return MockCodexAdapter()
     if mode == "stdio":
-        return StdioCodexAdapter(codex_binary=codex_binary, default_cwd=default_cwd or None)
+        return StdioCodexAdapter(
+            codex_binary=codex_binary,
+            default_cwd=default_cwd or None,
+            resume_thread_id=resume_thread_id,
+        )
     raise ValueError(f"unknown adapter mode: {mode!r}")
+
+
+# ---------------------------------------------------------------------------
+# Admin helpers — one-shot codex calls used for listing threads etc.
+# ---------------------------------------------------------------------------
+
+async def admin_list_threads(
+    codex_binary: str = "codex",
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict:
+    """Spawn a short-lived `codex app-server` and ask for the user's threads.
+
+    Returns the raw result body `{data, nextCursor, backwardsCursor}`.
+    Used by the daemon to answer ``threads-list-request`` frames from the
+    relay without touching any active session adapter.
+    """
+    cmd = shlex.split(codex_binary) + ["app-server"]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert proc.stdin and proc.stdout
+    results: dict[int, dict] = {}
+
+    async def read_loop() -> None:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                return
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "id" in msg and ("result" in msg or "error" in msg):
+                results[msg["id"]] = msg
+
+    reader_task = asyncio.create_task(read_loop())
+
+    async def send(obj: dict) -> None:
+        proc.stdin.write((json.dumps(obj) + "\n").encode())
+        await proc.stdin.drain()
+
+    try:
+        await send({"id": 1, "method": "initialize",
+                    "params": {"clientInfo": {"name": "remotex-daemon-admin",
+                                              "title": "Remotex",
+                                              "version": "0.1"}}})
+        # wait briefly for initialize ack
+        for _ in range(50):
+            if 1 in results:
+                break
+            await asyncio.sleep(0.05)
+        await send({"method": "initialized", "params": {}})
+        req_id = 2
+        params: dict = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        await send({"id": req_id, "method": "thread/list", "params": params})
+        for _ in range(200):
+            if req_id in results:
+                break
+            await asyncio.sleep(0.05)
+        resp = results.get(req_id, {})
+        if "error" in resp:
+            raise RuntimeError(f"thread/list failed: {resp['error']}")
+        return resp.get("result") or {}
+    finally:
+        reader_task.cancel()
+        if proc.returncode is None:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                proc.kill()

@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.remotex.model.Host
+import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
@@ -76,7 +77,16 @@ fun RemotexApp(relayUrl: String) {
     LaunchedEffect(Unit) { vm.refresh() }
 
     Scaffold(
-        topBar = { RemotexBar(state, onBack = { vm.goToHosts() }) },
+        topBar = {
+            RemotexBar(
+                state = state,
+                onBack = when (state.screen) {
+                    Screen.Threads -> ({ vm.goToHosts() })
+                    Screen.Session -> ({ vm.goToThreads() })
+                    Screen.Hosts -> ({})
+                },
+            )
+        },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
@@ -88,6 +98,12 @@ fun RemotexApp(relayUrl: String) {
                     onHostTap = vm::openHost,
                     onModelChange = vm::setModel,
                     onEffortChange = vm::setEffort,
+                )
+                Screen.Threads -> ThreadsScreen(
+                    state = state,
+                    onRefresh = vm::refreshThreads,
+                    onNewSession = { vm.openSession(null) },
+                    onResumeThread = { vm.openSession(it.id) },
                 )
                 Screen.Session -> SessionScreen(
                     state = state,
@@ -136,11 +152,11 @@ private fun RemotexBar(state: UiState, onBack: () -> Unit) {
             }
         },
         navigationIcon = {
-            if (state.screen == Screen.Session) {
+            if (state.screen != Screen.Hosts) {
                 IconButton(onClick = onBack) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Hosts",
+                        contentDescription = "Back",
                         tint = Ink,
                     )
                 }
@@ -399,6 +415,176 @@ private fun HostRow(host: Host, onClick: () -> Unit) {
             }
         }
     }
+}
+
+// -------------------- Threads screen --------------------
+
+@Composable
+private fun ThreadsScreen(
+    state: UiState,
+    onRefresh: () -> Unit,
+    onNewSession: () -> Unit,
+    onResumeThread: (ThreadInfo) -> Unit,
+) {
+    val hostNickname = state.hosts.firstOrNull { it.id == state.selectedHostId }?.nickname
+        ?: state.selectedHostId ?: "host"
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "sessions on $hostNickname".uppercase(),
+            color = InkDim,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+        )
+        // Primary action — start a fresh codex thread.
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(6.dp),
+            border = BorderStroke(1.dp, Amber),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onNewSession),
+        ) {
+            Row(
+                Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(28.dp).background(Amber, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("+", color = Color.Black, fontFamily = FontFamily.Monospace, fontSize = 16.sp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text(
+                        "New session",
+                        color = Amber,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
+                    )
+                    Text(
+                        "start a fresh codex thread",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                }
+            }
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "or continue a previous one",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onRefresh) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = InkDim)
+            }
+        }
+
+        if (state.threadsLoading) {
+            Text(
+                "loading…",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(16.dp),
+            )
+        } else if (state.threads.isEmpty()) {
+            Text(
+                "no previous sessions yet — your first “New session” will show up here after it runs.",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(16.dp),
+            )
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(state.threads, key = { it.id }) { t ->
+                    ThreadRow(t, onClick = { onResumeThread(t) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThreadRow(thread: ThreadInfo, onClick: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(6.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                thread.preview.ifBlank { "(no preview)" },
+                color = Ink,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(4.dp))
+            Row {
+                Text(
+                    relativeAge(thread.updatedAt ?: thread.createdAt ?: 0L),
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "· ${thread.id.take(8)}…",
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+                thread.cwd?.let {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "· ${shortenCwd(it)}",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun relativeAge(epochSeconds: Long): String {
+    if (epochSeconds <= 0L) return "—"
+    val diff = (System.currentTimeMillis() / 1000L) - epochSeconds
+    return when {
+        diff < 60 -> "just now"
+        diff < 3600 -> "${diff / 60}m ago"
+        diff < 86400 -> "${diff / 3600}h ago"
+        diff < 604800 -> "${diff / 86400}d ago"
+        else -> "${diff / 604800}w ago"
+    }
+}
+
+private fun shortenCwd(cwd: String): String {
+    val home = System.getProperty("user.home")
+    val trimmed = if (home != null && cwd.startsWith(home)) "~" + cwd.substring(home.length) else cwd
+    return if (trimmed.length > 30) "…" + trimmed.takeLast(27) else trimmed
 }
 
 // -------------------- Session screen --------------------

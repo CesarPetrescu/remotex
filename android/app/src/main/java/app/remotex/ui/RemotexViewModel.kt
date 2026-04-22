@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.remotex.model.Host
+import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
 import app.remotex.net.RelayClient
 import app.remotex.net.SessionSocket
@@ -24,7 +25,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
 
-enum class Screen { Hosts, Session }
+enum class Screen { Hosts, Threads, Session }
 
 enum class Status { Idle, Opening, Connecting, Connected, Disconnected, Error }
 
@@ -48,6 +49,8 @@ data class UiState(
     val error: String? = null,
     val model: String = "",          // empty → codex default (gpt-5.4 at time of writing)
     val effort: String = "medium",   // none/minimal/low/medium/high/xhigh
+    val threads: List<ThreadInfo> = emptyList(),
+    val threadsLoading: Boolean = false,
 )
 
 /**
@@ -139,7 +142,11 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
 
     fun goToHosts() {
         closeSession()
-        _state.update { it.copy(screen = Screen.Hosts) }
+        _state.update { it.copy(screen = Screen.Hosts, threads = emptyList()) }
+    }
+
+    fun goToThreads() {
+        _state.update { it.copy(screen = Screen.Threads) }
     }
 
     fun refresh() {
@@ -154,17 +161,43 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
         }
     }
 
-    /** Tap on a host → pick + immediately open session for it. */
+    /** Tap on a host → show threads screen, load its prior sessions. */
     fun openHost(host: Host) {
         if (!host.online) {
             _state.update { it.copy(error = "${host.nickname} is offline") }
             return
         }
-        _state.update { it.copy(selectedHostId = host.id) }
-        openSession()
+        _state.update {
+            it.copy(
+                selectedHostId = host.id,
+                screen = Screen.Threads,
+                threads = emptyList(),
+                threadsLoading = true,
+                error = null,
+            )
+        }
+        refreshThreads()
     }
 
-    fun openSession() {
+    fun refreshThreads() {
+        val target = _state.value.selectedHostId ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(threadsLoading = true) }
+            try {
+                val ts = client.listThreads(_state.value.userToken, target, limit = 25)
+                _state.update { it.copy(threads = ts, threadsLoading = false) }
+            } catch (t: Throwable) {
+                _state.update {
+                    it.copy(
+                        threadsLoading = false,
+                        error = t.message ?: "threads failed",
+                    )
+                }
+            }
+        }
+    }
+
+    fun openSession(resumeThreadId: String? = null) {
         val target = _state.value.selectedHostId ?: return
         closeSession()
         _state.update {
@@ -178,7 +211,7 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
         }
         viewModelScope.launch {
             val sid = try {
-                client.openSession(_state.value.userToken, target)
+                client.openSession(_state.value.userToken, target, resumeThreadId = resumeThreadId)
             } catch (t: Throwable) {
                 _state.update {
                     it.copy(status = Status.Error, error = t.message ?: "open failed")

@@ -8,7 +8,7 @@ from typing import Awaitable, Callable
 
 import aiohttp
 
-from .adapters import SessionAdapter, build_adapter
+from .adapters import SessionAdapter, admin_list_threads, build_adapter
 from .config import Config
 
 log = logging.getLogger("daemon.client")
@@ -75,6 +75,9 @@ class DaemonClient:
     async def _dispatch(self, frame: dict, send: Callable[[dict], Awaitable[None]]) -> None:
         ftype = frame.get("type")
         sid = frame.get("session_id")
+        if ftype == "threads-list-request":
+            asyncio.create_task(self._handle_threads_list(frame, send))
+            return
         if ftype == "session-open" and sid:
             if sid in self._sessions:
                 return
@@ -82,6 +85,7 @@ class DaemonClient:
                 self.config.mode,
                 self.config.codex_binary,
                 default_cwd=self.config.default_cwd,
+                resume_thread_id=frame.get("resume_thread_id") or None,
             )
             runner = _SessionRunner(sid, adapter, send, on_exit=lambda: self._sessions.pop(sid, None))
             self._sessions[sid] = runner
@@ -90,6 +94,34 @@ class DaemonClient:
             await self._sessions[sid].handle(frame)
         else:
             log.debug("ignoring frame %s", frame)
+
+    async def _handle_threads_list(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        request_id = frame.get("request_id")
+        limit = int(frame.get("limit") or 20)
+        cursor = frame.get("cursor")
+        try:
+            result = await admin_list_threads(
+                codex_binary=self.config.codex_binary,
+                limit=limit,
+                cursor=cursor,
+            )
+            await send({
+                "type": "threads-list-response",
+                "request_id": request_id,
+                "threads": result.get("data", []),
+                "next_cursor": result.get("nextCursor"),
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.exception("thread/list failed")
+            await send({
+                "type": "threads-list-response",
+                "request_id": request_id,
+                "error": str(exc),
+            })
 
 
 class _SessionRunner:

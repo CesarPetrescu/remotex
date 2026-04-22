@@ -212,6 +212,8 @@ class Hub:
         self.client_sessions: dict[str, web.WebSocketResponse] = {}
         self.session_host: dict[str, str] = {}
         self._lock = asyncio.Lock()
+        # request_id → Future awaiting the daemon's response frame
+        self.pending_admin: dict[str, asyncio.Future] = {}
 
     async def attach_daemon(self, host_id: str, ws: web.WebSocketResponse) -> None:
         async with self._lock:
@@ -295,6 +297,57 @@ async def issue_api_key(request: web.Request) -> web.Response:
     return web.json_response({"host_id": host_id, "token": token}, status=201)
 
 
+async def list_host_threads(request: web.Request) -> web.Response:
+    """Forward a `thread/list` request to the daemon, await the response."""
+    user = await require_user(request)
+    host_id = request.match_info["host_id"]
+    store: Store = request.app["store"]
+    hub: Hub = request.app["hub"]
+    if store.host_owner(host_id) != user["token"]:
+        raise web.HTTPNotFound(reason="host not found")
+    daemon_ws = hub.daemon_for(host_id)
+    if daemon_ws is None or daemon_ws.closed:
+        raise web.HTTPBadGateway(reason="host offline")
+    req_id = f"req_{uuid.uuid4().hex[:12]}"
+    limit = int(request.query.get("limit") or 20)
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+    hub.pending_admin[req_id] = fut
+    try:
+        await daemon_ws.send_json({
+            "type": "threads-list-request",
+            "request_id": req_id,
+            "limit": limit,
+        })
+        try:
+            payload = await asyncio.wait_for(fut, timeout=15.0)
+        except asyncio.TimeoutError as exc:
+            raise web.HTTPGatewayTimeout(reason="daemon did not respond in time") from exc
+    finally:
+        hub.pending_admin.pop(req_id, None)
+    if "error" in payload:
+        raise web.HTTPBadGateway(reason=f"daemon error: {payload['error']}")
+    threads = payload.get("threads") or []
+    # Reshape to a compact payload for clients (keep only what the UI needs).
+    summarized = [
+        {
+            "id": t.get("id"),
+            "preview": t.get("preview") or "",
+            "created_at": t.get("createdAt"),
+            "updated_at": t.get("updatedAt"),
+            "cwd": t.get("cwd"),
+            "ephemeral": bool(t.get("ephemeral")),
+        }
+        for t in threads
+        if t.get("id") and not t.get("ephemeral")
+    ]
+    return web.json_response({
+        "host_id": host_id,
+        "threads": summarized,
+        "next_cursor": payload.get("next_cursor"),
+    })
+
+
 async def open_session(request: web.Request) -> web.Response:
     """Reserve a session id. The daemon is not notified until the client
     attaches via /ws/client — otherwise the session-started event would be
@@ -302,6 +355,7 @@ async def open_session(request: web.Request) -> web.Response:
     user = await require_user(request)
     body = await request.json()
     host_id = body.get("host_id")
+    resume_thread_id = (body.get("thread_id") or "").strip() or None
     store: Store = request.app["store"]
     hub: Hub = request.app["hub"]
     if not host_id or store.host_owner(host_id) != user["token"]:
@@ -309,7 +363,15 @@ async def open_session(request: web.Request) -> web.Response:
     if hub.daemon_for(host_id) is None:
         raise web.HTTPBadGateway(reason="host offline")
     sid = store.open_session(host_id, user["token"])
-    return web.json_response({"session_id": sid, "host_id": host_id}, status=201)
+    # Stash the resume thread id against this session so ws_client can
+    # include it in the session-open frame it sends to the daemon.
+    if resume_thread_id:
+        request.app.setdefault("session_resume", {})[sid] = resume_thread_id
+    return web.json_response({
+        "session_id": sid,
+        "host_id": host_id,
+        "thread_id": resume_thread_id,
+    }, status=201)
 
 
 async def index(request: web.Request) -> web.Response:
@@ -370,6 +432,11 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     await client_ws.send_json(frame)
                 if ftype == "session-closed":
                     store.close_session(sid)
+            elif ftype == "threads-list-response":
+                req_id = frame.get("request_id")
+                fut = hub.pending_admin.get(req_id) if req_id else None
+                if fut is not None and not fut.done():
+                    fut.set_result(frame)
             elif ftype == "ping":
                 await ws.send_json({"type": "pong"})
     except asyncio.TimeoutError:
@@ -428,7 +495,12 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             await ws.send_json({"type": "error", "error": "host offline"})
             await ws.close(code=4503, message=b"host offline")
             return ws
-        await daemon_ws.send_json({"type": "session-open", "session_id": session_id})
+        resume_map: dict = request.app.setdefault("session_resume", {})
+        resume_thread_id = resume_map.pop(session_id, None)
+        open_frame: dict = {"type": "session-open", "session_id": session_id}
+        if resume_thread_id:
+            open_frame["resume_thread_id"] = resume_thread_id
+        await daemon_ws.send_json(open_frame)
 
         async for msg in ws:
             if msg.type != WSMsgType.TEXT:
@@ -468,6 +540,7 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     app.router.add_get("/api/hosts", list_hosts)
     app.router.add_post("/api/hosts", register_host)
     app.router.add_post("/api/hosts/{host_id}/api-key", issue_api_key)
+    app.router.add_get("/api/hosts/{host_id}/threads", list_host_threads)
     app.router.add_post("/api/sessions", open_session)
     app.router.add_get("/ws/daemon", ws_daemon)
     app.router.add_get("/ws/client", ws_client)
