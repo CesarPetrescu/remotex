@@ -14,6 +14,7 @@ import app.remotex.net.SessionSocket
 import app.remotex.net.SocketEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -125,6 +126,8 @@ class RemotexViewModel(
 
     private var socket: SessionSocket? = null
     private var socketJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var userClosed: Boolean = false
 
     fun setToken(token: String) {
         _state.update { it.copy(userToken = token) }
@@ -220,6 +223,7 @@ class RemotexViewModel(
     fun openSession(resumeThreadId: String? = null) {
         val target = _state.value.selectedHostId ?: return
         closeSession()
+        userClosed = false
         _state.update {
             it.copy(
                 screen = Screen.Session,
@@ -244,26 +248,81 @@ class RemotexViewModel(
                     status = Status.Connecting,
                 )
             }
-            val sock = SessionSocket(relayUrl, _state.value.userToken, sid)
-            socket = sock
-            socketJob = launch {
-                sock.events.collect { ev ->
-                    when (ev) {
-                        is SocketEvent.Frame -> handleFrame(ev.text)
-                        is SocketEvent.Closed -> _state.update {
-                            it.copy(status = Status.Disconnected, pending = false)
-                        }
-                        is SocketEvent.Failure -> _state.update {
-                            it.copy(
-                                status = Status.Error,
-                                error = ev.throwable.message ?: "socket error",
-                                pending = false,
-                            )
-                        }
-                    }
+            attachSocket(sid)
+        }
+    }
+
+    private fun attachSocket(sid: String) {
+        val sock = SessionSocket(relayUrl, _state.value.userToken, sid)
+        socket = sock
+        socketJob?.cancel()
+        socketJob = viewModelScope.launch {
+            sock.events.collect { ev ->
+                when (ev) {
+                    is SocketEvent.Frame -> handleFrame(ev.text)
+                    is SocketEvent.Closed -> handleDropped(sid, "closed")
+                    is SocketEvent.Failure -> handleDropped(sid, ev.throwable.message ?: "socket error")
                 }
             }
         }
+    }
+
+    private fun handleDropped(sid: String, reason: String) {
+        if (userClosed) {
+            _state.update { it.copy(status = Status.Disconnected, pending = false) }
+            return
+        }
+        _state.update {
+            it.copy(
+                status = Status.Disconnected,
+                pending = false,
+                error = "reconnecting… ($reason)",
+            )
+        }
+        scheduleReconnect(sid)
+    }
+
+    /**
+     * Backoff reconnect: try 5× with 1s → 2s → 4s → 8s → 16s delays,
+     * then give up. Any frame received will clear the error banner.
+     */
+    private fun scheduleReconnect(sid: String) {
+        reconnectJob?.cancel()
+        reconnectJob = viewModelScope.launch {
+            val delays = listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L)
+            for ((attempt, d) in delays.withIndex()) {
+                if (userClosed) return@launch
+                delay(d)
+                if (userClosed) return@launch
+                _state.update {
+                    it.copy(
+                        status = Status.Connecting,
+                        error = "reconnecting (try ${attempt + 1}/${delays.size})…",
+                    )
+                }
+                attachSocket(sid)
+                // Wait briefly for attach / frames to arrive.
+                delay(2_000L)
+                if (_state.value.status == Status.Connected) {
+                    _state.update { it.copy(error = null) }
+                    return@launch
+                }
+            }
+            _state.update {
+                it.copy(
+                    status = Status.Error,
+                    error = "disconnected — tap to reload the thread",
+                )
+            }
+        }
+    }
+
+    /** Force a reconnect now, without waiting for the backoff timer. */
+    fun reconnectNow() {
+        val sid = _state.value.session?.sessionId ?: return
+        userClosed = false
+        reconnectJob?.cancel()
+        attachSocket(sid)
     }
 
     fun sendTurn(text: String) {
@@ -345,6 +404,9 @@ class RemotexViewModel(
     }
 
     fun closeSession() {
+        userClosed = true
+        reconnectJob?.cancel()
+        reconnectJob = null
         socket?.close()
         socket = null
         socketJob?.cancel()

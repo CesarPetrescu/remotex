@@ -17,8 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -55,7 +54,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -63,7 +61,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -88,6 +89,21 @@ fun RemotexApp(relayUrl: String) {
     val state by vm.state.collectAsState()
 
     LaunchedEffect(Unit) { vm.refresh() }
+
+    // Kick a reconnect when we come back to the foreground after a pause.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                if (state.screen == Screen.Session && state.status != Status.Connected
+                    && state.session != null) {
+                    vm.reconnectNow()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Scaffold(
         topBar = {
@@ -132,7 +148,7 @@ fun RemotexApp(relayUrl: String) {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(1.dp, Warn),
-                    shape = RoundedCornerShape(6.dp),
+                    shape = RectangleShape,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(12.dp),
@@ -193,7 +209,7 @@ private fun StatusBadge(status: Status) {
         Status.Error -> Warn to "error"
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).background(color, CircleShape))
+        Box(Modifier.size(8.dp).background(color))
         Spacer(Modifier.width(6.dp))
         Text(text, color = color, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
     }
@@ -263,7 +279,7 @@ private fun ModelPickerField(
     val current = MODEL_OPTIONS.firstOrNull { it.id == selected } ?: MODEL_OPTIONS.first()
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(4.dp),
+        shape = RectangleShape,
         modifier = modifier.clickable { expanded = true },
     ) {
         Column(Modifier.padding(8.dp)) {
@@ -324,7 +340,7 @@ private fun PickerField(
     var expanded by remember { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(4.dp),
+        shape = RectangleShape,
         modifier = modifier.clickable { expanded = true },
     ) {
         Column(Modifier.padding(8.dp)) {
@@ -361,7 +377,7 @@ private fun PickerField(
 private fun TokenField(value: String, onChange: (String) -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(4.dp),
+        shape = RectangleShape,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(8.dp)) {
@@ -393,7 +409,7 @@ private fun HostRow(host: Host, onClick: () -> Unit) {
     val border = if (host.online) Amber else Line
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(4.dp),
+        shape = RectangleShape,
         border = BorderStroke(1.dp, border),
         modifier = Modifier
             .fillMaxWidth()
@@ -401,7 +417,7 @@ private fun HostRow(host: Host, onClick: () -> Unit) {
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).background(if (host.online) Ok else InkDim, CircleShape))
+                Box(Modifier.size(8.dp).background(if (host.online) Ok else InkDim))
                 Spacer(Modifier.width(8.dp))
                 Text(
                     host.nickname,
@@ -458,7 +474,7 @@ private fun ThreadsScreen(
         // Primary action — start a fresh codex thread.
         Surface(
             color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(6.dp),
+            shape = RectangleShape,
             border = BorderStroke(1.dp, Amber),
             modifier = Modifier
                 .fillMaxWidth()
@@ -469,7 +485,7 @@ private fun ThreadsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
-                    Modifier.size(28.dp).background(Amber, CircleShape),
+                    Modifier.size(28.dp).background(Amber),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("+", color = Color.Black, fontFamily = FontFamily.Monospace, fontSize = 16.sp)
@@ -540,7 +556,7 @@ private fun ThreadsScreen(
 private fun ThreadRow(thread: ThreadInfo, onClick: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(6.dp),
+        shape = RectangleShape,
         border = BorderStroke(1.dp, Line),
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
     ) {
@@ -715,7 +731,6 @@ private fun EventRow(event: UiEvent, pending: Boolean) {
                         contentDescription = null,
                         modifier = Modifier
                             .size(72.dp)
-                            .clip(RoundedCornerShape(6.dp))
                             .background(MaterialTheme.colorScheme.surface),
                     )
                 }
@@ -798,7 +813,7 @@ private fun AgentText(text: String, streaming: Boolean) {
 private fun CodeBlock(text: String, dim: Boolean = false) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(3.dp),
+        shape = RectangleShape,
     ) {
         Text(
             text,
@@ -855,14 +870,12 @@ private fun ComposerBar(
                                 contentDescription = null,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
                             )
                             Box(
                                 Modifier
                                     .align(Alignment.TopEnd)
                                     .size(20.dp)
-                                    .clip(CircleShape)
                                     .background(Color.Black.copy(alpha = 0.7f))
                                     .clickable { onRemoveImage(idx) },
                                 contentAlignment = Alignment.Center,
@@ -910,7 +923,7 @@ private fun ComposerBar(
                 }
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(22.dp),
+                    shape = RectangleShape,
                     border = BorderStroke(1.dp, Line),
                     modifier = Modifier.weight(1f),
                 ) {
@@ -973,7 +986,7 @@ private fun SendOrStopButton(
             canSend -> Amber
             else -> MaterialTheme.colorScheme.surfaceVariant
         },
-        shape = CircleShape,
+        shape = RectangleShape,
         modifier = Modifier.size(44.dp),
     ) {
         IconButton(
@@ -1000,7 +1013,7 @@ private fun CompactModelPicker(
     val current = MODEL_OPTIONS.firstOrNull { it.id == selected } ?: MODEL_OPTIONS.first()
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(999.dp),
+        shape = RectangleShape,
         border = BorderStroke(1.dp, Line),
         modifier = modifier.clickable { expanded = true },
     ) {
@@ -1052,7 +1065,7 @@ private fun CompactEffortPicker(
     val effectiveSelected = if (selected in options) selected else ""
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(999.dp),
+        shape = RectangleShape,
         border = BorderStroke(1.dp, Line),
         modifier = modifier.clickable { expanded = true },
     ) {

@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -273,7 +273,7 @@ private fun BulletView(items: List<String>, color: Color, fontSize: androidx.com
 private fun CodeBlockView(text: String) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(4.dp),
+        shape = RectangleShape,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
