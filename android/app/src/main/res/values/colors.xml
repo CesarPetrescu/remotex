@@ -10,4 +10,7 @@
     <color name="ok">#FF7DC87D</color>
     <color name="warn">#FFE05A3E</color>
     <color name="accent">#FFD97642</color>
+    <!-- Navy from the logo art, used as the adaptive-icon background so
+         the launcher tile reads as the canonical Remotex mark. -->
+    <color name="brand_bg">#FF061E3A</color>
 </resources>

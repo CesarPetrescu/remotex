@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/bg" />
+    <!-- Background picks up the navy frame from the logo art itself; the
+         foreground PNG includes its own safe-zone padding. -->
+    <background android:drawable="@color/brand_bg" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>

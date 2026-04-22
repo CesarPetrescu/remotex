@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/logo.png" alt="Remotex" width="160" />
+</p>
+
 # Remotex
 
 Reach your Codex sessions — the ones running on your home rig, your
