@@ -255,6 +255,14 @@ class StdioCodexAdapter(SessionAdapter):
         self._thread_id = thread["thread"].get("id", self._resume_thread_id)
         # Enable streamed reasoning summaries for every turn by default.
         self._reasoning_summary = "auto"
+        # Replay the prior turn history for resumed threads so the client
+        # shows what was said before. Done after session-started so the UI
+        # can tell "live" from "replayed".
+        if self._resume_thread_id:
+            try:
+                await self._replay_history()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("history replay failed: %s", exc)
         await self._queue.put(SessionEvent("session-started", {
             "model": thread.get("model") or model_hint,
             "cwd": thread.get("cwd", self._cwd),
@@ -381,6 +389,59 @@ class StdioCodexAdapter(SessionAdapter):
             if ev is None:
                 return
             yield ev
+
+    # --- history replay -------------------------------------------------
+
+    async def _replay_history(self) -> None:
+        """Fetch prior turns and emit them as completed session-events."""
+        assert self._thread_id
+        resp = await self._request("thread/turns/list", {
+            "threadId": self._thread_id,
+            "limit": 50,
+        })
+        turns = resp.get("data", [])
+        if not turns:
+            return
+        await self._queue.put(SessionEvent("history-begin", {"turns": len(turns)}))
+        # Codex returns newest → oldest; reverse so the UI shows them in
+        # chronological order.
+        for turn in reversed(turns):
+            turn_id = turn.get("id")
+            for item in turn.get("items", []):
+                codex_type = item.get("type", "")
+                snake = _snake_item_type(codex_type)
+                item_id = item.get("id") or f"hist_{uuid.uuid4().hex[:8]}"
+                started_payload: dict = {
+                    "turn_id": turn_id,
+                    "item_id": item_id,
+                    "item_type": snake,
+                    "replayed": True,
+                }
+                if codex_type == "userMessage":
+                    # Flatten content array: keep text, list any image paths.
+                    text_parts: list[str] = []
+                    for c in item.get("content", []) or []:
+                        if isinstance(c, dict) and c.get("type") == "text":
+                            text_parts.append(c.get("text", ""))
+                        elif isinstance(c, dict) and c.get("type") == "localImage":
+                            text_parts.append(f"[image: {os.path.basename(str(c.get('path', '')))}]")
+                    started_payload["text"] = "\n".join(p for p in text_parts if p)
+                elif codex_type in ("reasoning", "agentReasoning"):
+                    started_payload.update(_item_extras(item))
+                elif codex_type == "agentMessage":
+                    started_payload["text"] = item.get("text", "")
+                else:
+                    started_payload.update(_item_extras(item))
+                await self._queue.put(SessionEvent("item-started", started_payload))
+                completed_payload: dict = {
+                    "turn_id": turn_id,
+                    "item_id": item_id,
+                    "item_type": snake,
+                    "replayed": True,
+                    **started_payload,
+                }
+                await self._queue.put(SessionEvent("item-completed", completed_payload))
+        await self._queue.put(SessionEvent("history-end", {}))
 
     # --- JSON-RPC plumbing ----------------------------------------------
 

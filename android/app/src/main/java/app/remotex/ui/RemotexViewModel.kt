@@ -396,15 +396,30 @@ class RemotexViewModel(
             "item-started" -> {
                 val itemId = data.string("item_id") ?: return
                 val itemType = data.string("item_type") ?: return
-                val next = when (itemType) {
-                    "agent_reasoning" -> UiEvent.Reasoning(id = itemId, text = "", completed = false)
-                    "agent_message" -> UiEvent.Agent(id = itemId, text = "", completed = false)
+                val replayed = data["replayed"]?.let {
+                    (it as? JsonPrimitive)?.contentOrNull == "true" || it.toString() == "true"
+                } ?: false
+                val next: UiEvent = when (itemType) {
+                    "agent_reasoning" -> UiEvent.Reasoning(
+                        id = itemId,
+                        text = data.string("text") ?: "",
+                        completed = replayed,
+                    )
+                    "agent_message" -> UiEvent.Agent(
+                        id = itemId,
+                        text = data.string("text") ?: "",
+                        completed = replayed,
+                    )
                     "tool_call" -> UiEvent.Tool(
                         id = itemId,
                         tool = data.string("tool") ?: "tool",
                         command = data.obj("args")?.string("command") ?: "",
-                        output = "",
-                        completed = false,
+                        output = data.string("output") ?: "",
+                        completed = replayed,
+                    )
+                    "user_message" -> UiEvent.User(
+                        id = itemId,
+                        text = data.string("text") ?: "",
                     )
                     else -> UiEvent.System(id = itemId, label = itemType, detail = "")
                 }
@@ -452,8 +467,8 @@ class RemotexViewModel(
 
             "turn-completed" -> _state.update { it.copy(pending = false) }
 
-            "thread-status" -> {
-                // low-signal noise for now; skip
+            "history-begin", "history-end", "thread-status" -> {
+                // informational markers — consumers can render a divider later
             }
         }
     }
