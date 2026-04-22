@@ -27,8 +27,9 @@ class Config:
     relay_url: str
     bridge_token: str
     nickname: str
-    mode: str = "mock"           # "mock" | "stdio"
+    mode: str = "stdio"          # "mock" | "stdio"
     codex_binary: str = "codex"  # only used when mode == "stdio"
+    default_cwd: str = ""        # workspace dir Codex runs turns in; empty → $HOME
 
     @property
     def hostname(self) -> str:
@@ -51,8 +52,9 @@ class Config:
             relay_url=daemon["relay_url"],
             bridge_token=daemon["bridge_token"],
             nickname=daemon["nickname"],
-            mode=daemon.get("mode", "mock"),
+            mode=daemon.get("mode", "stdio"),
             codex_binary=daemon.get("codex_binary", "codex"),
+            default_cwd=daemon.get("default_cwd", ""),
         )
 
     def dump(self) -> str:
@@ -60,11 +62,12 @@ class Config:
         lines = [
             "# Remotex daemon config",
             "[daemon]",
-            f'relay_url   = "{self.relay_url}"',
+            f'relay_url    = "{self.relay_url}"',
             f'bridge_token = "{self.bridge_token}"',
-            f'nickname    = "{self.nickname}"',
-            f'mode        = "{self.mode}"',
+            f'nickname     = "{self.nickname}"',
+            f'mode         = "{self.mode}"',
             f'codex_binary = "{self.codex_binary}"',
+            f'default_cwd  = "{self.default_cwd}"',
             "",
         ]
         return "\n".join(lines)

@@ -1,22 +1,38 @@
 """Session adapters that produce Codex-App-Server-shaped events.
 
-For the prototype, MockCodexAdapter is the default — it lets you drive
-the entire daemon → relay → client path without needing a local Codex
-install. StdioCodexAdapter is a skeleton for the real integration: it
-spawns `codex app-server`, speaks JSON-RPC over stdin/stdout, and
-forwards notifications upstream. The stdio adapter is intentionally
-minimal; the full protocol surface (approvals, diffs, thread/fork) is
-documented in docs/codex_app_server_protocol.md.
+Two adapters ship:
+
+- ``MockCodexAdapter`` — deterministic scripted events, kept for tests
+  and the no-API demo. The e2e test drives this.
+- ``StdioCodexAdapter`` — spawns ``codex app-server`` and bridges real
+  JSON-RPC frames. This is the default daemon mode now.
+
+Protocol crib:
+  initialize ──▶ result {userAgent, codexHome, platform*}
+  initialized (notification, no response)
+  thread/start ──▶ result {thread: {id, ...}, model, cwd, ...}
+                   + thread/started notification
+  turn/start   ──▶ result (with the turn id)
+                   + turn/started, item/started, item/<type>/delta,
+                     item/completed, turn/completed notifications
+
+Item types observed: ``userMessage``, ``agentMessage``, ``agentReasoning``,
+``commandExecution`` (tool call). We translate these to the snake_case
+item_type strings the relay + web client already use.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 import shlex
 import time
 import uuid
 from dataclasses import dataclass
 from typing import AsyncIterator
+
+log = logging.getLogger("daemon.adapters")
 
 
 @dataclass
@@ -139,39 +155,59 @@ def _scripted_reply(user_input: str) -> list[str]:
         "stays small."
     )
     text = preface + body
-    # emit token-ish chunks
     size = 12
     return [text[i : i + size] for i in range(0, len(text), size)]
 
 
 # ---------------------------------------------------------------------------
-# Real stdio adapter (skeleton)
+# Real stdio adapter — spawns `codex app-server` and bridges JSON-RPC
 # ---------------------------------------------------------------------------
 
+# codex item `type` (camelCase) → our relay item_type (snake_case)
+_ITEM_TYPE_MAP = {
+    "agentMessage": "agent_message",
+    "agentReasoning": "agent_reasoning",
+    "commandExecution": "tool_call",
+    "fileChange": "file_change",
+    "userMessage": "user_message",  # echoed; we drop these client-side
+}
+
+
+def _snake_item_type(codex_type: str) -> str:
+    return _ITEM_TYPE_MAP.get(codex_type, codex_type)
+
+
 class StdioCodexAdapter(SessionAdapter):
-    """Spawns `codex app-server` and bridges JSON-RPC frames.
+    """Bridges `codex app-server` stdio JSON-RPC onto relay SessionEvents.
 
-    The full implementation needs:
-      * initialize / initialized handshake
-      * thread/start for new sessions, thread/resume on reconnect
-      * turn/start when the client sends `turn-start`
-      * translation of item/* notifications into SessionEvent envelopes
-      * approval response routing (client → daemon → app-server)
-
-    This class is a skeleton that wires up the subprocess + line reader.
-    Production should swap it in once the approval + diff surfaces have
-    been mapped onto client envelopes.
+    Lifetime = one relay session = one Codex thread. The adapter performs
+    the initialize → initialized → thread/start handshake on ``start()``,
+    then stays resident; each client ``turn-start`` frame maps to one
+    ``turn/start`` request and the resulting notification stream is
+    forwarded until ``turn/completed`` arrives.
     """
 
-    def __init__(self, codex_binary: str = "codex") -> None:
+    def __init__(
+        self,
+        codex_binary: str = "codex",
+        default_cwd: str | None = None,
+    ) -> None:
         self.binary = codex_binary
+        self._cwd = default_cwd or os.path.expanduser("~")
         self._proc: asyncio.subprocess.Process | None = None
         self._queue: asyncio.Queue[SessionEvent | None] = asyncio.Queue()
         self._reader_task: asyncio.Task | None = None
+        self._stderr_task: asyncio.Task | None = None
+        self._send_lock = asyncio.Lock()
+        self._pending: dict[int, asyncio.Future] = {}
         self._next_id = 0
+        self._thread_id: str | None = None
+
+    # --- lifecycle -------------------------------------------------------
 
     async def start(self) -> None:
         cmd = shlex.split(self.binary) + ["app-server"]
+        log.info("spawning %s (cwd=%s)", " ".join(cmd), self._cwd)
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
@@ -179,31 +215,83 @@ class StdioCodexAdapter(SessionAdapter):
             stderr=asyncio.subprocess.PIPE,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
-        await self._rpc("initialize", {
-            "clientInfo": {"name": "remotex-daemon", "version": "0.1"},
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
+
+        init = await self._request("initialize", {
+            "clientInfo": {
+                "name": "remotex-daemon",
+                "title": "Remotex",
+                "version": "0.1.0",
+            },
         })
+        model_hint = init.get("userAgent", "codex app-server")
         await self._notify("initialized", {})
-        await self._queue.put(SessionEvent("session-started", {"transport": "stdio"}))
+
+        thread = await self._request("thread/start", {
+            "cwd": self._cwd,
+            "ephemeral": False,
+        })
+        self._thread_id = thread["thread"]["id"]
+        await self._queue.put(SessionEvent("session-started", {
+            "model": thread.get("model") or model_hint,
+            "cwd": thread.get("cwd", self._cwd),
+            "thread_id": self._thread_id,
+            "transport": "stdio",
+        }))
 
     async def stop(self) -> None:
+        if self._thread_id and self._proc and self._proc.returncode is None:
+            # Best-effort archive; ignore failures during shutdown.
+            try:
+                await asyncio.wait_for(
+                    self._request("thread/archive", {"threadId": self._thread_id}),
+                    timeout=1.0,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         if self._proc and self._proc.returncode is None:
             try:
                 self._proc.terminate()
             except ProcessLookupError:
                 pass
-        if self._reader_task:
-            self._reader_task.cancel()
+            try:
+                await asyncio.wait_for(self._proc.wait(), timeout=3.0)
+            except asyncio.TimeoutError:
+                self._proc.kill()
+        for task in (self._reader_task, self._stderr_task):
+            if task:
+                task.cancel()
+        # Fail any outstanding requests.
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(RuntimeError("codex app-server exited"))
+        self._pending.clear()
         await self._queue.put(None)
+
+    # --- inbound frames from the relay ----------------------------------
 
     async def handle(self, frame: dict) -> None:
         ftype = frame.get("type")
         if ftype == "turn-start":
-            await self._rpc("turn/start", {"input": frame.get("input", "")})
+            if not self._thread_id:
+                log.warning("turn-start before thread ready; dropping")
+                return
+            text = frame.get("input", "")
+            try:
+                await self._request("turn/start", {
+                    "threadId": self._thread_id,
+                    "input": [{"type": "text", "text": text}],
+                })
+            except Exception as exc:  # noqa: BLE001
+                log.exception("turn/start failed: %s", exc)
+                await self._queue.put(SessionEvent("turn-completed", {
+                    "error": str(exc),
+                }))
         elif ftype == "approval":
-            await self._rpc("approval/resolve", {
-                "id": frame.get("approval_id"),
-                "decision": frame.get("decision", "deny"),
-            })
+            # TODO: wire elicitation / approval response. The protocol
+            # supports thread/increment_elicitation + resolve variants;
+            # leaving this as a follow-up once the Codex docs settle.
+            log.info("approval frame received; resolver not yet wired: %s", frame)
 
     async def events(self) -> AsyncIterator[SessionEvent]:
         while True:
@@ -212,11 +300,19 @@ class StdioCodexAdapter(SessionAdapter):
                 return
             yield ev
 
-    # --- internals ---
+    # --- JSON-RPC plumbing ----------------------------------------------
 
-    async def _rpc(self, method: str, params: dict) -> None:
+    async def _request(self, method: str, params: dict) -> dict:
         self._next_id += 1
-        await self._send({"id": self._next_id, "method": method, "params": params})
+        req_id = self._next_id
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._pending[req_id] = fut
+        await self._send({"id": req_id, "method": method, "params": params})
+        try:
+            return await asyncio.wait_for(fut, timeout=60.0)
+        finally:
+            self._pending.pop(req_id, None)
 
     async def _notify(self, method: str, params: dict) -> None:
         await self._send({"method": method, "params": params})
@@ -224,30 +320,171 @@ class StdioCodexAdapter(SessionAdapter):
     async def _send(self, obj: dict) -> None:
         assert self._proc and self._proc.stdin
         line = json.dumps(obj) + "\n"
-        self._proc.stdin.write(line.encode())
-        await self._proc.stdin.drain()
+        async with self._send_lock:
+            self._proc.stdin.write(line.encode())
+            await self._proc.stdin.drain()
 
     async def _read_loop(self) -> None:
         assert self._proc and self._proc.stdout
-        while True:
-            line = await self._proc.stdout.readline()
-            if not line:
+        try:
+            while True:
+                line = await self._proc.stdout.readline()
+                if not line:
+                    return
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    log.debug("malformed frame from codex: %r", line)
+                    continue
+                await self._dispatch(msg)
+        except asyncio.CancelledError:
+            pass
+
+    async def _drain_stderr(self) -> None:
+        assert self._proc and self._proc.stderr
+        try:
+            while True:
+                line = await self._proc.stderr.readline()
+                if not line:
+                    return
+                log.info("codex stderr: %s", line.decode(errors="replace").rstrip())
+        except asyncio.CancelledError:
+            pass
+
+    async def _dispatch(self, msg: dict) -> None:
+        # Response to one of our requests?
+        if "id" in msg and ("result" in msg or "error" in msg):
+            fut = self._pending.get(msg["id"])
+            if fut and not fut.done():
+                if "error" in msg:
+                    fut.set_exception(RuntimeError(
+                        f"{msg['error'].get('code')}: {msg['error'].get('message')}"
+                    ))
+                else:
+                    fut.set_result(msg.get("result") or {})
+            return
+
+        method = msg.get("method")
+        params = msg.get("params") or {}
+        if not method:
+            return
+
+        if method == "turn/started":
+            turn = params.get("turn", {})
+            await self._queue.put(SessionEvent("turn-started", {
+                "turn_id": turn.get("id"),
+                "input": _join_input(params.get("input")),
+            }))
+        elif method == "item/started":
+            item = params.get("item") or {}
+            codex_type = item.get("type", "")
+            if codex_type == "userMessage":
+                # We echo user input client-side already.
                 return
-            try:
-                frame = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            # Server notifications -> SessionEvent; responses are ignored
-            # at this skeleton stage (no outstanding callers rely on them).
-            method = frame.get("method")
-            if method and method.startswith("item/"):
-                await self._queue.put(SessionEvent(method, frame.get("params") or {}))
+            await self._queue.put(SessionEvent("item-started", {
+                "turn_id": params.get("turnId"),
+                "item_id": item.get("id"),
+                "item_type": _snake_item_type(codex_type),
+                **_item_extras(item),
+            }))
+        elif method.startswith("item/") and method.endswith("/delta"):
+            codex_type = method.split("/")[1]  # e.g. agentMessage
+            await self._queue.put(SessionEvent("item-delta", {
+                "turn_id": params.get("turnId"),
+                "item_id": params.get("itemId"),
+                "item_type": _snake_item_type(codex_type),
+                "delta": params.get("delta", ""),
+            }))
+        elif method == "item/completed":
+            item = params.get("item") or {}
+            codex_type = item.get("type", "")
+            if codex_type == "userMessage":
+                return
+            await self._queue.put(SessionEvent("item-completed", {
+                "turn_id": params.get("turnId"),
+                "item_id": item.get("id"),
+                "item_type": _snake_item_type(codex_type),
+                **_item_extras(item),
+            }))
+        elif method == "turn/completed":
+            turn = params.get("turn", {})
+            await self._queue.put(SessionEvent("turn-completed", {
+                "turn_id": turn.get("id"),
+                "duration_ms": turn.get("durationMs"),
+                "status": turn.get("status"),
+            }))
+        elif method == "thread/status/changed":
+            # Informational; surface as a session-event so clients can log it.
+            status = params.get("status")
+            if status:
+                await self._queue.put(SessionEvent("thread-status", {"status": status}))
+        else:
+            # Drop mcpServer/*, account/*, thread/tokenUsage/*, etc.
+            log.debug("ignored codex notification: %s", method)
 
 
-def build_adapter(mode: str, codex_binary: str) -> SessionAdapter:
-    mode = (mode or "mock").lower()
+def _join_input(items) -> str:
+    if not isinstance(items, list):
+        return ""
+    out = []
+    for part in items:
+        if isinstance(part, dict) and part.get("type") == "text":
+            out.append(part.get("text", ""))
+    return "".join(out)
+
+
+def _item_extras(item: dict) -> dict:
+    """Flatten the fields the web client cares about out of the item payload."""
+    t = item.get("type", "")
+    extras: dict = {}
+    if t == "agentMessage":
+        if "text" in item:
+            extras["text"] = item["text"]
+        if "phase" in item:
+            extras["phase"] = item["phase"]
+    elif t == "agentReasoning":
+        # Codex stuffs reasoning text under different keys across versions;
+        # try the common shapes.
+        for key in ("text", "summary"):
+            if key in item:
+                extras["text"] = item[key]
+                break
+        if "content" in item:
+            extras["text"] = _summarize_reasoning(item["content"])
+    elif t == "commandExecution":
+        cmd = item.get("command") or item.get("commandLine")
+        if cmd:
+            extras["tool"] = "shell"
+            extras["args"] = {"command": cmd}
+        output = item.get("output") or item.get("stdout")
+        if output:
+            extras["output"] = output
+        if "exitCode" in item:
+            extras["exit_code"] = item["exitCode"]
+    elif t == "fileChange":
+        if "changes" in item:
+            extras["changes"] = item["changes"]
+    return extras
+
+
+def _summarize_reasoning(content) -> str:
+    if isinstance(content, list):
+        parts = []
+        for c in content:
+            if isinstance(c, dict):
+                parts.append(c.get("text") or c.get("summary") or "")
+            elif isinstance(c, str):
+                parts.append(c)
+        return " ".join(p for p in parts if p)
+    if isinstance(content, str):
+        return content
+    return ""
+
+
+def build_adapter(mode: str, codex_binary: str, default_cwd: str = "") -> SessionAdapter:
+    mode = (mode or "stdio").lower()
     if mode == "mock":
         return MockCodexAdapter()
     if mode == "stdio":
-        return StdioCodexAdapter(codex_binary=codex_binary)
+        return StdioCodexAdapter(codex_binary=codex_binary, default_cwd=default_cwd or None)
     raise ValueError(f"unknown adapter mode: {mode!r}")

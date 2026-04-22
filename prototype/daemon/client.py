@@ -78,7 +78,11 @@ class DaemonClient:
         if ftype == "session-open" and sid:
             if sid in self._sessions:
                 return
-            adapter = build_adapter(self.config.mode, self.config.codex_binary)
+            adapter = build_adapter(
+                self.config.mode,
+                self.config.codex_binary,
+                default_cwd=self.config.default_cwd,
+            )
             runner = _SessionRunner(sid, adapter, send, on_exit=lambda: self._sessions.pop(sid, None))
             self._sessions[sid] = runner
             await runner.start()

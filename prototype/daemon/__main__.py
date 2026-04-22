@@ -18,6 +18,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         nickname=args.nickname,
         mode=args.mode,
         codex_binary=args.codex_binary,
+        default_cwd=args.default_cwd or "",
     )
     path = Path(args.config) if args.config else default_config_path()
     cfg.write(path)
@@ -66,8 +67,13 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--relay-url", required=True, help="ws:// or wss:// URL to the relay /ws/daemon endpoint")
     init.add_argument("--bridge-token", required=True)
     init.add_argument("--nickname", required=True)
-    init.add_argument("--mode", default="mock", choices=["mock", "stdio"])
+    init.add_argument("--mode", default="stdio", choices=["mock", "stdio"])
     init.add_argument("--codex-binary", default="codex")
+    init.add_argument(
+        "--default-cwd",
+        default=None,
+        help="workspace dir Codex runs turns in (stdio mode). Empty → $HOME",
+    )
     init.add_argument("--config", default=None, help="override config path")
     init.set_defaults(func=_cmd_init)
 
