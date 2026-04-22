@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -90,6 +91,15 @@ fun RemotexApp(relayUrl: String) {
     val state by vm.state.collectAsState()
 
     LaunchedEffect(Unit) { vm.refresh() }
+
+    // System back: walk the same path as the top-bar arrow. Only the
+    // Hosts screen falls through to the default "exit the app" behavior.
+    BackHandler(enabled = state.screen == Screen.Session) {
+        vm.goToThreads()
+    }
+    BackHandler(enabled = state.screen == Screen.Threads) {
+        vm.goToHosts()
+    }
 
     // Kick a reconnect when we come back to the foreground after a pause.
     val lifecycleOwner = LocalLifecycleOwner.current
