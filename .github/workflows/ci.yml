@@ -150,3 +150,52 @@ jobs:
           name: app-debug.apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  # iPhone build runs on expensive macos-15 minutes, so (1) gate it on
+  # paths that actually affect the build, and (2) cache DerivedData so
+  # cold runs don't re-compile unchanged Swift.
+  ios-changes:
+    name: iPhone · detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      touched: ${{ steps.filter.outputs.touched }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            touched:
+              - 'apple/**'
+              - '.github/workflows/ci.yml'
+
+  ios:
+    name: iPhone · Xcode build
+    runs-on: macos-15
+    needs: ios-changes
+    if: needs.ios-changes.outputs.touched == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcode-select -p
+      - name: Cache DerivedData
+        # Key on the project file + every Swift source + Info.plist +
+        # asset catalog, so an identical tree restores a warm build.
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ios-deriveddata-${{ runner.os }}-${{ hashFiles('apple/Remotex.xcodeproj/project.pbxproj', 'apple/Remotex/**/*.swift', 'apple/Remotex/Info.plist', 'apple/Remotex/Assets.xcassets/**') }}
+          restore-keys: ios-deriveddata-${{ runner.os }}-
+      - name: Build iPhone simulator app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project apple/Remotex.xcodeproj \
+            -scheme Remotex \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

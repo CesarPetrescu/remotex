@@ -5,9 +5,9 @@
 # Remotex
 
 Remotex lets you control Codex sessions running on your own machines from
-a browser or Android app. The machine running Codex can sit behind NAT,
-CGNAT, VPNs, or firewalls because it never needs an inbound port: both the
-client and the host daemon dial out to a relay you control.
+a browser, Android app, or iPhone app. The machine running Codex can sit
+behind NAT, CGNAT, VPNs, or firewalls because it never needs an inbound
+port: both the client and the host daemon dial out to a relay you control.
 
 ## How It Works
 
@@ -16,6 +16,7 @@ flowchart TB
     subgraph clients["clients"]
         W["Web client<br/><code>apps/web/</code>"]
         A["Android app<br/><code>android/</code>"]
+        I["iPhone app<br/><code>apple/</code>"]
     end
     R["<b>Remotex relay</b><br/><code>services/relay</code><br/>auth · hosts · sessions · routing"]
     D["<b>Host daemon</b><br/><code>services/daemon</code><br/>runs on the codex machine"]
@@ -23,6 +24,7 @@ flowchart TB
 
     W -- "HTTPS + WSS<br/>user bearer token" --> R
     A -- "HTTPS + WSS<br/>user bearer token" --> R
+    I -- "HTTPS + WSS<br/>user bearer token" --> R
     D == "outbound WSS<br/>bridge token" ==> R
     D == "local stdio<br/>JSON-RPC" ==> X
 
@@ -30,7 +32,7 @@ flowchart TB
     classDef relayNode fill:#14171d,stroke:#7dc87d,color:#e8dfd0;
     classDef daemonNode fill:#14171d,stroke:#5f8fb0,color:#e8dfd0;
     classDef codexNode fill:#0d0f13,stroke:#9a958a,color:#9a958a;
-    class W,A clientNode;
+    class W,A,I clientNode;
     class R relayNode;
     class D daemonNode;
     class X codexNode;
@@ -94,8 +96,8 @@ cd android
    token, hostname, platform, and nickname.
 2. The relay validates the bridge token, marks that host online, and
    replies with `welcome`.
-3. A web or Android client calls `GET /api/hosts` with a user token and
-   chooses an online host.
+3. A web, Android, or iPhone client calls `GET /api/hosts` with a user
+   token and chooses an online host.
 4. The client calls `POST /api/sessions` for that host. The relay reserves
    a `session_id`; it does not start Codex yet.
 5. The client opens `/ws/client` and sends `hello` with the user token and
@@ -114,6 +116,7 @@ cd android
 remotex/
 ├── apps/web/              React + Vite control-plane web client
 ├── android/               Kotlin + Jetpack Compose native client
+├── apple/                 SwiftUI iPhone client
 ├── services/
 │   ├── relay/             aiohttp relay + SQLite inventory + WS routing
 │   ├── daemon/            outbound-WSS daemon + Codex adapters
@@ -132,6 +135,7 @@ More detail lives in the subproject READMEs:
 
 - [`apps/web/README.md`](apps/web/README.md)
 - [`android/README.md`](android/README.md)
+- [`apple/README.md`](apple/README.md)
 - [`services/README.md`](services/README.md)
 - [`deploy/README.md`](deploy/README.md)
 
@@ -205,7 +209,19 @@ relay:
 ./gradlew assembleDebug -PrelayUrl=https://relay.example.com
 ```
 
-### 5. Deploy with Docker Compose
+### 5. Run the iPhone App
+
+Open the Xcode project and run it on an iPhone simulator:
+
+```bash
+open apple/Remotex.xcodeproj
+```
+
+The iOS simulator can reach a relay running on the same Mac at
+`http://127.0.0.1:8080`. For a real iPhone, enter a LAN or public relay
+URL in the app.
+
+### 6. Deploy with Docker Compose
 
 ```bash
 cd deploy
@@ -233,8 +249,9 @@ docker compose --profile tls up -d --build
 | Mock adapter | Working for tests and offline demos |
 | Web client | Lists hosts, opens sessions, sends text turns, streams reasoning/tool/agent events |
 | Android client | Lists hosts, opens/resumes threads, renders events, sends turns, supports images, model/effort controls, permissions, approvals, interrupt, reconnect |
+| iPhone client | Starter SwiftUI app; lists hosts, opens sessions, sends text turns, streams events |
 | Docker Compose | Working relay + web bundle, optional Caddy TLS |
-| CI | ESLint, Vite builds, npm audit, Ruff, backend e2e, Android debug APK artifact |
+| CI | ESLint, Vite builds, npm audit, Ruff, backend e2e, Android debug APK artifact, iPhone simulator build |
 
 ## Protocol Surface
 
@@ -263,10 +280,12 @@ These are the main items before this is ready for real users:
 3. Add audit logs, metrics, rate limits, and bounded queues.
 4. Add web UI support for approvals, thread resume, model/effort controls,
    image attachments, and permissions so it matches Android.
-5. Add FCM push notifications for Android approval requests.
-6. Add more fault tests: daemon disconnect, duplicate client attach, bad
+5. Bring the iPhone app to Android feature parity: thread resume, images,
+   model/effort controls, permissions, approvals, interrupt, and reconnect.
+6. Add mobile push notifications for approval requests.
+7. Add more fault tests: daemon disconnect, duplicate client attach, bad
    tokens, slow clients, and host offline during a turn.
-7. Add Kubernetes manifests for multi-user deployments.
+8. Add Kubernetes manifests for multi-user deployments.
 
 ## Development
 
@@ -283,6 +302,9 @@ npm ci && npm run lint && npm run build
 
 # Android
 (cd android && ./gradlew assembleDebug)
+
+# iPhone
+open apple/Remotex.xcodeproj
 ```
 
 Regenerate web client screenshots after starting the relay, daemon, and
@@ -295,11 +317,11 @@ node scripts/capture-web-screenshots.mjs
 ## Status
 
 `v0.1` - the relay, daemon, real Codex bridge, web client, Android client,
-Docker deployment, and CI all have working vertical slices. The project is
-usable for self-hosted development, but it still needs production auth,
-storage, auditability, and stronger failure handling before public use.
+iPhone starter, Docker deployment, and CI all have working vertical slices.
+The project is usable for self-hosted development, but it still needs
+production auth, storage, auditability, and stronger failure handling before
+public use.
 
 ## License
 
-No license has been chosen yet. Treat this repository as all rights
-reserved until one is added.
+MIT License. See [`LICENSE`](LICENSE).
