@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -83,6 +85,8 @@ fun RemotexApp(relayUrl: String) {
                     onTokenChange = vm::setToken,
                     onRefresh = vm::refresh,
                     onHostTap = vm::openHost,
+                    onModelChange = vm::setModel,
+                    onEffortChange = vm::setEffort,
                 )
                 Screen.Session -> SessionScreen(
                     state = state,
@@ -164,6 +168,8 @@ private fun HostsScreen(
     onTokenChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onHostTap: (Host) -> Unit,
+    onModelChange: (String) -> Unit,
+    onEffortChange: (String) -> Unit,
 ) {
     Column(
         Modifier
@@ -172,6 +178,24 @@ private fun HostsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         TokenField(state.userToken, onTokenChange)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PickerField(
+                label = "MODEL",
+                selected = state.model.ifEmpty { "default" },
+                options = MODEL_OPTIONS,
+                displayFor = { if (it.isEmpty()) "default" else it },
+                onSelect = onModelChange,
+                modifier = Modifier.weight(1f),
+            )
+            PickerField(
+                label = "REASONING",
+                selected = state.effort,
+                options = REASONING_EFFORTS,
+                displayFor = { it },
+                onSelect = onEffortChange,
+                modifier = Modifier.weight(1f),
+            )
+        }
         Button(
             onClick = onRefresh,
             modifier = Modifier.fillMaxWidth(),
@@ -203,6 +227,51 @@ private fun HostsScreen(
                 items(state.hosts, key = { it.id }) { h ->
                     HostRow(h) { onHostTap(h) }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PickerField(
+    label: String,
+    selected: String,
+    options: List<String>,
+    displayFor: (String) -> String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(4.dp),
+        modifier = modifier.clickable { expanded = true },
+    ) {
+        Column(Modifier.padding(8.dp)) {
+            Text(label, color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                displayFor(selected),
+                color = Ink,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { opt ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            displayFor(opt),
+                            color = Ink,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 13.sp,
+                        )
+                    },
+                    onClick = { onSelect(opt); expanded = false },
+                )
             }
         }
     }
@@ -394,7 +463,10 @@ private fun EventRow(event: UiEvent, pending: Boolean) {
             Spacer(Modifier.height(3.dp))
             when (event) {
                 is UiEvent.User -> BodyText(event.text)
-                is UiEvent.Reasoning -> BodyText(event.text.ifEmpty { "…" }, dim = true, italic = true)
+                is UiEvent.Reasoning -> MarkdownText(
+                    text = event.text.ifEmpty { "…" },
+                    color = InkDim,
+                )
                 is UiEvent.Tool -> {
                     if (event.command.isNotEmpty()) CodeBlock(event.command)
                     if (event.output.isNotEmpty()) {
@@ -402,7 +474,11 @@ private fun EventRow(event: UiEvent, pending: Boolean) {
                         CodeBlock(event.output, dim = true)
                     }
                 }
-                is UiEvent.Agent -> AgentText(event.text, streaming = pending && !event.completed)
+                is UiEvent.Agent -> MarkdownText(
+                    text = event.text,
+                    color = Ink,
+                    trailingCursor = pending && !event.completed,
+                )
                 is UiEvent.System -> BodyText(event.detail.ifEmpty { event.label })
             }
         }

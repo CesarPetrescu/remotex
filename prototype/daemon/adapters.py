@@ -277,11 +277,20 @@ class StdioCodexAdapter(SessionAdapter):
                 log.warning("turn-start before thread ready; dropping")
                 return
             text = frame.get("input", "")
+            params: dict = {
+                "threadId": self._thread_id,
+                "input": [{"type": "text", "text": text}],
+            }
+            # Optional per-turn overrides. Codex applies these to this turn
+            # and every subsequent turn on the thread.
+            model = frame.get("model")
+            if isinstance(model, str) and model.strip():
+                params["model"] = model.strip()
+            effort = frame.get("effort")
+            if isinstance(effort, str) and effort.strip():
+                params["effort"] = effort.strip()
             try:
-                await self._request("turn/start", {
-                    "threadId": self._thread_id,
-                    "input": [{"type": "text", "text": text}],
-                })
+                await self._request("turn/start", params)
             except Exception as exc:  # noqa: BLE001
                 log.exception("turn/start failed: %s", exc)
                 await self._queue.put(SessionEvent("turn-completed", {

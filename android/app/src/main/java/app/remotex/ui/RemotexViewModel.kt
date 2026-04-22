@@ -46,7 +46,13 @@ data class UiState(
     val events: List<UiEvent> = emptyList(),
     val pending: Boolean = false,
     val error: String? = null,
+    val model: String = "",          // empty → codex default (gpt-5.4 at time of writing)
+    val effort: String = "medium",   // none/minimal/low/medium/high/xhigh
 )
+
+val REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
+// Seed list — codex accepts any string it's configured for. User can still type a custom one.
+val MODEL_OPTIONS = listOf("", "gpt-5.4", "gpt-5-codex", "gpt-5", "o3", "o3-mini")
 
 class RemotexViewModel(private val relayUrl: String) : ViewModel() {
     private val client = RelayClient(baseUrl = relayUrl)
@@ -59,6 +65,14 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
 
     fun setToken(token: String) {
         _state.update { it.copy(userToken = token) }
+    }
+
+    fun setModel(model: String) {
+        _state.update { it.copy(model = model) }
+    }
+
+    fun setEffort(effort: String) {
+        _state.update { it.copy(effort = effort) }
     }
 
     fun selectHost(id: String) {
@@ -152,11 +166,15 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
                 pending = true,
             )
         }
+        val model = _state.value.model.trim()
+        val effort = _state.value.effort.trim()
         val frame = Json.encodeToString(
             JsonObject.serializer(),
             buildJsonObject {
                 put("type", "turn-start")
                 put("input", input)
+                if (model.isNotEmpty()) put("model", model)
+                if (effort.isNotEmpty() && effort != "none") put("effort", effort)
             },
         )
         sock.sendJson(frame)
