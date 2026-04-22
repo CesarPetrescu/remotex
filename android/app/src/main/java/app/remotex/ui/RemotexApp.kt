@@ -42,9 +42,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -153,7 +155,36 @@ fun RemotexApp(relayUrl: String) {
                     onEffortChange = vm::setEffort,
                     onAttachImage = vm::attachImage,
                     onRemoveImage = vm::removeImage,
+                    onPermissionsChange = vm::setPermissions,
                 )
+            }
+            state.pendingApproval?.let { appr ->
+                ApprovalDialog(
+                    prompt = appr,
+                    onDecision = { vm.resolveApproval(it) },
+                )
+            }
+            state.slashFeedback?.let { msg ->
+                LaunchedEffect(msg) {
+                    kotlinx.coroutines.delay(3500)
+                    vm.dismissSlashFeedback()
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, Line),
+                    shape = RectangleShape,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 140.dp, start = 12.dp, end = 12.dp),
+                ) {
+                    Text(
+                        msg,
+                        color = Amber,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(10.dp),
+                    )
+                }
             }
             state.error?.let { err ->
                 Surface(
@@ -656,6 +687,7 @@ private fun SessionScreen(
     onEffortChange: (String) -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
+    onPermissionsChange: (PermissionsMode) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         MetaBar(state)
@@ -670,15 +702,106 @@ private fun SessionScreen(
             pending = state.pending,
             model = state.model,
             effort = state.effort,
+            permissions = state.permissions,
+            planMode = state.planMode,
             pendingImages = state.pendingImages,
             onModelChange = onModelChange,
             onEffortChange = onEffortChange,
+            onPermissionsChange = onPermissionsChange,
             onSend = onSend,
             onStop = onStop,
             onAttachImage = onAttachImage,
             onRemoveImage = onRemoveImage,
         )
     }
+}
+
+@Composable
+private fun ApprovalDialog(
+    prompt: ApprovalPrompt,
+    onDecision: (String) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { onDecision("cancel") },
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RectangleShape,
+        title = {
+            Text(
+                if (prompt.kind == "command") "COMMAND APPROVAL"
+                else "FILE CHANGE APPROVAL",
+                color = Amber,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                prompt.reason?.let {
+                    Text(
+                        it,
+                        color = Ink,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                    )
+                }
+                prompt.command?.let {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RectangleShape,
+                        border = BorderStroke(1.dp, Line),
+                    ) {
+                        Text(
+                            it,
+                            color = Ink,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(8.dp),
+                        )
+                    }
+                }
+                prompt.cwd?.let {
+                    Text(
+                        "cwd: $it",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if ("acceptForSession" in prompt.decisions) {
+                    TextButton(onClick = { onDecision("acceptForSession") }) {
+                        Text(
+                            "always",
+                            color = Amber,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                TextButton(onClick = { onDecision("accept") }) {
+                    Text(
+                        "accept",
+                        color = Ok,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { onDecision("decline") }) {
+                Text(
+                    "decline",
+                    color = Warn,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                )
+            }
+        },
+    )
 }
 
 @Composable
@@ -862,9 +985,12 @@ private fun ComposerBar(
     pending: Boolean,
     model: String,
     effort: String,
+    permissions: PermissionsMode,
+    planMode: Boolean,
     pendingImages: List<PendingImage>,
     onModelChange: (String) -> Unit,
     onEffortChange: (String) -> Unit,
+    onPermissionsChange: (PermissionsMode) -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
@@ -918,7 +1044,7 @@ private fun ComposerBar(
                     }
                 }
             }
-            // Row 1 — model + effort as compact chips
+            // Row 1 — model + effort + permissions chips
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CompactModelPicker(
                     selected = model,
@@ -930,6 +1056,19 @@ private fun ComposerBar(
                     selected = effort,
                     onSelect = onEffortChange,
                     modifier = Modifier.weight(1f),
+                )
+                CompactPermissionsPicker(
+                    selected = permissions,
+                    onSelect = onPermissionsChange,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (planMode) {
+                Text(
+                    "plan mode active — /default to clear",
+                    color = Amber,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
                 )
             }
             // Row 2 — attach + prompt + send/stop
@@ -1082,6 +1221,68 @@ private fun CompactModelPicker(
                         }
                     },
                     onClick = { onSelect(opt.id); expanded = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactPermissionsPicker(
+    selected: PermissionsMode,
+    onSelect: (PermissionsMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RectangleShape,
+        border = BorderStroke(1.dp, if (selected == PermissionsMode.Full) Warn else Line),
+        modifier = modifier.clickable { expanded = true },
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("perms", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                selected.label.lowercase(),
+                color = if (selected == PermissionsMode.Full) Warn else Amber,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            shape = RectangleShape,
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            border = BorderStroke(1.dp, Line),
+        ) {
+            PermissionsMode.entries.forEach { opt ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                opt.label,
+                                color = if (opt == PermissionsMode.Full) Warn else Ink,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                            )
+                            Text(
+                                opt.hint,
+                                color = InkDim,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                            )
+                        }
+                    },
+                    onClick = { onSelect(opt); expanded = false },
                 )
             }
         }

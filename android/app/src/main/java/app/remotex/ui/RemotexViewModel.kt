@@ -53,6 +53,21 @@ data class PendingImage(
     val label: String,    // short filename for display
 )
 
+data class ApprovalPrompt(
+    val approvalId: String,
+    val kind: String,          // "command" or "file_change"
+    val reason: String?,
+    val command: String?,
+    val cwd: String?,
+    val decisions: List<String>,
+)
+
+enum class PermissionsMode(val wire: String, val label: String, val hint: String) {
+    Default("default", "Default", "ask for internet + outside writes"),
+    Full("full", "Full Access", "no prompts — use with caution"),
+    ReadOnly("readonly", "Read Only", "codex can look but not touch"),
+}
+
 data class UiState(
     val screen: Screen = Screen.Hosts,
     val userToken: String = "demo-user-token",
@@ -69,6 +84,10 @@ data class UiState(
     val threads: List<ThreadInfo> = emptyList(),
     val threadsLoading: Boolean = false,
     val pendingImages: List<PendingImage> = emptyList(),
+    val permissions: PermissionsMode = PermissionsMode.Default,
+    val pendingApproval: ApprovalPrompt? = null,
+    val slashFeedback: String? = null,
+    val planMode: Boolean = false,   // true after /plan, cleared on /default
 )
 
 /**
@@ -143,6 +162,29 @@ class RemotexViewModel(
 
     fun setEffort(effort: String) {
         _state.update { it.copy(effort = effort) }
+    }
+
+    fun setPermissions(mode: PermissionsMode) {
+        _state.update { it.copy(permissions = mode) }
+    }
+
+    fun resolveApproval(decision: String) {
+        val pending = _state.value.pendingApproval ?: return
+        val sock = socket ?: return
+        val frame = Json.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject {
+                put("type", "approval-response")
+                put("approval_id", pending.approvalId)
+                put("decision", decision)
+            },
+        )
+        sock.sendJson(frame)
+        _state.update { it.copy(pendingApproval = null) }
+    }
+
+    fun dismissSlashFeedback() {
+        _state.update { it.copy(slashFeedback = null) }
     }
 
     /** Fire a turn-interrupt frame. Daemon translates into codex turn/interrupt. */
@@ -330,6 +372,25 @@ class RemotexViewModel(
         val attachments = _state.value.pendingImages
         if (input.isEmpty() && attachments.isEmpty()) return
         val sock = socket ?: return
+        // Slash command shortcut: `/cmd [args…]` is routed as a separate
+        // frame type, never as a prompt to the model.
+        if (attachments.isEmpty() && input.startsWith("/")) {
+            val bare = input.substring(1).trim()
+            val cmd = bare.substringBefore(' ').lowercase()
+            if (cmd.isNotEmpty()) {
+                val frame = Json.encodeToString(
+                    JsonObject.serializer(),
+                    buildJsonObject {
+                        put("type", "slash-command")
+                        put("command", cmd)
+                    },
+                )
+                sock.sendJson(frame)
+                if (cmd == "plan") _state.update { it.copy(planMode = true) }
+                if (cmd == "default") _state.update { it.copy(planMode = false) }
+                return
+            }
+        }
         val userId = "u-${UUID.randomUUID().toString().take(8)}"
         _state.update {
             it.copy(
@@ -344,6 +405,7 @@ class RemotexViewModel(
         }
         val model = _state.value.model.trim()
         val effort = _state.value.effort.trim()
+        val perms = _state.value.permissions.wire
         val frame = Json.encodeToString(
             JsonObject.serializer(),
             buildJsonObject {
@@ -351,6 +413,7 @@ class RemotexViewModel(
                 put("input", input)
                 if (model.isNotEmpty()) put("model", model)
                 if (effort.isNotEmpty() && effort != "none") put("effort", effort)
+                put("permissions", perms)
                 if (attachments.isNotEmpty()) {
                     put("images", buildJsonArray {
                         attachments.forEach { img ->
@@ -531,6 +594,52 @@ class RemotexViewModel(
 
             "history-begin", "history-end", "thread-status" -> {
                 // informational markers — consumers can render a divider later
+            }
+
+            "approval-request" -> {
+                val approvalId = data.string("approval_id") ?: return
+                val kind = data.string("kind") ?: "command"
+                val decisions = (data["decisions"] as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                    ?: listOf("accept", "acceptForSession", "decline", "cancel")
+                _state.update {
+                    it.copy(
+                        pendingApproval = ApprovalPrompt(
+                            approvalId = approvalId,
+                            kind = kind,
+                            reason = data.string("reason"),
+                            command = data.string("command"),
+                            cwd = data.string("cwd"),
+                            decisions = decisions,
+                        )
+                    )
+                }
+            }
+
+            "slash-ack" -> {
+                val cmd = data.string("command") ?: "?"
+                val ok = (data["ok"] as? JsonPrimitive)?.contentOrNull == "true"
+                    || data["ok"]?.toString() == "true"
+                val msg = data.string("message")
+                val err = data.string("error")
+                val text = when {
+                    !ok && err != null -> "/$cmd failed: $err"
+                    msg != null -> "/$cmd — $msg"
+                    else -> "/$cmd ok"
+                }
+                _state.update { it.copy(slashFeedback = text) }
+            }
+
+            "collab-modes" -> {
+                // For now just surface the available mode names.
+                val names = (data["modes"] as? JsonArray)
+                    ?.mapNotNull {
+                        ((it as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull
+                    }
+                    ?: emptyList()
+                _state.update {
+                    it.copy(slashFeedback = "collab modes: ${names.joinToString(", ")}")
+                }
             }
         }
     }

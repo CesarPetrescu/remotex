@@ -213,6 +213,12 @@ class StdioCodexAdapter(SessionAdapter):
         # Temp files we wrote for localImage inputs on the current turn;
         # cleared on turn-completed.
         self._turn_tmp_files: list[str] = []
+        # Approval requests from codex are JSON-RPC requests (not notifs).
+        # We record their rpc ids so we can respond after the client answers.
+        self._pending_approvals: dict[str, int] = {}
+        # Slash-command state: if the user sends `/plan`, the next turn
+        # uses collaborationMode; `/default` clears it.
+        self._next_collab_mode: dict | None = None
 
     # --- lifecycle -------------------------------------------------------
 
@@ -234,6 +240,7 @@ class StdioCodexAdapter(SessionAdapter):
                 "title": "Remotex",
                 "version": "0.1.0",
             },
+            "capabilities": {"experimentalApi": True},
         })
         model_hint = init.get("userAgent", "codex app-server")
         await self._notify("initialized", {})
@@ -303,6 +310,12 @@ class StdioCodexAdapter(SessionAdapter):
 
     async def handle(self, frame: dict) -> None:
         ftype = frame.get("type")
+        if ftype == "approval-response":
+            await self._resolve_approval(frame)
+            return
+        if ftype == "slash-command":
+            await self._handle_slash(frame)
+            return
         if ftype == "turn-start":
             if not self._thread_id:
                 log.warning("turn-start before thread ready; dropping")
@@ -362,6 +375,15 @@ class StdioCodexAdapter(SessionAdapter):
             effort = frame.get("effort")
             if isinstance(effort, str) and effort.strip():
                 params["effort"] = effort.strip()
+            perms = frame.get("permissions")
+            if isinstance(perms, str) and perms:
+                sandbox, approval = _permissions_to_codex(perms, self._cwd)
+                if sandbox:
+                    params["sandboxPolicy"] = sandbox
+                if approval:
+                    params["approvalPolicy"] = approval
+            if self._next_collab_mode is not None:
+                params["collaborationMode"] = self._next_collab_mode
             try:
                 await self._request("turn/start", params)
             except Exception as exc:  # noqa: BLE001
@@ -389,6 +411,73 @@ class StdioCodexAdapter(SessionAdapter):
             if ev is None:
                 return
             yield ev
+
+    # --- slash commands + approvals ------------------------------------
+
+    async def _handle_slash(self, frame: dict) -> None:
+        command = (frame.get("command") or "").lower().strip()
+        if command == "compact":
+            try:
+                await self._request("thread/compact/start", {"threadId": self._thread_id})
+            except Exception as exc:  # noqa: BLE001
+                log.warning("thread/compact/start failed: %s", exc)
+                await self._queue.put(SessionEvent("slash-ack", {
+                    "command": command,
+                    "ok": False,
+                    "error": str(exc),
+                }))
+                return
+            await self._queue.put(SessionEvent("slash-ack", {"command": command, "ok": True}))
+        elif command in ("plan", "default"):
+            if command == "plan":
+                self._next_collab_mode = {
+                    "mode": "plan",
+                    # Null developer_instructions means "use mode's built-in".
+                    "settings": {
+                        "model": "",
+                        "reasoning_effort": None,
+                        "developer_instructions": None,
+                    },
+                }
+            else:
+                self._next_collab_mode = None
+            await self._queue.put(SessionEvent("slash-ack", {
+                "command": command,
+                "ok": True,
+                "message": (
+                    "next turn will use plan mode"
+                    if command == "plan"
+                    else "collab mode cleared"
+                ),
+            }))
+        elif command == "collab":
+            try:
+                resp = await self._request("collaborationMode/list", {})
+                modes = resp.get("data", [])
+            except Exception as exc:  # noqa: BLE001
+                await self._queue.put(SessionEvent("slash-ack", {
+                    "command": command, "ok": False, "error": str(exc),
+                }))
+                return
+            await self._queue.put(SessionEvent("collab-modes", {"modes": modes}))
+        else:
+            await self._queue.put(SessionEvent("slash-ack", {
+                "command": command,
+                "ok": False,
+                "error": f"unknown slash command: /{command}",
+            }))
+
+    async def _resolve_approval(self, frame: dict) -> None:
+        approval_id = frame.get("approval_id")
+        if not approval_id:
+            return
+        rpc_id = self._pending_approvals.pop(approval_id, None)
+        if rpc_id is None:
+            log.info("approval-response for unknown id %s; ignoring", approval_id)
+            return
+        decision = frame.get("decision") or "decline"
+        result = {"decision": decision}
+        await self._send({"id": rpc_id, "result": result})
 
     # --- history replay -------------------------------------------------
 
@@ -510,6 +599,39 @@ class StdioCodexAdapter(SessionAdapter):
         method = msg.get("method")
         params = msg.get("params") or {}
         if not method:
+            return
+
+        # Server-initiated request (approvals, tool prompts). These carry
+        # an `id` and expect a response — we forward to the client and
+        # record the rpc id so approval-response frames can reply.
+        if "id" in msg and method in (
+            "item/commandExecution/requestApproval",
+            "item/fileChange/requestApproval",
+        ):
+            approval_id = f"appr_{uuid.uuid4().hex[:8]}"
+            self._pending_approvals[approval_id] = msg["id"]
+            kind = "command" if method == "item/commandExecution/requestApproval" else "file_change"
+            payload: dict = {
+                "approval_id": approval_id,
+                "kind": kind,
+                "thread_id": params.get("threadId"),
+                "turn_id": params.get("turnId"),
+                "item_id": params.get("itemId"),
+                "reason": params.get("reason"),
+            }
+            if kind == "command":
+                payload["command"] = params.get("command")
+                payload["cwd"] = params.get("cwd")
+                decisions = params.get("availableDecisions") or [
+                    "accept", "acceptForSession", "decline", "cancel"
+                ]
+                payload["decisions"] = [
+                    d if isinstance(d, str) else (list(d.keys())[0] if isinstance(d, dict) else str(d))
+                    for d in decisions
+                ]
+            else:
+                payload["decisions"] = ["accept", "acceptForSession", "decline", "cancel"]
+            await self._queue.put(SessionEvent("approval-request", payload))
             return
 
         if method == "turn/started":
@@ -639,6 +761,28 @@ def _item_extras(item: dict) -> dict:
         if "changes" in item:
             extras["changes"] = item["changes"]
     return extras
+
+
+def _permissions_to_codex(perms: str, cwd: str) -> tuple[dict | None, str | None]:
+    """Map UI-level permissions buttons to codex sandboxPolicy / approvalPolicy."""
+    perms = perms.lower()
+    if perms in ("full", "full-access", "dangerfullaccess"):
+        return {"type": "dangerFullAccess"}, "never"
+    if perms in ("readonly", "read-only"):
+        return {
+            "type": "readOnly",
+            "access": {"type": "fullAccess"},
+            "networkAccess": False,
+        }, "on-request"
+    # Default: write inside cwd, ask for anything else.
+    return {
+        "type": "workspaceWrite",
+        "writableRoots": [cwd] if cwd else [],
+        "readOnlyAccess": {"type": "fullAccess"},
+        "networkAccess": False,
+        "excludeTmpdirEnvVar": False,
+        "excludeSlashTmp": False,
+    }, "on-request"
 
 
 def _image_suffix(mime: str | None) -> str:
