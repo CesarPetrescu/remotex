@@ -1,5 +1,7 @@
 package app.remotex.net
 
+import app.remotex.model.FsEntry
+import app.remotex.model.FsListResponse
 import app.remotex.model.Host
 import app.remotex.model.HostsResponse
 import app.remotex.model.OpenSessionRequest
@@ -42,14 +44,21 @@ class RelayClient(
         userToken: String,
         hostId: String,
         resumeThreadId: String? = null,
+        cwd: String? = null,
     ): String = withContext(Dispatchers.IO) {
-        // Hand-build the JSON so thread_id is only sent when set (avoids
-        // sending "thread_id": null and tripping the relay's trim check).
+        // Hand-build the JSON so optional fields are only present when
+        // set — relay treats empty strings as null and expects missing
+        // keys for non-overrides.
         val body = buildString {
             append('{')
             append("\"host_id\":\"").append(hostId).append('"')
             if (!resumeThreadId.isNullOrBlank()) {
                 append(",\"thread_id\":\"").append(resumeThreadId).append('"')
+            }
+            if (!cwd.isNullOrBlank()) {
+                append(",\"cwd\":\"")
+                append(cwd.replace("\\", "\\\\").replace("\"", "\\\""))
+                append('"')
             }
             append('}')
         }
@@ -81,4 +90,24 @@ class RelayClient(
             json.decodeFromString(ThreadsResponse.serializer(), body).threads
         }
     }
+
+    suspend fun readDirectory(
+        userToken: String,
+        hostId: String,
+        path: String,
+    ): FsListResponse = withContext(Dispatchers.IO) {
+        val encoded = java.net.URLEncoder.encode(path, "UTF-8")
+        val req = Request.Builder()
+            .url("$baseUrl/api/hosts/$hostId/fs?path=$encoded")
+            .header("Authorization", "Bearer $userToken")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            check(resp.isSuccessful) { "readDirectory: ${resp.code} ${resp.message}" }
+            val body = resp.body?.string().orEmpty()
+            json.decodeFromString(FsListResponse.serializer(), body)
+        }
+    }
 }
+
+typealias FsEntryInfo = FsEntry

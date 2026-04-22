@@ -106,13 +106,18 @@ class DaemonClient:
         if ftype == "threads-list-request":
             asyncio.create_task(self._handle_threads_list(frame, send))
             return
+        if ftype == "fs-read-request":
+            asyncio.create_task(self._handle_fs_read(frame, send))
+            return
         if ftype == "session-open" and sid:
             if sid in self._sessions:
                 return
             adapter = build_adapter(
                 self.config.mode,
                 self.config.codex_binary,
-                default_cwd=self.config.default_cwd,
+                # session-open can carry a per-session override; fall back
+                # to the daemon's config default.
+                default_cwd=frame.get("cwd") or self.config.default_cwd,
                 resume_thread_id=frame.get("resume_thread_id") or None,
             )
             runner = _SessionRunner(sid, adapter, send, on_exit=lambda: self._sessions.pop(sid, None))
@@ -122,6 +127,30 @@ class DaemonClient:
             await self._sessions[sid].handle(frame)
         else:
             log.debug("ignoring frame %s", frame)
+
+    async def _handle_fs_read(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        request_id = frame.get("request_id")
+        path = frame.get("path") or ""
+        try:
+            result = await self._admin.read_directory(path)
+            await send({
+                "type": "fs-read-response",
+                "request_id": request_id,
+                "path": path,
+                "entries": result.get("entries", []),
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.warning("fs/readDirectory failed for %s: %s", path, exc)
+            await send({
+                "type": "fs-read-response",
+                "request_id": request_id,
+                "path": path,
+                "error": str(exc),
+            })
 
     async def _handle_threads_list(
         self,

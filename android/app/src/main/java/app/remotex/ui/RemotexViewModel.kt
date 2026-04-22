@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.remotex.model.FsEntry
 import app.remotex.model.Host
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
@@ -35,7 +36,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
 
-enum class Screen { Hosts, Threads, Session }
+enum class Screen { Hosts, Threads, Files, Session }
 
 enum class Status { Idle, Opening, Connecting, Connected, Disconnected, Error }
 
@@ -83,6 +84,9 @@ data class UiState(
     val effort: String = "medium",   // none/minimal/low/medium/high/xhigh
     val threads: List<ThreadInfo> = emptyList(),
     val threadsLoading: Boolean = false,
+    val browsePath: String = "",
+    val browseEntries: List<FsEntry> = emptyList(),
+    val browseLoading: Boolean = false,
     val pendingImages: List<PendingImage> = emptyList(),
     val permissions: PermissionsMode = PermissionsMode.Default,
     val pendingApproval: ApprovalPrompt? = null,
@@ -214,6 +218,49 @@ class RemotexViewModel(
         _state.update { it.copy(screen = Screen.Threads) }
     }
 
+    fun goToFiles(initialPath: String? = null) {
+        val start = initialPath?.ifBlank { null }
+            ?: _state.value.browsePath.ifBlank { null }
+            ?: "/"
+        _state.update { it.copy(screen = Screen.Files) }
+        browseDir(start)
+    }
+
+    fun browseDir(path: String) {
+        val target = _state.value.selectedHostId ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(browseLoading = true, browsePath = path, error = null) }
+            try {
+                val resp = client.readDirectory(_state.value.userToken, target, path)
+                _state.update {
+                    it.copy(
+                        browsePath = resp.path,
+                        browseEntries = resp.entries.sortedWith(
+                            compareByDescending<FsEntry> { e -> e.isDirectory }.thenBy { e -> e.fileName.lowercase() }
+                        ),
+                        browseLoading = false,
+                    )
+                }
+            } catch (t: Throwable) {
+                _state.update {
+                    it.copy(browseLoading = false, error = t.message ?: "readDir failed")
+                }
+            }
+        }
+    }
+
+    fun browseUp() {
+        val p = _state.value.browsePath
+        if (p.isEmpty() || p == "/") return
+        val parent = p.trimEnd('/').substringBeforeLast('/', "/").ifEmpty { "/" }
+        browseDir(parent)
+    }
+
+    fun startSessionInCurrentPath() {
+        val path = _state.value.browsePath.ifEmpty { null }
+        openSession(resumeThreadId = null, cwd = path)
+    }
+
     fun refresh() {
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
@@ -262,7 +309,7 @@ class RemotexViewModel(
         }
     }
 
-    fun openSession(resumeThreadId: String? = null) {
+    fun openSession(resumeThreadId: String? = null, cwd: String? = null) {
         val target = _state.value.selectedHostId ?: return
         closeSession()
         userClosed = false
@@ -286,7 +333,12 @@ class RemotexViewModel(
         }
         viewModelScope.launch {
             val sid = try {
-                client.openSession(_state.value.userToken, target, resumeThreadId = resumeThreadId)
+                client.openSession(
+                    _state.value.userToken,
+                    target,
+                    resumeThreadId = resumeThreadId,
+                    cwd = cwd,
+                )
             } catch (t: Throwable) {
                 _state.update {
                     it.copy(status = Status.Error, error = t.message ?: "open failed")

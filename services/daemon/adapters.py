@@ -914,16 +914,26 @@ class AdminCodex:
         """Return codex's raw thread/list result (the {data, nextCursor,
         backwardsCursor} body). Lazily starts the codex process and
         re-spawns if the previous one died."""
+        return await self._call("thread/list", self._build_list_params(limit, cursor))
+
+    async def read_directory(self, path: str) -> dict:
+        """Return codex's fs/readDirectory result ({entries: [...]} body).
+        Used by the relay to serve GET /api/hosts/<id>/fs."""
+        return await self._call("fs/readDirectory", {"path": path})
+
+    def _build_list_params(self, limit: int, cursor: str | None) -> dict:
+        params: dict = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        return params
+
+    async def _call(self, method: str, params: dict) -> dict:
         async with self._lock:
             await self._ensure_running()
-            params: dict = {"limit": limit}
-            if cursor:
-                params["cursor"] = cursor
             try:
-                resp = await asyncio.wait_for(
-                    self._request("thread/list", params), timeout=10.0
+                return await asyncio.wait_for(
+                    self._request(method, params), timeout=10.0
                 )
-                return resp
             except Exception:
                 # The subprocess might be hosed; kill it so the next call
                 # gets a fresh one instead of timing out again.

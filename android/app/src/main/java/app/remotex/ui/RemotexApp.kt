@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import app.remotex.model.FsEntry
 import app.remotex.model.Host
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
@@ -97,6 +98,9 @@ fun RemotexApp(relayUrl: String) {
     // System back: walk the same path as the top-bar arrow. Only the
     // Hosts screen falls through to the default "exit the app" behavior.
     BackHandler(enabled = state.screen == Screen.Session) {
+        vm.goToThreads()
+    }
+    BackHandler(enabled = state.screen == Screen.Files) {
         vm.goToThreads()
     }
     BackHandler(enabled = state.screen == Screen.Threads) {
@@ -124,6 +128,7 @@ fun RemotexApp(relayUrl: String) {
                 state = state,
                 onBack = when (state.screen) {
                     Screen.Threads -> ({ vm.goToHosts() })
+                    Screen.Files -> ({ vm.goToThreads() })
                     Screen.Session -> ({ vm.goToThreads() })
                     Screen.Hosts -> ({})
                 },
@@ -144,8 +149,14 @@ fun RemotexApp(relayUrl: String) {
                 Screen.Threads -> ThreadsScreen(
                     state = state,
                     onRefresh = vm::refreshThreads,
-                    onNewSession = { vm.openSession(null) },
+                    onNewSession = { vm.goToFiles() },
                     onResumeThread = { vm.openSession(it.id) },
+                )
+                Screen.Files -> FilesScreen(
+                    state = state,
+                    onNavigate = vm::browseDir,
+                    onUp = vm::browseUp,
+                    onStartHere = vm::startSessionInCurrentPath,
                 )
                 Screen.Session -> SessionScreen(
                     state = state,
@@ -674,6 +685,149 @@ private fun shortenCwd(cwd: String): String {
     val home = System.getProperty("user.home")
     val trimmed = if (home != null && cwd.startsWith(home)) "~" + cwd.substring(home.length) else cwd
     return if (trimmed.length > 30) "…" + trimmed.takeLast(27) else trimmed
+}
+
+// -------------------- Files screen --------------------
+
+@Composable
+private fun FilesScreen(
+    state: UiState,
+    onNavigate: (String) -> Unit,
+    onUp: () -> Unit,
+    onStartHere: () -> Unit,
+) {
+    val path = state.browsePath.ifEmpty { "/" }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "pick a folder for the new session".uppercase(),
+            color = InkDim,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+        )
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RectangleShape,
+            border = BorderStroke(1.dp, Line),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(10.dp)) {
+                Text(
+                    "CWD",
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                )
+                Text(
+                    path,
+                    color = Ink,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Button(
+                onClick = onUp,
+                enabled = path != "/",
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = Ink,
+                    disabledContainerColor = MaterialTheme.colorScheme.surface,
+                    disabledContentColor = InkDim,
+                ),
+                shape = RectangleShape,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("↑ up", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            }
+            Button(
+                onClick = onStartHere,
+                enabled = !state.browseLoading,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Amber,
+                    contentColor = Color.Black,
+                    disabledContainerColor = MaterialTheme.colorScheme.surface,
+                    disabledContentColor = InkDim,
+                ),
+                shape = RectangleShape,
+                modifier = Modifier.weight(2f),
+            ) {
+                Text("start session here", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            }
+        }
+        if (state.browseLoading && state.browseEntries.isEmpty()) {
+            Text(
+                "loading…",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(16.dp),
+            )
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                items(state.browseEntries, key = { it.fileName }) { entry ->
+                    FsRow(entry, onOpenDir = {
+                        onNavigate(joinPath(path, entry.fileName))
+                    })
+                }
+                if (state.browseEntries.isEmpty()) {
+                    item {
+                        Text(
+                            "empty",
+                            color = InkDim,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FsRow(entry: FsEntry, onOpenDir: () -> Unit) {
+    val dir = entry.isDirectory
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RectangleShape,
+        border = BorderStroke(1.dp, Line),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = dir, onClick = onOpenDir),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (dir) "▸" else " ",
+                color = if (dir) Amber else InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                entry.fileName,
+                color = if (dir) Ink else InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun joinPath(base: String, name: String): String {
+    val normalizedBase = if (base.endsWith("/")) base.dropLast(1) else base
+    return "$normalizedBase/$name".ifEmpty { "/$name" }
 }
 
 // -------------------- Session screen --------------------

@@ -297,6 +297,47 @@ async def issue_api_key(request: web.Request) -> web.Response:
     return web.json_response({"host_id": host_id, "token": token}, status=201)
 
 
+async def list_host_fs(request: web.Request) -> web.Response:
+    """Forward an fs/readDirectory to the daemon; return the entries as
+    JSON. Clients use this to browse the daemon's filesystem before
+    they pick a cwd for a new session."""
+    user = await require_user(request)
+    host_id = request.match_info["host_id"]
+    store: Store = request.app["store"]
+    hub: Hub = request.app["hub"]
+    if store.host_owner(host_id) != user["token"]:
+        raise web.HTTPNotFound(reason="host not found")
+    daemon_ws = hub.daemon_for(host_id)
+    if daemon_ws is None or daemon_ws.closed:
+        raise web.HTTPBadGateway(reason="host offline")
+    path = request.query.get("path") or ""
+    if not path:
+        raise web.HTTPBadRequest(reason="path query parameter required")
+    req_id = f"req_{uuid.uuid4().hex[:12]}"
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+    hub.pending_admin[req_id] = fut
+    try:
+        await daemon_ws.send_json({
+            "type": "fs-read-request",
+            "request_id": req_id,
+            "path": path,
+        })
+        try:
+            payload = await asyncio.wait_for(fut, timeout=15.0)
+        except asyncio.TimeoutError as exc:
+            raise web.HTTPGatewayTimeout(reason="daemon did not respond in time") from exc
+    finally:
+        hub.pending_admin.pop(req_id, None)
+    if "error" in payload:
+        raise web.HTTPBadGateway(reason=f"daemon error: {payload['error']}")
+    return web.json_response({
+        "host_id": host_id,
+        "path": payload.get("path", path),
+        "entries": payload.get("entries", []),
+    })
+
+
 async def list_host_threads(request: web.Request) -> web.Response:
     """Forward a `thread/list` request to the daemon, await the response."""
     user = await require_user(request)
@@ -356,6 +397,7 @@ async def open_session(request: web.Request) -> web.Response:
     body = await request.json()
     host_id = body.get("host_id")
     resume_thread_id = (body.get("thread_id") or "").strip() or None
+    cwd = (body.get("cwd") or "").strip() or None
     store: Store = request.app["store"]
     hub: Hub = request.app["hub"]
     if not host_id or store.host_owner(host_id) != user["token"]:
@@ -363,14 +405,20 @@ async def open_session(request: web.Request) -> web.Response:
     if hub.daemon_for(host_id) is None:
         raise web.HTTPBadGateway(reason="host offline")
     sid = store.open_session(host_id, user["token"])
-    # Stash the resume thread id against this session so ws_client can
-    # include it in the session-open frame it sends to the daemon.
+    # Stash per-session overrides so ws_client can thread them into the
+    # session-open frame it later sends to the daemon.
+    overrides: dict = {}
     if resume_thread_id:
-        request.app.setdefault("session_resume", {})[sid] = resume_thread_id
+        overrides["thread_id"] = resume_thread_id
+    if cwd:
+        overrides["cwd"] = cwd
+    if overrides:
+        request.app.setdefault("session_open_overrides", {})[sid] = overrides
     return web.json_response({
         "session_id": sid,
         "host_id": host_id,
         "thread_id": resume_thread_id,
+        "cwd": cwd,
     }, status=201)
 
 
@@ -432,7 +480,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     await client_ws.send_json(frame)
                 if ftype == "session-closed":
                     store.close_session(sid)
-            elif ftype == "threads-list-response":
+            elif ftype in ("threads-list-response", "fs-read-response"):
                 req_id = frame.get("request_id")
                 fut = hub.pending_admin.get(req_id) if req_id else None
                 if fut is not None and not fut.done():
@@ -495,11 +543,13 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             await ws.send_json({"type": "error", "error": "host offline"})
             await ws.close(code=4503, message=b"host offline")
             return ws
-        resume_map: dict = request.app.setdefault("session_resume", {})
-        resume_thread_id = resume_map.pop(session_id, None)
+        override_map: dict = request.app.setdefault("session_open_overrides", {})
+        overrides = override_map.pop(session_id, {}) or {}
         open_frame: dict = {"type": "session-open", "session_id": session_id}
-        if resume_thread_id:
-            open_frame["resume_thread_id"] = resume_thread_id
+        if overrides.get("thread_id"):
+            open_frame["resume_thread_id"] = overrides["thread_id"]
+        if overrides.get("cwd"):
+            open_frame["cwd"] = overrides["cwd"]
         await daemon_ws.send_json(open_frame)
 
         async for msg in ws:
@@ -541,6 +591,7 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     app.router.add_post("/api/hosts", register_host)
     app.router.add_post("/api/hosts/{host_id}/api-key", issue_api_key)
     app.router.add_get("/api/hosts/{host_id}/threads", list_host_threads)
+    app.router.add_get("/api/hosts/{host_id}/fs", list_host_fs)
     app.router.add_post("/api/sessions", open_session)
     app.router.add_get("/ws/daemon", ws_daemon)
     app.router.add_get("/ws/client", ws_client)
