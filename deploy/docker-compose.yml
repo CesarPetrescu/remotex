@@ -13,8 +13,9 @@ services:
       - relay-data:/data
     ports:
       # Bind to localhost only by default; front with Caddy (profile `tls`)
-      # or your own reverse proxy for anything public.
-      - "127.0.0.1:8080:8080"
+      # or your own reverse proxy for anything public. Override the host
+      # port with RELAY_HOST_PORT=… if :8080 is already taken.
+      - "${RELAY_HOST_BIND:-127.0.0.1}:${RELAY_HOST_PORT:-8080}:8080"
     networks:
       - remotex
     logging:

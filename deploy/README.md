@@ -1,14 +1,18 @@
 # Remotex deploy — Docker Compose
 
-Self-host the relay with one command. This is the "single box, no
-Kubernetes" path; see `prototype/docs/production_plan.md` for what
-needs to be done before you point real users at it.
+Self-host the relay + web client with one command. This is the
+"single box, no Kubernetes" path; see
+`prototype/docs/production_plan.md` for what needs to be done before
+you point real users at it.
 
 ## What's in here
 
 ```
 deploy/
-├── Dockerfile.relay     multi-stage-free Python image for prototype/relay
+├── Dockerfile.relay     multi-stage image: builds apps/web with Node,
+│                        then bundles the built assets into the relay
+│                        container so one image serves both the API
+│                        and the web UI.
 ├── docker-compose.yml   relay service + optional Caddy TLS profile
 ├── Caddyfile            TLS reverse proxy config (activated with --profile tls)
 ├── .env.example         variables for the tls profile
@@ -31,8 +35,10 @@ curl -H "Authorization: Bearer demo-user-token" \
      http://127.0.0.1:8080/api/hosts
 ```
 
-Web control UI is at http://127.0.0.1:8080/ (the one from
-`prototype/web/index.html`).
+Web control UI is at http://127.0.0.1:8080/ — it's the
+`apps/web/` React client, compiled into static assets during the
+image build and served by the relay itself (no separate web
+container).
 
 ## Quickstart — with TLS (Caddy + Let's Encrypt)
 
