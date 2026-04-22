@@ -23,10 +23,12 @@ item_type strings the relay + web client already use.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import shlex
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -208,6 +210,9 @@ class StdioCodexAdapter(SessionAdapter):
         # Live turn id — set on turn/started, cleared on turn/completed.
         # Needed because turn/interrupt wants turnId, not threadId.
         self._turn_id: str | None = None
+        # Temp files we wrote for localImage inputs on the current turn;
+        # cleared on turn-completed.
+        self._turn_tmp_files: list[str] = []
 
     # --- lifecycle -------------------------------------------------------
 
@@ -295,9 +300,48 @@ class StdioCodexAdapter(SessionAdapter):
                 log.warning("turn-start before thread ready; dropping")
                 return
             text = frame.get("input", "")
+            codex_input: list[dict] = []
+            if text:
+                codex_input.append({
+                    "type": "text",
+                    "text": text,
+                    "text_elements": [],
+                })
+            # Optional image attachments — each `{data: base64, mime: ...}`
+            # becomes a temp file that codex reads as a localImage input.
+            images = frame.get("images")
+            if isinstance(images, list):
+                for img in images:
+                    if not isinstance(img, dict):
+                        continue
+                    data = img.get("data")
+                    if not isinstance(data, str) or not data:
+                        continue
+                    suffix = _image_suffix(img.get("mime"))
+                    try:
+                        raw = base64.b64decode(data, validate=False)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("failed to decode image: %s", exc)
+                        continue
+                    fd, path = tempfile.mkstemp(prefix="remotex-img-", suffix=suffix)
+                    try:
+                        with os.fdopen(fd, "wb") as fh:
+                            fh.write(raw)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("failed to write image temp: %s", exc)
+                        continue
+                    self._turn_tmp_files.append(path)
+                    codex_input.append({"type": "localImage", "path": path})
+            if not codex_input:
+                # Shouldn't happen but codex rejects empty input.
+                codex_input.append({
+                    "type": "text",
+                    "text": "",
+                    "text_elements": [],
+                })
             params: dict = {
                 "threadId": self._thread_id,
-                "input": [{"type": "text", "text": text}],
+                "input": codex_input,
                 # Ask codex to stream reasoning summaries as deltas rather
                 # than only emitting them with item/completed at the end.
                 "summary": self._reasoning_summary,
@@ -468,6 +512,13 @@ class StdioCodexAdapter(SessionAdapter):
         elif method == "turn/completed":
             turn = params.get("turn", {})
             self._turn_id = None
+            # Clean up any image temp files we wrote for this turn.
+            for path in self._turn_tmp_files:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            self._turn_tmp_files.clear()
             await self._queue.put(SessionEvent("turn-completed", {
                 "turn_id": turn.get("id"),
                 "duration_ms": turn.get("durationMs"),
@@ -527,6 +578,20 @@ def _item_extras(item: dict) -> dict:
         if "changes" in item:
             extras["changes"] = item["changes"]
     return extras
+
+
+def _image_suffix(mime: str | None) -> str:
+    if not mime or not isinstance(mime, str):
+        return ".png"
+    m = mime.lower()
+    return {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/heic": ".heic",
+    }.get(m, ".png")
 
 
 def _summarize_reasoning(content) -> str:

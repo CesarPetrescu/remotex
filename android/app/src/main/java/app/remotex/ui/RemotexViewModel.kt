@@ -1,5 +1,8 @@
 package app.remotex.ui
 
+import android.app.Application
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -9,16 +12,22 @@ import app.remotex.model.UiEvent
 import app.remotex.net.RelayClient
 import app.remotex.net.SessionSocket
 import app.remotex.net.SocketEvent
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -36,6 +45,13 @@ data class SessionInfo(
     val cwd: String? = null,
 )
 
+data class PendingImage(
+    val uri: String,      // content:// URI for thumbnail
+    val mime: String,
+    val base64: String,   // encoded payload for the wire
+    val label: String,    // short filename for display
+)
+
 data class UiState(
     val screen: Screen = Screen.Hosts,
     val userToken: String = "demo-user-token",
@@ -51,6 +67,7 @@ data class UiState(
     val effort: String = "medium",   // none/minimal/low/medium/high/xhigh
     val threads: List<ThreadInfo> = emptyList(),
     val threadsLoading: Boolean = false,
+    val pendingImages: List<PendingImage> = emptyList(),
 )
 
 /**
@@ -97,7 +114,10 @@ val MODEL_OPTIONS = listOf(
 fun effortsFor(modelId: String): List<String> =
     MODEL_OPTIONS.firstOrNull { it.id == modelId }?.efforts ?: ALL_EFFORTS
 
-class RemotexViewModel(private val relayUrl: String) : ViewModel() {
+class RemotexViewModel(
+    application: Application,
+    private val relayUrl: String,
+) : AndroidViewModel(application) {
     private val client = RelayClient(baseUrl = relayUrl)
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -248,13 +268,19 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
 
     fun sendTurn(text: String) {
         val input = text.trim()
-        if (input.isEmpty()) return
+        val attachments = _state.value.pendingImages
+        if (input.isEmpty() && attachments.isEmpty()) return
         val sock = socket ?: return
         val userId = "u-${UUID.randomUUID().toString().take(8)}"
         _state.update {
             it.copy(
-                events = it.events + UiEvent.User(id = userId, text = input),
+                events = it.events + UiEvent.User(
+                    id = userId,
+                    text = input,
+                    imageUris = attachments.map { a -> a.uri },
+                ),
                 pending = true,
+                pendingImages = emptyList(),
             )
         }
         val model = _state.value.model.trim()
@@ -266,9 +292,56 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
                 put("input", input)
                 if (model.isNotEmpty()) put("model", model)
                 if (effort.isNotEmpty() && effort != "none") put("effort", effort)
+                if (attachments.isNotEmpty()) {
+                    put("images", buildJsonArray {
+                        attachments.forEach { img ->
+                            addJsonObject {
+                                put("mime", img.mime)
+                                put("data", img.base64)
+                            }
+                        }
+                    })
+                }
             },
         )
         sock.sendJson(frame)
+    }
+
+    /** Called from the UI when the user picks an image. Handles reading +
+     *  base64-encoding off the main thread. */
+    fun attachImage(uri: Uri) {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            try {
+                val (bytes, mime) = withContext(Dispatchers.IO) {
+                    val resolved = app.contentResolver.getType(uri) ?: "image/jpeg"
+                    val bytes = app.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IllegalStateException("empty stream for $uri")
+                    bytes to resolved
+                }
+                val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                val label = uri.lastPathSegment?.substringAfterLast('/') ?: "image"
+                _state.update {
+                    it.copy(
+                        pendingImages = it.pendingImages + PendingImage(
+                            uri = uri.toString(),
+                            mime = mime,
+                            base64 = b64,
+                            label = label.take(32),
+                        ),
+                    )
+                }
+            } catch (t: Throwable) {
+                _state.update { it.copy(error = "image: ${t.message ?: "read failed"}") }
+            }
+        }
+    }
+
+    fun removeImage(index: Int) {
+        _state.update { s ->
+            if (index !in s.pendingImages.indices) s
+            else s.copy(pendingImages = s.pendingImages.toMutableList().apply { removeAt(index) })
+        }
     }
 
     fun closeSession() {
@@ -391,11 +464,11 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
     }
 
     companion object {
-        fun factory(relayUrl: String): ViewModelProvider.Factory =
+        fun factory(application: Application, relayUrl: String): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                    RemotexViewModel(relayUrl) as T
+                    RemotexViewModel(application, relayUrl) as T
             }
     }
 }

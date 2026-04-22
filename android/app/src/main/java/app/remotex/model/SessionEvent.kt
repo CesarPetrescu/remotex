@@ -11,7 +11,12 @@ package app.remotex.model
 sealed class UiEvent {
     abstract val id: String
 
-    data class User(override val id: String, val text: String) : UiEvent()
+    data class User(
+        override val id: String,
+        val text: String,
+        /** URIs the user attached from their gallery; rendered as thumbnails. */
+        val imageUris: List<String> = emptyList(),
+    ) : UiEvent()
 
     data class Reasoning(
         override val id: String,

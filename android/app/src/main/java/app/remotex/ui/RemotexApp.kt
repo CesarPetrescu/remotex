@@ -22,9 +22,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
@@ -49,15 +55,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import app.remotex.model.Host
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
@@ -71,7 +81,10 @@ import app.remotex.ui.theme.Warn
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RemotexApp(relayUrl: String) {
-    val vm: RemotexViewModel = viewModel(factory = RemotexViewModel.factory(relayUrl))
+    val context = LocalContext.current
+    val vm: RemotexViewModel = viewModel(
+        factory = RemotexViewModel.factory(context.applicationContext as android.app.Application, relayUrl)
+    )
     val state by vm.state.collectAsState()
 
     LaunchedEffect(Unit) { vm.refresh() }
@@ -111,6 +124,8 @@ fun RemotexApp(relayUrl: String) {
                     onStop = vm::interruptTurn,
                     onModelChange = vm::setModel,
                     onEffortChange = vm::setEffort,
+                    onAttachImage = vm::attachImage,
+                    onRemoveImage = vm::removeImage,
                 )
             }
             state.error?.let { err ->
@@ -596,6 +611,8 @@ private fun SessionScreen(
     onStop: () -> Unit,
     onModelChange: (String) -> Unit,
     onEffortChange: (String) -> Unit,
+    onAttachImage: (android.net.Uri) -> Unit,
+    onRemoveImage: (Int) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         MetaBar(state)
@@ -610,10 +627,13 @@ private fun SessionScreen(
             pending = state.pending,
             model = state.model,
             effort = state.effort,
+            pendingImages = state.pendingImages,
             onModelChange = onModelChange,
             onEffortChange = onEffortChange,
             onSend = onSend,
             onStop = onStop,
+            onAttachImage = onAttachImage,
+            onRemoveImage = onRemoveImage,
         )
     }
 }
@@ -683,6 +703,24 @@ private fun EventRow(event: UiEvent, pending: Boolean) {
         is UiEvent.Tool -> Color(0xFF5F8FB0)
         is UiEvent.Agent -> Amber
         is UiEvent.System -> Line
+    }
+    if (event is UiEvent.User && event.imageUris.isNotEmpty()) {
+        Row(Modifier.padding(bottom = 4.dp)) {
+            Box(Modifier.width(2.dp).height(24.dp).background(accent))
+            Spacer(Modifier.width(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(event.imageUris) { uri ->
+                    AsyncImage(
+                        model = uri.toUri(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surface),
+                    )
+                }
+            }
+        }
     }
     Row {
         Box(
@@ -782,13 +820,21 @@ private fun ComposerBar(
     pending: Boolean,
     model: String,
     effort: String,
+    pendingImages: List<PendingImage>,
     onModelChange: (String) -> Unit,
     onEffortChange: (String) -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
+    onAttachImage: (android.net.Uri) -> Unit,
+    onRemoveImage: (Int) -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
     val textEnabled = connected && !pending
+    val picker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) onAttachImage(uri)
+    }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth(),
@@ -799,6 +845,39 @@ private fun ComposerBar(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            // Row 0 — attached image thumbnails (only when we have some)
+            if (pendingImages.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(pendingImages.size) { idx ->
+                        Box(Modifier.size(56.dp)) {
+                            AsyncImage(
+                                model = pendingImages[idx].uri.toUri(),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                            )
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.7f))
+                                    .clickable { onRemoveImage(idx) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = "Remove",
+                                    tint = Ink,
+                                    modifier = Modifier.size(12.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             // Row 1 — model + effort as compact chips
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CompactModelPicker(
@@ -813,8 +892,22 @@ private fun ComposerBar(
                     modifier = Modifier.weight(1f),
                 )
             }
-            // Row 2 — prompt + send/stop
+            // Row 2 — attach + prompt + send/stop
             Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = {
+                        picker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    enabled = textEnabled,
+                ) {
+                    Icon(
+                        Icons.Filled.AttachFile,
+                        contentDescription = "Attach image",
+                        tint = if (textEnabled) Ink else InkDim,
+                    )
+                }
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(22.dp),
@@ -857,7 +950,7 @@ private fun ComposerBar(
                 Spacer(Modifier.width(8.dp))
                 SendOrStopButton(
                     pending = pending,
-                    canSend = textEnabled && text.isNotBlank(),
+                    canSend = textEnabled && (text.isNotBlank() || pendingImages.isNotEmpty()),
                     onSend = { onSend(text); text = "" },
                     onStop = onStop,
                 )
