@@ -42,3 +42,16 @@ Thumbs.db
 *.swo
 *~
 android/local.properties
+
+# Codex working dir (created when daemon spawns `codex app-server`)
+.codex/
+
+# Android build artifacts
+android/.gradle/
+android/build/
+android/app/build/
+android/captures/
+android/.cxx/
+*.apk
+*.aab
+*.keystore
