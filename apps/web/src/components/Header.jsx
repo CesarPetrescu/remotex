@@ -1,29 +1,21 @@
-export default function Header({ status }) {
-  const { kind, text } = statusDisplay(status);
+import { StatusBadge } from './StatusBadge';
+import { SCREENS } from '../config';
+
+// Top bar across every screen. Shows the Remotex brand, the current
+// session status, and a back affordance on non-root screens.
+export function Header({ state, onBack }) {
+  const showBack = state.screen !== SCREENS.Hosts;
   return (
     <header className="bar">
+      {showBack ? (
+        <button type="button" className="back" onClick={onBack} aria-label="Back">
+          ←
+        </button>
+      ) : (
+        <span className="back-spacer" />
+      )}
       <span className="brand">REMOTEX</span>
-      <span className="status">
-        <span className={`dot ${kind}`} />
-        <span>{text}</span>
-      </span>
+      <StatusBadge status={state.status} />
     </header>
   );
-}
-
-function statusDisplay(status) {
-  switch (status) {
-    case 'connected':
-      return { kind: 'ok', text: 'connected' };
-    case 'connecting':
-    case 'opening':
-      return { kind: '', text: 'connecting…' };
-    case 'closed':
-    case 'disconnected':
-      return { kind: 'warn', text: 'disconnected' };
-    case 'error':
-      return { kind: 'warn', text: 'error' };
-    default:
-      return { kind: '', text: 'idle' };
-  }
 }

@@ -1,12 +1,19 @@
 import { useEffect } from 'react';
 
-export default function Toast({ message, onDismiss, durationMs = 4000 }) {
+// Bottom-right transient toast. Two flavours — error (red border,
+// stays until dismissed) and info (neutral border, auto-fades after
+// `durationMs`). Same shape as Android's error/slash-feedback banner.
+export function Toast({ message, onDismiss, tone = 'info', durationMs = 3500 }) {
   useEffect(() => {
-    if (!message) return;
+    if (!message || tone === 'error') return undefined;
     const t = setTimeout(onDismiss, durationMs);
     return () => clearTimeout(t);
-  }, [message, onDismiss, durationMs]);
+  }, [message, onDismiss, durationMs, tone]);
 
   if (!message) return null;
-  return <div className="toast">{message}</div>;
+  return (
+    <div className={`toast ${tone}`} onClick={onDismiss}>
+      {message}
+    </div>
+  );
 }

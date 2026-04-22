@@ -1,0 +1,628 @@
+// Top-level hook that owns all web-client state. Equivalent to
+// Android's RemotexViewModel — host list, thread list, file browser,
+// and the session machine all live here, plus navigation. Kept as one
+// reducer so transitions are easy to reason about, mirroring the
+// Kotlin ViewModel one-state-object shape.
+
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { RelayClient } from '../api/relayClient';
+import { SessionSocket } from '../api/sessionSocket';
+import { SCREENS, STATUS, effortsFor } from '../config';
+import { parseSlash } from '../util/slash';
+import { parentPath } from '../util/path';
+
+const TOKEN_KEY = 'remotex.userToken';
+const loadToken = () => {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || 'demo-user-token';
+  } catch {
+    return 'demo-user-token';
+  }
+};
+
+const initialState = {
+  screen: SCREENS.Hosts,
+  userToken: loadToken(),
+  hosts: [],
+  hostsLoading: false,
+  selectedHostId: null,
+  threads: [],
+  threadsLoading: false,
+  browsePath: '',
+  browseEntries: [],
+  browseLoading: false,
+  status: STATUS.Idle,
+  session: null,
+  events: [],
+  pending: false,
+  model: '',
+  effort: 'medium',
+  permissions: 'default',
+  pendingImages: [],
+  pendingApproval: null,
+  slashFeedback: null,
+  planMode: false,
+  error: null,
+};
+
+// --- reducer ---
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'SET_TOKEN':
+      return { ...state, userToken: action.token };
+    case 'SET_SCREEN':
+      return { ...state, screen: action.screen };
+    case 'SET_ERROR':
+      return { ...state, error: action.error };
+    case 'CLEAR_FEEDBACK':
+      return { ...state, slashFeedback: null };
+
+    case 'HOSTS':
+      return { ...state, hosts: action.hosts, hostsLoading: false };
+    case 'HOSTS_LOADING':
+      return { ...state, hostsLoading: action.loading };
+
+    case 'SELECT_HOST':
+      return { ...state, selectedHostId: action.id };
+    case 'THREADS':
+      return { ...state, threads: action.threads, threadsLoading: false };
+    case 'THREADS_LOADING':
+      return { ...state, threadsLoading: action.loading };
+
+    case 'BROWSE_LOADING':
+      return {
+        ...state,
+        browseLoading: action.loading,
+        browsePath: action.path ?? state.browsePath,
+      };
+    case 'BROWSE':
+      return {
+        ...state,
+        browsePath: action.path,
+        browseEntries: action.entries,
+        browseLoading: false,
+      };
+
+    case 'SESSION_RESET':
+      return {
+        ...state,
+        events: [],
+        session: null,
+        pendingApproval: null,
+        slashFeedback: null,
+        pendingImages: [],
+        pending: false,
+        planMode: false,
+        status: action.status ?? STATUS.Idle,
+      };
+    case 'SESSION_ATTACHED':
+      return { ...state, session: action.session, status: STATUS.Connecting };
+    case 'SESSION_INFO':
+      return { ...state, session: { ...(state.session || {}), ...action.info } };
+    case 'SESSION_STATUS':
+      return { ...state, status: action.status };
+
+    case 'APPEND_EVENT':
+      return { ...state, events: [...state.events, action.event] };
+    case 'APPEND_DELTA':
+      return {
+        ...state,
+        events: state.events.map((e) => {
+          if (e.id !== action.id) return e;
+          if (e.role === 'tool') {
+            return { ...e, output: (e.output || '') + action.delta };
+          }
+          return { ...e, text: (e.text || '') + action.delta };
+        }),
+      };
+    case 'COMPLETE_EVENT':
+      return {
+        ...state,
+        events: state.events.map((e) =>
+          e.id === action.id ? { ...e, ...action.patch, completed: true } : e,
+        ),
+      };
+
+    case 'PENDING':
+      return { ...state, pending: action.pending };
+
+    case 'SET_MODEL':
+      return {
+        ...state,
+        model: action.model,
+        effort: effortsFor(action.model).includes(state.effort) ? state.effort : '',
+      };
+    case 'SET_EFFORT':
+      return { ...state, effort: action.effort };
+    case 'SET_PERMS':
+      return { ...state, permissions: action.permissions };
+
+    case 'ATTACH_IMAGE':
+      return { ...state, pendingImages: [...state.pendingImages, action.image] };
+    case 'REMOVE_IMAGE':
+      return {
+        ...state,
+        pendingImages: state.pendingImages.filter((_, i) => i !== action.index),
+      };
+    case 'CLEAR_IMAGES':
+      return { ...state, pendingImages: [] };
+
+    case 'APPROVAL_REQUEST':
+      return { ...state, pendingApproval: action.prompt };
+    case 'APPROVAL_CLEAR':
+      return { ...state, pendingApproval: null };
+
+    case 'SLASH_FEEDBACK':
+      return { ...state, slashFeedback: action.text };
+    case 'SET_PLAN':
+      return { ...state, planMode: action.on };
+
+    default:
+      return state;
+  }
+}
+
+// --- hook ---
+
+export function useRemotex() {
+  const [state, dispatch] = useReducer(reducer, initialState);
+
+  // Mutable plumbing — reducer state is derived output, these are the
+  // I/O handles that outlive renders.
+  const apiRef = useRef(new RelayClient(state.userToken));
+  const socketRef = useRef(null);
+  const reconnectRef = useRef(null);
+  const userClosedRef = useRef(false);
+  // Latest sendTurn inputs (model/effort/perms/images) — read lazily so
+  // sendTurn doesn't invalidate on every picker tweak.
+  const latestInputsRef = useRef({});
+  latestInputsRef.current = {
+    model: state.model,
+    effort: state.effort,
+    permissions: state.permissions,
+    pendingImages: state.pendingImages,
+    pendingApproval: state.pendingApproval,
+    browsePath: state.browsePath,
+    selectedHostId: state.selectedHostId,
+    userToken: state.userToken,
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TOKEN_KEY, state.userToken);
+    } catch {
+      // ignore
+    }
+    apiRef.current.setToken(state.userToken);
+  }, [state.userToken]);
+
+  // --- helpers ---
+
+  const closeSession = useCallback(() => {
+    userClosedRef.current = true;
+    if (reconnectRef.current) {
+      clearTimeout(reconnectRef.current);
+      reconnectRef.current = null;
+    }
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+    dispatch({ type: 'SESSION_RESET', status: STATUS.Idle });
+  }, []);
+
+  const handleFrame = useCallback((frame) => {
+    if (frame.type === 'attached') {
+      dispatch({ type: 'SESSION_STATUS', status: STATUS.Connected });
+      dispatch({
+        type: 'SESSION_INFO',
+        info: { sessionId: frame.session_id, hostId: frame.host_id },
+      });
+      return;
+    }
+    if (frame.type === 'session-closed') {
+      dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
+      dispatch({ type: 'PENDING', pending: false });
+      return;
+    }
+    if (frame.type === 'error') {
+      dispatch({ type: 'SET_ERROR', error: frame.error || 'relay error' });
+      return;
+    }
+    if (frame.type !== 'session-event') return;
+
+    const ev = frame.event || {};
+    const data = ev.data || {};
+    switch (ev.kind) {
+      case 'session-started':
+        dispatch({ type: 'SESSION_STATUS', status: STATUS.Connected });
+        dispatch({
+          type: 'SESSION_INFO',
+          info: { model: data.model, cwd: data.cwd },
+        });
+        return;
+      case 'item-started': {
+        const ev = buildItemEvent(data);
+        if (ev) dispatch({ type: 'APPEND_EVENT', event: ev });
+        return;
+      }
+      case 'item-delta':
+        if (data.delta) {
+          dispatch({ type: 'APPEND_DELTA', id: data.item_id, delta: data.delta });
+        }
+        return;
+      case 'item-completed': {
+        const patch = {};
+        if (data.item_type === 'agent_message' || data.item_type === 'agent_reasoning') {
+          if (data.text) patch.text = data.text;
+        } else if (data.item_type === 'tool_call') {
+          if (data.output) patch.output = data.output;
+        }
+        dispatch({ type: 'COMPLETE_EVENT', id: data.item_id, patch });
+        return;
+      }
+      case 'turn-completed':
+        dispatch({ type: 'PENDING', pending: false });
+        return;
+      case 'approval-request':
+        dispatch({
+          type: 'APPROVAL_REQUEST',
+          prompt: {
+            approvalId: data.approval_id,
+            kind: data.kind,
+            reason: data.reason,
+            command: data.command,
+            cwd: data.cwd,
+            decisions: data.decisions || ['accept', 'decline'],
+          },
+        });
+        return;
+      case 'slash-ack': {
+        const cmd = data.command || '?';
+        const ok = data.ok === true;
+        const text = data.message
+          ? `/${cmd} — ${data.message}`
+          : !ok
+          ? `/${cmd} failed: ${data.error || 'unknown error'}`
+          : `/${cmd} ok`;
+        dispatch({ type: 'SLASH_FEEDBACK', text });
+        return;
+      }
+      case 'collab-modes': {
+        const names = (data.modes || []).map((m) => m.name).filter(Boolean);
+        dispatch({
+          type: 'SLASH_FEEDBACK',
+          text: `collab modes: ${names.join(', ')}`,
+        });
+        return;
+      }
+      case 'turn-started':
+      case 'history-begin':
+      case 'history-end':
+      case 'thread-status':
+        return;
+      default:
+        return;
+    }
+  }, []);
+
+  // attachSocket + scheduleReconnect form a cycle (attach emits
+  // disconnect → schedule → reattach). Use refs to break the cycle so
+  // each callback is stable and neither needs the other in its deps.
+  const attachSocketRef = useRef(null);
+  const scheduleReconnectRef = useRef(null);
+
+  const attachSocket = useCallback(
+    (sid) => {
+      const userToken = latestInputsRef.current.userToken;
+      const sock = new SessionSocket({
+        userToken,
+        sessionId: sid,
+        onStatus: (s) => {
+          if (s === 'connecting') {
+            dispatch({ type: 'SESSION_STATUS', status: STATUS.Connecting });
+          }
+          if (s === 'disconnected' || s === 'error') {
+            if (userClosedRef.current) {
+              dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
+              return;
+            }
+            dispatch({ type: 'PENDING', pending: false });
+            dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
+            scheduleReconnectRef.current?.(sid, 0);
+          }
+        },
+        onFrame: handleFrame,
+      });
+      socketRef.current = sock;
+    },
+    [handleFrame],
+  );
+  attachSocketRef.current = attachSocket;
+
+  const scheduleReconnect = useCallback((sid, attempt) => {
+    const delays = [1000, 2000, 4000, 8000, 16000];
+    if (attempt >= delays.length) {
+      dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });
+      dispatch({ type: 'SET_ERROR', error: 'disconnected — tap to reload' });
+      return;
+    }
+    reconnectRef.current = setTimeout(() => {
+      dispatch({ type: 'SESSION_STATUS', status: STATUS.Connecting });
+      attachSocketRef.current?.(sid);
+      setTimeout(() => {
+        if (socketRef.current?.ws.readyState === WebSocket.OPEN) return;
+        scheduleReconnectRef.current?.(sid, attempt + 1);
+      }, 2000);
+    }, delays[attempt]);
+  }, []);
+  scheduleReconnectRef.current = scheduleReconnect;
+
+  // --- navigation ---
+
+  const goToHosts = useCallback(() => {
+    closeSession();
+    dispatch({ type: 'SET_SCREEN', screen: SCREENS.Hosts });
+  }, [closeSession]);
+
+  const goToThreads = useCallback(() => {
+    dispatch({ type: 'SET_SCREEN', screen: SCREENS.Threads });
+  }, []);
+
+  const refreshHosts = useCallback(async () => {
+    dispatch({ type: 'HOSTS_LOADING', loading: true });
+    try {
+      const hosts = await apiRef.current.listHosts();
+      dispatch({ type: 'HOSTS', hosts });
+    } catch (t) {
+      dispatch({ type: 'HOSTS_LOADING', loading: false });
+      dispatch({ type: 'SET_ERROR', error: t.message });
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshHosts();
+  }, [refreshHosts]);
+
+  const refreshThreads = useCallback(
+    async (hostOverride) => {
+      const target = hostOverride || latestInputsRef.current.selectedHostId;
+      if (!target) return;
+      dispatch({ type: 'THREADS_LOADING', loading: true });
+      try {
+        const threads = await apiRef.current.listThreads(target, 25);
+        dispatch({ type: 'THREADS', threads });
+      } catch (t) {
+        dispatch({ type: 'THREADS_LOADING', loading: false });
+        dispatch({ type: 'SET_ERROR', error: t.message });
+      }
+    },
+    [],
+  );
+
+  const openHost = useCallback(
+    (host) => {
+      if (!host.online) {
+        dispatch({ type: 'SET_ERROR', error: `${host.nickname} is offline` });
+        return;
+      }
+      dispatch({ type: 'SELECT_HOST', id: host.id });
+      dispatch({ type: 'SET_SCREEN', screen: SCREENS.Threads });
+      refreshThreads(host.id);
+    },
+    [refreshThreads],
+  );
+
+  const browseDir = useCallback(async (path) => {
+    const target = latestInputsRef.current.selectedHostId;
+    if (!target) return;
+    dispatch({ type: 'BROWSE_LOADING', loading: true, path });
+    try {
+      const r = await apiRef.current.readDirectory(target, path);
+      const entries = r.entries.slice().sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+        return a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base' });
+      });
+      dispatch({ type: 'BROWSE', path: r.path, entries });
+    } catch (t) {
+      dispatch({ type: 'BROWSE_LOADING', loading: false });
+      dispatch({ type: 'SET_ERROR', error: t.message });
+    }
+  }, []);
+
+  const goToFiles = useCallback(
+    (initialPath) => {
+      dispatch({ type: 'SET_SCREEN', screen: SCREENS.Files });
+      const start = initialPath || latestInputsRef.current.browsePath || '/';
+      browseDir(start);
+    },
+    [browseDir],
+  );
+
+  const browseUp = useCallback(() => {
+    const p = latestInputsRef.current.browsePath || '/';
+    if (p === '/') return;
+    browseDir(parentPath(p));
+  }, [browseDir]);
+
+  // --- session ---
+
+  const openSession = useCallback(
+    async ({ threadId = null, cwd = null } = {}) => {
+      const hostId = latestInputsRef.current.selectedHostId;
+      if (!hostId) return;
+      closeSession();
+      userClosedRef.current = false;
+      dispatch({ type: 'SESSION_RESET', status: STATUS.Opening });
+      dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
+      try {
+        const sid = await apiRef.current.openSession(hostId, { threadId, cwd });
+        dispatch({
+          type: 'SESSION_ATTACHED',
+          session: { sessionId: sid, hostId, cwd: cwd || null },
+        });
+        attachSocket(sid);
+      } catch (t) {
+        dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });
+        dispatch({ type: 'SET_ERROR', error: t.message });
+      }
+    },
+    [attachSocket, closeSession],
+  );
+
+  const sendTurn = useCallback(
+    (rawText) => {
+      const input = (rawText || '').trim();
+      const { pendingImages, model, effort, permissions } = latestInputsRef.current;
+      if (!input && pendingImages.length === 0) return;
+      const sock = socketRef.current;
+      if (!sock) return;
+
+      if (pendingImages.length === 0) {
+        const slash = parseSlash(input);
+        if (slash) {
+          sock.sendSlash(slash.cmd, slash.args);
+          if (slash.cmd === 'plan') dispatch({ type: 'SET_PLAN', on: true });
+          if (slash.cmd === 'default') dispatch({ type: 'SET_PLAN', on: false });
+          return;
+        }
+      }
+
+      const userId = `u-${Math.random().toString(36).slice(2, 10)}`;
+      dispatch({
+        type: 'APPEND_EVENT',
+        event: {
+          id: userId,
+          role: 'user',
+          text: input,
+          imageUrls: pendingImages.map((a) => a.dataUrl),
+        },
+      });
+      dispatch({ type: 'CLEAR_IMAGES' });
+      dispatch({ type: 'PENDING', pending: true });
+      sock.sendTurn({
+        input,
+        model,
+        effort,
+        permissions,
+        images: pendingImages.map((a) => ({ mime: a.mime, data: a.base64 })),
+      });
+    },
+    [],
+  );
+
+  const interruptTurn = useCallback(() => {
+    socketRef.current?.sendInterrupt();
+  }, []);
+
+  const resolveApproval = useCallback((decision) => {
+    const pending = latestInputsRef.current.pendingApproval;
+    if (!pending) return;
+    socketRef.current?.sendApproval(pending.approvalId, decision);
+    dispatch({ type: 'APPROVAL_CLEAR' });
+  }, []);
+
+  const attachImage = useCallback(async (file) => {
+    try {
+      const base64 = await readAsBase64(file);
+      const dataUrl = `data:${file.type};base64,${base64}`;
+      dispatch({
+        type: 'ATTACH_IMAGE',
+        image: { dataUrl, mime: file.type, base64, label: file.name.slice(-32) },
+      });
+    } catch (t) {
+      dispatch({ type: 'SET_ERROR', error: `image: ${t.message || 'read failed'}` });
+    }
+  }, []);
+
+  const removeImage = useCallback((index) => {
+    dispatch({ type: 'REMOVE_IMAGE', index });
+  }, []);
+
+  // --- public surface ---
+
+  return useMemo(
+    () => ({
+      state,
+      setToken: (t) => dispatch({ type: 'SET_TOKEN', token: t }),
+      setModel: (m) => dispatch({ type: 'SET_MODEL', model: m }),
+      setEffort: (e) => dispatch({ type: 'SET_EFFORT', effort: e }),
+      setPermissions: (p) => dispatch({ type: 'SET_PERMS', permissions: p }),
+      clearFeedback: () => dispatch({ type: 'CLEAR_FEEDBACK' }),
+      clearError: () => dispatch({ type: 'SET_ERROR', error: null }),
+      goToHosts,
+      goToThreads,
+      goToFiles,
+      refreshHosts,
+      openHost,
+      refreshThreads,
+      browseDir,
+      browseUp,
+      openSession,
+      startSessionInCurrentPath: () =>
+        openSession({ cwd: latestInputsRef.current.browsePath || null }),
+      closeSession,
+      sendTurn,
+      interruptTurn,
+      resolveApproval,
+      attachImage,
+      removeImage,
+    }),
+    [
+      state,
+      goToHosts,
+      goToThreads,
+      goToFiles,
+      refreshHosts,
+      openHost,
+      refreshThreads,
+      browseDir,
+      browseUp,
+      openSession,
+      closeSession,
+      sendTurn,
+      interruptTurn,
+      resolveApproval,
+      attachImage,
+      removeImage,
+    ],
+  );
+}
+
+// --- helpers ---
+
+function buildItemEvent(data) {
+  const id = data.item_id;
+  const replayed = Boolean(data.replayed);
+  switch (data.item_type) {
+    case 'agent_reasoning':
+      return { id, role: 'reasoning', text: data.text || '', completed: replayed };
+    case 'agent_message':
+      return { id, role: 'agent', text: data.text || '', completed: replayed };
+    case 'tool_call':
+      return {
+        id,
+        role: 'tool',
+        tool: data.tool || 'tool',
+        command: data.args?.command || '',
+        output: data.output || '',
+        completed: replayed,
+      };
+    case 'user_message':
+      return { id, role: 'user', text: data.text || '' };
+    default:
+      return { id, role: 'system', label: data.item_type || 'item', detail: '' };
+  }
+}
+
+async function readAsBase64(file) {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}

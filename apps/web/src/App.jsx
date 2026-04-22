@@ -1,121 +1,84 @@
-import { useEffect, useMemo, useState } from 'react';
-import { RelayApi } from './api.js';
-import { useHosts } from './hooks/useHosts.js';
-import { useSession } from './hooks/useSession.js';
-import Header from './components/Header.jsx';
-import HostList from './components/HostList.jsx';
-import EventStream from './components/EventStream.jsx';
-import Composer from './components/Composer.jsx';
-import Toast from './components/Toast.jsx';
-
-const TOKEN_KEY = 'remotex.userToken';
+import { useEffect } from 'react';
+import { useRemotex } from './hooks/useRemotex';
+import { SCREENS } from './config';
+import { Header } from './components/Header';
+import { Toast } from './components/Toast';
+import { ApprovalDialog } from './components/ApprovalDialog';
+import { HostsScreen } from './screens/HostsScreen';
+import { ThreadsScreen } from './screens/ThreadsScreen';
+import { FilesScreen } from './screens/FilesScreen';
+import { SessionScreen } from './screens/SessionScreen';
 
 export default function App() {
-  const [token, setToken] = useState(() => {
-    try {
-      return localStorage.getItem(TOKEN_KEY) || 'demo-user-token';
-    } catch {
-      return 'demo-user-token';
+  const r = useRemotex();
+  const { state } = r;
+
+  // Back-button stack: Session → Threads, Threads → Hosts, Hosts → no-op
+  function onBack() {
+    if (state.screen === SCREENS.Session) {
+      r.closeSession();
+      r.goToThreads();
+    } else if (state.screen === SCREENS.Files) {
+      r.goToThreads();
+    } else if (state.screen === SCREENS.Threads) {
+      r.goToHosts();
     }
-  });
-  const [selectedHostId, setSelectedHostId] = useState(null);
-  const [toast, setToast] = useState(null);
-
-  const api = useMemo(() => new RelayApi(token), [token]);
-  const { hosts, loading, error: hostsError, refresh } = useHosts(api);
-  const session = useSession({ api, token, hostId: selectedHostId });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(TOKEN_KEY, token);
-    } catch {
-      // ignore storage failures
-    }
-  }, [token]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (hostsError) setToast(hostsError);
-  }, [hostsError]);
-
-  useEffect(() => {
-    if (session.error) setToast(session.error);
-  }, [session.error]);
-
-  const selectedHost = hosts.find((h) => h.id === selectedHostId);
-  const canOpen = !!selectedHost && selectedHost.online && session.status === 'idle';
-
-  function handleSelect(host) {
-    setSelectedHostId(host.id);
-    if (session.status !== 'idle') session.close();
   }
+
+  // Browser back button mirrors the top-bar arrow.
+  useEffect(() => {
+    function onPop() {
+      onBack();
+    }
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.screen]);
 
   return (
     <div className="app">
-      <Header status={session.status} />
-      <div className="main">
-        <aside className="sidebar">
-          <div className="auth">
-            <label htmlFor="token">User token</label>
-            <input
-              id="token"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              spellCheck={false}
-            />
-            <button onClick={refresh}>Load hosts</button>
-          </div>
-          <div>
-            <h3>Hosts</h3>
-            <HostList
-              hosts={hosts}
-              selected={selectedHostId}
-              onSelect={handleSelect}
-              loading={loading}
-            />
-          </div>
-          <div>
-            <h3>Session</h3>
-            <button disabled={!canOpen} onClick={session.open}>
-              Open session
-            </button>
-            {session.status !== 'idle' && (
-              <button style={{ marginTop: 6 }} onClick={session.close}>
-                Close
-              </button>
-            )}
-          </div>
-        </aside>
-
-        <section className="session">
-          <div className="meta">
-            {session.sessionInfo
-              ? `session ${session.sessionInfo.sessionId} on ${session.sessionInfo.hostId}` +
-                (session.sessionInfo.model ? ` · ${session.sessionInfo.model}` : '') +
-                (session.sessionInfo.cwd ? ` · ${session.sessionInfo.cwd}` : '')
-              : 'no session'}
-          </div>
-          <div className="stream">
-            <EventStream
-              events={session.events}
-              pending={session.pending}
-              placeholder={
-                session.status === 'connected'
-                  ? 'send a prompt to start…'
-                  : 'Load hosts, pick one, open a session.'
-              }
-            />
-          </div>
-          <Composer
-            disabled={session.status !== 'connected' || session.pending}
-            onSend={session.sendTurn}
+      <Header state={state} onBack={onBack} />
+      <main className="screen-host">
+        {state.screen === SCREENS.Hosts && (
+          <HostsScreen
+            state={state}
+            onTokenChange={r.setToken}
+            onRefresh={r.refreshHosts}
+            onHostTap={r.openHost}
           />
-        </section>
-      </div>
-      <Toast message={toast} onDismiss={() => setToast(null)} />
+        )}
+        {state.screen === SCREENS.Threads && (
+          <ThreadsScreen
+            state={state}
+            onRefresh={r.refreshThreads}
+            onNewSession={() => r.goToFiles()}
+            onResumeThread={(t) => r.openSession({ threadId: t.id })}
+          />
+        )}
+        {state.screen === SCREENS.Files && (
+          <FilesScreen
+            state={state}
+            onNavigate={r.browseDir}
+            onUp={r.browseUp}
+            onStartHere={r.startSessionInCurrentPath}
+          />
+        )}
+        {state.screen === SCREENS.Session && (
+          <SessionScreen
+            state={state}
+            onSend={r.sendTurn}
+            onStop={r.interruptTurn}
+            onModelChange={r.setModel}
+            onEffortChange={r.setEffort}
+            onPermissionsChange={r.setPermissions}
+            onAttachImage={r.attachImage}
+            onRemoveImage={r.removeImage}
+          />
+        )}
+      </main>
+      <ApprovalDialog prompt={state.pendingApproval} onDecision={r.resolveApproval} />
+      <Toast message={state.error} tone="error" onDismiss={r.clearError} />
+      <Toast message={state.slashFeedback} tone="info" onDismiss={r.clearFeedback} />
     </div>
   );
 }
