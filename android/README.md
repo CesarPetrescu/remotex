@@ -23,25 +23,32 @@ What's **not** done (tracked in the root `README.md` roadmap):
 
 ## Build
 
-You need Android Studio (Giraffe+) or command-line Android tooling.
+Requirements:
 
-First time only, generate the Gradle wrapper:
+- JDK 17 (OpenJDK or Temurin works).
+- Android SDK with `platforms;android-35` + `build-tools;34.0.0`.
+  Android Studio installs both; headless machines can use
+  `cmdline-tools/latest/bin/sdkmanager`.
+
+Set `sdk.dir` by copying the template:
+
+```bash
+cp android/local.properties.example android/local.properties
+# Edit if your SDK lives somewhere other than /opt/android-sdk.
+```
+
+Then (wrapper is already committed, no bootstrap needed):
 
 ```bash
 cd android
-# With Gradle 8.11.1 already installed on the host:
-gradle wrapper --gradle-version 8.11.1
-# ...or open the folder in Android Studio and it'll do this for you.
+./gradlew assembleDebug      # app/build/outputs/apk/debug/app-debug.apk  (~17 MB)
+./gradlew installDebug       # to a connected device/emulator
+./gradlew lint               # Android lint
 ```
 
-Then:
-
-```bash
-./gradlew assembleDebug                      # builds app/build/outputs/apk/debug/app-debug.apk
-./gradlew installDebug                       # installs to a connected device/emulator
-./gradlew lint                               # Android lint
-./gradlew lint assembleDebug --no-daemon     # what the CI job runs
-```
+CI builds `assembleDebug` on every PR + push to main and uploads the
+APK as a workflow artifact — grab it from the Actions run summary
+without needing a local toolchain.
 
 ### Pointing at your relay
 
@@ -96,7 +103,14 @@ android/
 
 ## CI
 
-`.github/workflows/ci.yml` has a gated Android job that auto-activates
-as soon as `android/gradlew` exists. Run `gradle wrapper` once, commit
-the wrapper files, and the next push to `main` / PR will build the
-debug APK on every change.
+`.github/workflows/ci.yml` has an `android` job that runs on every
+push / PR to `main`:
+
+1. `actions/setup-java@v4` with Temurin 17.
+2. `android-actions/setup-android@v3` installs
+   `platforms;android-35`, `build-tools;34.0.0`, `platform-tools`.
+3. `~/.gradle` cache keyed on the wrapper + gradle file hashes.
+4. `./gradlew assembleDebug --no-daemon --stacktrace`.
+5. Uploads `app-debug.apk` as a workflow artifact.
+
+Failing the Android build fails the PR status check.

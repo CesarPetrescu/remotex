@@ -11,10 +11,11 @@ Remotex is a three-legged system:
 - and a set of **clients** (web, Android, wireframes for design work)
   that drive sessions from anywhere.
 
-The backbone is working end-to-end against a mock Codex adapter. The
-roadmap below is ordered — CI, linting, and Docker Compose deploy are
-done; real Codex stdio, OIDC auth, Postgres, and finished UIs are
-next.
+The backbone is working end-to-end against **real Codex** (via
+`codex app-server`, stdio transport). A mock adapter is still
+shipped for tests and offline demos. The roadmap below is ordered —
+CI, linting, Docker Compose deploy, and real Codex are done; OIDC
+auth, Postgres, approvals, and finished UIs are next.
 
 ## Demo
 
@@ -35,9 +36,11 @@ four surfaces, three variants each:
 ![Remotex desktop web wireframes](docs/screenshots/webapp-desktop.png)
 ![Remotex mobile web wireframes](docs/screenshots/webapp-mobile.png)
 
-**Android** (`android/`) — Kotlin + Jetpack Compose skeleton. Runs
-against the same relay once you open it in Android Studio. (Emulator
-screenshots land here once the app grows past skeleton stage.)
+**Android** (`android/`) — Kotlin + Jetpack Compose. Builds to a
+17 MB `app-debug.apk` via `./gradlew assembleDebug`; CI uploads the
+APK as a workflow artifact on every change. Device screenshots land
+here once the app grows past skeleton-of-screens (currently: token
+field, host list, session opener, raw-frame log).
 
 ## Repo layout
 
@@ -71,7 +74,10 @@ Each subproject has its own README with details:
 
 ## Quick start
 
-### 1. Run the relay + a mock daemon
+### 1. Run the relay + a real-Codex daemon
+
+You need the [`codex` CLI](https://github.com/openai/codex) installed
+and logged in (`codex login`).
 
 ```bash
 cd prototype
@@ -81,10 +87,15 @@ python3 relay/app.py                          # :8080, demo tokens seeded
 python3 -m daemon init \
     --relay-url ws://127.0.0.1:8080/ws/daemon \
     --bridge-token demo-bridge-token \
-    --nickname devbox --mode mock \
+    --nickname devbox \
+    --mode stdio \
+    --default-cwd "$PWD" \
     --config ./demo-config.toml
 python3 -m daemon run --config ./demo-config.toml
 ```
+
+Swap `--mode stdio` for `--mode mock` to drive the scripted demo
+adapter (no Codex install, no API credits; good for UI-only work).
 
 ### 2. Run the web client
 
@@ -95,9 +106,9 @@ npm run dev                                    # :5174, proxies /api + /ws to :8
 ```
 
 Visit <http://localhost:5174>, click **Load hosts**, pick the
-online host, **Open session**, type a prompt. You'll see the mock
-Codex adapter stream reasoning, a tool call, and a final agent
-message back to you.
+online host, **Open session**, type a prompt. Codex streams its
+reasoning, any tool calls, and the final agent message back through
+the relay into the stream view.
 
 ### 3. Deploy with Docker Compose
 
@@ -109,51 +120,57 @@ cp .env.example .env && $EDITOR .env
 docker compose --profile tls up -d --build     # binds 80/443
 ```
 
-Details and TLS notes in [`deploy/README.md`](deploy/README.md).
+The image is multi-stage: a Node layer compiles `apps/web/` to
+static assets, the Python layer serves them alongside the relay
+API. One container, one endpoint. Details and TLS notes in
+[`deploy/README.md`](deploy/README.md).
 
 ### 4. Run the Android app
 
 ```bash
 cd android
-gradle wrapper --gradle-version 8.11.1         # one-time; Android Studio also does it
-./gradlew assembleDebug                        # app/build/outputs/apk/debug/app-debug.apk
+cp local.properties.example local.properties   # edit if your SDK isn't at /opt/android-sdk
+./gradlew assembleDebug                        # app/build/outputs/apk/debug/app-debug.apk (~17 MB)
 ./gradlew installDebug                         # to a connected emulator/device
 ```
 
-The debug build points at `http://10.0.2.2:8080` (emulator → host
-loopback). Override with `-PrelayUrl=https://relay.example.com` for
-real targets. Details in [`android/README.md`](android/README.md).
+The Gradle wrapper is committed (no bootstrap step). The debug
+build points at `http://10.0.2.2:8080` (emulator → host loopback).
+Override with `-PrelayUrl=https://relay.example.com` for real
+targets. CI builds the debug APK on every change and uploads it as
+an Actions artifact. Details in
+[`android/README.md`](android/README.md).
 
 ## What works end-to-end
 
-| Piece                            | Status                                                            |
-| -------------------------------- | ----------------------------------------------------------------- |
-| Relay REST + WebSocket transport | working; SQLite-backed; demo tokens seeded                        |
-| Daemon ↔ relay                   | working; outbound WSS with auto-reconnect                         |
-| Mock Codex adapter               | working; emits session-started, turn, reasoning, tool call, agent |
-| Web client (`apps/web`)          | working; list hosts, open session, stream events                  |
-| Android client                   | skeleton; lists hosts, opens session, logs raw frames             |
-| Docker Compose deploy            | working; relay + optional Caddy TLS                               |
-| CI (`.github/workflows/ci.yml`)  | ESLint × 2 workspaces, ruff, e2e test, npm audit, gated Android   |
+| Piece                            | Status                                                             |
+| -------------------------------- | ------------------------------------------------------------------ |
+| Relay REST + WebSocket transport | working; SQLite-backed; demo tokens seeded                         |
+| Daemon ↔ relay                   | working; outbound WSS with auto-reconnect                          |
+| **Real Codex (stdio)**           | **working; `codex app-server` bridged via `StdioCodexAdapter`**    |
+| Mock Codex adapter               | working; still the default for tests + API-free demos              |
+| Web client (`apps/web`)          | working; list hosts, open session, stream real Codex events        |
+| Android client                   | builds; lists hosts, opens session, logs raw frames                |
+| Docker Compose deploy            | working; relay + web bundled; optional Caddy TLS                   |
+| CI (`.github/workflows/ci.yml`)  | ESLint × 2 workspaces, ruff, e2e, npm audit, Android APK artifact  |
 
 ## Roadmap (in priority order)
 
-1. **Fault tests** — daemon-dies-mid-stream, duplicate client, host
-   offline, bad tokens. Run as part of `prototype-e2e`.
-2. **Real Codex integration** — finish `StdioCodexAdapter` against
-   a real `codex app-server`. See
-   [`prototype/docs/codex_app_server_protocol.md`](prototype/docs/codex_app_server_protocol.md).
+1. **Approval flow** — bridge codex's elicitation / approval
+   notifications through the relay into the web + Android UI. Frame
+   shapes already exist on the relay side.
+2. **Fault tests** — daemon-dies-mid-stream, duplicate client, host
+   offline, bad tokens. Run as part of `backend-e2e`.
 3. **Keycloak / OIDC auth** — replace the demo bearer tokens.
 4. **Postgres relay store** — migrate off SQLite.
 5. **Audit log + metrics + bounded queues** — the pre-public floor.
-6. **Approval flow** — relay already carries an approval frame shape;
-   wire it through mock → real adapter and into the web + Android UI.
-7. **Session resume** — client-side reconnect onto a live session.
-8. **Finish Android** — proper event stream rendering, composer, FCM
-   push for approvals.
-9. **Kubernetes deployment** — for multi-user / cloud installs.
-10. **iOS / Capacitor wrappers** — once the web and Android surfaces
-    settle.
+6. **Session resume** — client-side reconnect onto a live session
+   using `thread/resume`.
+7. **Finish Android** — proper event stream rendering (not raw log),
+   composer, FCM push for approvals.
+8. **Kubernetes deployment** — for multi-user / cloud installs.
+9. **iOS / Capacitor wrappers** — once the web and Android surfaces
+   settle.
 
 ## Development
 
