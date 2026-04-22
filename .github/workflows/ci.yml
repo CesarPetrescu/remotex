@@ -118,10 +118,19 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           cmdline-tools-version: latest
-          packages: |
-            platforms;android-35
-            build-tools;34.0.0
-            platform-tools
+      - name: Install Android SDK packages
+        # The `packages:` input on setup-android@v3 passes the whole
+        # newline-separated list to sdkmanager as one argv string, which
+        # sdkmanager then tries to resolve as a single package name and
+        # fails with "Failed to find package 'platforms;android-35\n...'".
+        # Call sdkmanager ourselves with each package as a separate
+        # quoted argument instead.
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;34.0.0" \
+            "platform-tools"
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
