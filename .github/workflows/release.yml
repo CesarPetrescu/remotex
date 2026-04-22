@@ -1,0 +1,98 @@
+name: Release APK
+
+# Runs on two triggers:
+#   - push to main  → updates a rolling `nightly` prerelease so
+#                     anyone can grab the bleeding APK without login
+#   - push of a tag → creates a stable release with the tagged APK
+# The stable release is the one people should normally install.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build + publish debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: latest
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;34.0.0" \
+            "platform-tools"
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Derive release label
+        id: label
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            label="${GITHUB_REF_NAME}"
+          else
+            label="nightly-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
+          fi
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace \
+            -PversionName="${{ steps.label.outputs.label }}"
+      - name: Rename APK with version label
+        run: |
+          src=android/app/build/outputs/apk/debug/app-debug.apk
+          dst="android/app/build/outputs/apk/debug/remotex-${{ steps.label.outputs.label }}.apk"
+          cp "$src" "$dst"
+          echo "artifact=$dst" >> "$GITHUB_ENV"
+
+      # Rolling nightly release for main branch pushes.
+      - name: Publish nightly (main branch)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly (latest main)
+          body: |
+            Latest debug build from `main`.
+
+            - Built from commit `${{ steps.label.outputs.short_sha }}`.
+            - Debug-signed, so Android will warn "install from an unknown
+              source" on first install and refuse over-the-air updates
+              from Play. Side-load via `adb install` or tap the APK.
+            - Use the tagged releases for anything stable.
+          prerelease: true
+          files: ${{ env.artifact }}
+
+      # Stable release when a `vX.Y.Z` tag is pushed.
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: ${{ env.artifact }}
