@@ -203,6 +203,9 @@ class StdioCodexAdapter(SessionAdapter):
         self._pending: dict[int, asyncio.Future] = {}
         self._next_id = 0
         self._thread_id: str | None = None
+        # Live turn id — set on turn/started, cleared on turn/completed.
+        # Needed because turn/interrupt wants turnId, not threadId.
+        self._turn_id: str | None = None
 
     # --- lifecycle -------------------------------------------------------
 
@@ -303,10 +306,11 @@ class StdioCodexAdapter(SessionAdapter):
                     "error": str(exc),
                 }))
         elif ftype == "turn-interrupt":
-            if not self._thread_id:
+            if not self._turn_id:
+                log.info("turn-interrupt but no turn in flight; ignoring")
                 return
             try:
-                await self._request("turn/interrupt", {"threadId": self._thread_id})
+                await self._request("turn/interrupt", {"turnId": self._turn_id})
             except Exception as exc:  # noqa: BLE001
                 log.warning("turn/interrupt failed: %s", exc)
         elif ftype == "approval":
@@ -393,6 +397,7 @@ class StdioCodexAdapter(SessionAdapter):
 
         if method == "turn/started":
             turn = params.get("turn", {})
+            self._turn_id = turn.get("id")
             await self._queue.put(SessionEvent("turn-started", {
                 "turn_id": turn.get("id"),
                 "input": _join_input(params.get("input")),
@@ -450,6 +455,7 @@ class StdioCodexAdapter(SessionAdapter):
             }))
         elif method == "turn/completed":
             turn = params.get("turn", {})
+            self._turn_id = None
             await self._queue.put(SessionEvent("turn-completed", {
                 "turn_id": turn.get("id"),
                 "duration_ms": turn.get("durationMs"),
