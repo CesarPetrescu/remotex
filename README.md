@@ -11,20 +11,29 @@ client and the host daemon dial out to a relay you control.
 
 ## How It Works
 
-```text
-Web client / Android app
-        |
-        |  HTTPS + WSS, user bearer token
-        v
-Remotex relay
-        ^
-        |  outbound WSS, bridge token
-        |
-Host daemon
-        |
-        |  local stdio JSON-RPC
-        v
-codex app-server
+```mermaid
+flowchart TB
+    subgraph clients["clients"]
+        W["Web client<br/><code>apps/web/</code>"]
+        A["Android app<br/><code>android/</code>"]
+    end
+    R["<b>Remotex relay</b><br/><code>prototype/relay</code><br/>auth · hosts · sessions · routing"]
+    D["<b>Host daemon</b><br/><code>prototype/daemon</code><br/>runs on the codex machine"]
+    X["<code>codex app-server</code><br/>official OpenAI binary"]
+
+    W -- "HTTPS + WSS<br/>user bearer token" --> R
+    A -- "HTTPS + WSS<br/>user bearer token" --> R
+    D == "outbound WSS<br/>bridge token" ==> R
+    D == "local stdio<br/>JSON-RPC" ==> X
+
+    classDef clientNode fill:#1a1e26,stroke:#e8a756,color:#e8dfd0;
+    classDef relayNode fill:#14171d,stroke:#7dc87d,color:#e8dfd0;
+    classDef daemonNode fill:#14171d,stroke:#5f8fb0,color:#e8dfd0;
+    classDef codexNode fill:#0d0f13,stroke:#9a958a,color:#9a958a;
+    class W,A clientNode;
+    class R relayNode;
+    class D daemonNode;
+    class X codexNode;
 ```
 
 The relay is a rendezvous point. It authenticates clients and daemons,
@@ -44,26 +53,31 @@ Codex app server process.
 
 ## Screenshots
 
-### Web Client
+A live web session — pick an online host, open a session, send a prompt,
+watch reasoning, tool calls, and streamed agent messages arrive live:
 
-Pick an online host, open a session, send a prompt, and watch reasoning,
-tool calls, and streamed agent messages arrive live.
+<p align="center">
+  <img src="docs/screenshots/client-session.png" alt="Remotex web client — live session" width="820" />
+</p>
 
-![Remotex web client - live session](docs/screenshots/client-session.png)
+The three surfaces side-by-side (click to view full size):
 
-Desktop idle state:
-
-![Remotex web client - desktop idle](docs/screenshots/client-desktop.png)
-
-Mobile browser layout:
-
-![Remotex web client - mobile](docs/screenshots/client-mobile.png)
-
-### Android Client
-
-Native Android client built with Kotlin and Jetpack Compose.
-
-![Remotex Android - real device](docs/screenshots/android-installed.png)
+<table>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="docs/screenshots/client-desktop.png" alt="Web — desktop idle" width="420" /><br/>
+      <sub><b>Web · desktop</b> (1440 × 900)</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/client-mobile.png" alt="Web — mobile" width="180" /><br/>
+      <sub><b>Web · mobile</b> (390 × 844)</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/android-installed.png" alt="Android — real device" width="180" /><br/>
+      <sub><b>Android</b> (Kotlin + Compose)</sub>
+    </td>
+  </tr>
+</table>
 
 The debug APK defaults to `http://10.0.2.2:8080`, which reaches the host
 machine from an Android emulator. For a real phone, build with your LAN or
