@@ -125,7 +125,14 @@ class Store:
             "FROM hosts WHERE owner_token = ? ORDER BY created_at DESC",
             (owner_token,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        # SQLite stores booleans as INTEGER; normalize before the JSON hits
+        # clients (Kotlin/serialization rejects 1/0 for Boolean fields).
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["online"] = bool(d["online"])
+            out.append(d)
+        return out
 
     def create_host(self, owner_token: str, nickname: str) -> str:
         hid = _new_id("host")
