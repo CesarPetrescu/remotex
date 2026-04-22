@@ -38,9 +38,16 @@ four surfaces, three variants each:
 
 **Android** (`android/`) — Kotlin + Jetpack Compose. Builds to a
 17 MB `app-debug.apk` via `./gradlew assembleDebug`; CI uploads the
-APK as a workflow artifact on every change. Device screenshots land
-here once the app grows past skeleton-of-screens (currently: token
-field, host list, session opener, raw-frame log).
+APK as a workflow artifact on every change.
+
+![Remotex Android — installed](docs/screenshots/android-installed.png)
+
+The above is the debug APK running on a real device (screencapped
+via `adb exec-out screencap -p`). It shows the idle state —
+"no hosts yet" because the debug build defaults to
+`http://10.0.2.2:8080` (emulator loopback). Rebuild with
+`-PrelayUrl=http://<your-lan-ip>:8080` to reach your relay from a
+phone.
 
 ## Repo layout
 
