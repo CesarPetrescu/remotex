@@ -392,11 +392,17 @@ class StdioCodexAdapter(SessionAdapter):
                     "error": str(exc),
                 }))
         elif ftype == "turn-interrupt":
-            if not self._turn_id:
+            if not self._turn_id or not self._thread_id:
                 log.info("turn-interrupt but no turn in flight; ignoring")
                 return
             try:
-                await self._request("turn/interrupt", {"turnId": self._turn_id})
+                # Codex requires BOTH threadId and turnId on turn/interrupt,
+                # not just one or the other. Documented at:
+                # https://developers.openai.com/codex/app-server
+                await self._request("turn/interrupt", {
+                    "threadId": self._thread_id,
+                    "turnId": self._turn_id,
+                })
             except Exception as exc:  # noqa: BLE001
                 log.warning("turn/interrupt failed: %s", exc)
         elif ftype == "approval":
