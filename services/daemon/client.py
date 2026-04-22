@@ -8,7 +8,7 @@ from typing import Awaitable, Callable
 
 import aiohttp
 
-from .adapters import SessionAdapter, admin_list_threads, build_adapter
+from .adapters import AdminCodex, SessionAdapter, build_adapter
 from .config import Config
 
 log = logging.getLogger("daemon.client")
@@ -18,6 +18,10 @@ class DaemonClient:
     def __init__(self, config: Config) -> None:
         self.config = config
         self._sessions: dict[str, _SessionRunner] = {}
+        # Persistent admin codex for read-only ops (thread/list). Lazy
+        # spawn on first use; kept alive between calls so we don't eat
+        # node startup cost on every thread-list request.
+        self._admin = AdminCodex(codex_binary=config.codex_binary)
 
     async def run(self) -> None:
         backoff = 1.0
@@ -92,6 +96,10 @@ class DaemonClient:
                     runner.session_id, type(exc).__name__, exc,
                 )
 
+    async def close(self) -> None:
+        """Shut the admin codex down on graceful exit."""
+        await self._admin.close()
+
     async def _dispatch(self, frame: dict, send: Callable[[dict], Awaitable[None]]) -> None:
         ftype = frame.get("type")
         sid = frame.get("session_id")
@@ -124,11 +132,7 @@ class DaemonClient:
         limit = int(frame.get("limit") or 20)
         cursor = frame.get("cursor")
         try:
-            result = await admin_list_threads(
-                codex_binary=self.config.codex_binary,
-                limit=limit,
-                cursor=cursor,
-            )
+            result = await self._admin.list_threads(limit=limit, cursor=cursor)
             await send({
                 "type": "threads-list-response",
                 "request_id": request_id,
