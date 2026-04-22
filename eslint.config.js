@@ -10,7 +10,7 @@ export default [
       '**/dist/**',
       'node_modules/**',
       '**/node_modules/**',
-      'prototype/**',
+      'services/**',
       'apps/**',
       'android/**',
       'deploy/**',

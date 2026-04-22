@@ -17,8 +17,8 @@ flowchart TB
         W["Web client<br/><code>apps/web/</code>"]
         A["Android app<br/><code>android/</code>"]
     end
-    R["<b>Remotex relay</b><br/><code>prototype/relay</code><br/>auth · hosts · sessions · routing"]
-    D["<b>Host daemon</b><br/><code>prototype/daemon</code><br/>runs on the codex machine"]
+    R["<b>Remotex relay</b><br/><code>services/relay</code><br/>auth · hosts · sessions · routing"]
+    D["<b>Host daemon</b><br/><code>services/daemon</code><br/>runs on the codex machine"]
     X["<code>codex app-server</code><br/>official OpenAI binary"]
 
     W -- "HTTPS + WSS<br/>user bearer token" --> R
@@ -114,7 +114,7 @@ cd android
 remotex/
 ├── apps/web/              React + Vite control-plane web client
 ├── android/               Kotlin + Jetpack Compose native client
-├── prototype/
+├── services/
 │   ├── relay/             aiohttp relay + SQLite inventory + WS routing
 │   ├── daemon/            outbound-WSS daemon + Codex adapters
 │   ├── web/               legacy single-file demo UI
@@ -132,7 +132,7 @@ More detail lives in the subproject READMEs:
 
 - [`apps/web/README.md`](apps/web/README.md)
 - [`android/README.md`](android/README.md)
-- [`prototype/README.md`](prototype/README.md)
+- [`services/README.md`](services/README.md)
 - [`deploy/README.md`](deploy/README.md)
 
 ## Quick Start
@@ -140,7 +140,7 @@ More detail lives in the subproject READMEs:
 ### 1. Run the Relay
 
 ```bash
-cd prototype
+cd services
 pip install -r requirements.txt
 python3 relay/app.py
 ```
@@ -159,7 +159,7 @@ Use `stdio` mode for real Codex. You need the `codex` CLI installed and
 logged in on this machine.
 
 ```bash
-cd prototype
+cd services
 python3 -m daemon init \
   --relay-url ws://127.0.0.1:8080/ws/daemon \
   --bridge-token demo-bridge-token \
@@ -278,8 +278,8 @@ npm ci && npm run lint && npm run build
 (cd apps/web && npm ci && npm run lint && npm run build)
 
 # Python
-(cd prototype && pip install -r requirements-dev.txt && ruff check .)
-(cd prototype && python scripts/e2e_test.py)
+(cd services && pip install -r requirements-dev.txt && ruff check .)
+(cd services && python scripts/e2e_test.py)
 
 # Android
 (cd android && ./gradlew assembleDebug)

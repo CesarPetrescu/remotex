@@ -21,11 +21,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY prototype/requirements.txt /app/requirements.txt
+COPY services/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Relay code.
-COPY prototype/relay /app/relay
+COPY services/relay /app/relay
 
 # Web client built in stage 1 goes where the relay serves static from.
 COPY --from=web-builder /build/dist /app/web

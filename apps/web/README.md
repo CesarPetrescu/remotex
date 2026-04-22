@@ -2,7 +2,7 @@
 
 The real control-plane web app — the one daemons report to and the
 one you actually drive sessions from. Replaces the single-file
-`prototype/web/index.html` with a proper React + Vite project split
+`services/web/index.html` with a proper React + Vite project split
 across components, hooks, and a thin API layer.
 
 ## What it does today
@@ -38,10 +38,10 @@ The dev server runs on `http://localhost:5174` and proxies
 To run the relay locally first:
 
 ```bash
-cd prototype
+cd services
 pip install -r requirements.txt
 python3 relay/app.py                # binds 127.0.0.1:8080 by default
-# (then, in another terminal, start a daemon; see prototype/README.md)
+# (then, in another terminal, start a daemon; see services/README.md)
 ```
 
 ## Build

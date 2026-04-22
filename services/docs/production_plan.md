@@ -1,6 +1,6 @@
 # From prototype to production
 
-A concrete list of what has to change between this `prototype/` tree
+A concrete list of what has to change between this `services/` tree
 and something you'd run for real users. Ordered roughly by
 blast-radius: the top items will hurt you fastest if skipped, the
 bottom items are polish.
@@ -62,7 +62,7 @@ bottom items are polish.
 
 ## Clients
 
-1. **Port `prototype/web` to the real Next.js client.** Keycloak
+1. **Port `services/web` to the real Next.js client.** Keycloak
    login flow, host list, session view. The existing mockup
    (`panels/MobilePanel.jsx`) is the reference.
 2. **iOS / Android wrappers.** The PWA is enough to start; wrap with

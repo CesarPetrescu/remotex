@@ -58,7 +58,7 @@ loopback. So:
 
 ```bash
 # Terminal 1 (on the host)
-cd prototype
+cd services
 pip install -r requirements.txt
 python3 relay/app.py    # 127.0.0.1:8080
 

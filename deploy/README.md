@@ -2,7 +2,7 @@
 
 Self-host the relay + web client with one command. This is the
 "single box, no Kubernetes" path; see
-`prototype/docs/production_plan.md` for what needs to be done before
+`services/docs/production_plan.md` for what needs to be done before
 you point real users at it.
 
 ## What's in here
@@ -81,7 +81,7 @@ docker compose down -v               # -v nukes the SQLite volume too
 On any machine that should expose Codex sessions:
 
 ```bash
-cd prototype
+cd services
 pip install -r requirements.txt
 python3 -m daemon init \
     --relay-url wss://relay.example.com/ws/daemon \

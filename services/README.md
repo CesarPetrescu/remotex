@@ -1,12 +1,14 @@
-# Remotex prototype
+# Remotex services — relay + daemon
 
-Working vertical slice of the relay + daemon + web UI. Verified
-end-to-end with `scripts/e2e_test.py`.
+The backend for Remotex: the central relay that rendezvous-routes
+clients to hosts, and the per-host daemon that spawns `codex
+app-server` on each machine you want to reach. Verified end-to-end
+with `scripts/e2e_test.py`.
 
 ## Layout
 
 ```
-prototype/
+services/
 ├── relay/app.py                   aiohttp relay + SQLite inventory + WS routing
 ├── daemon/
 │   ├── __main__.py                CLI: init / run / status
