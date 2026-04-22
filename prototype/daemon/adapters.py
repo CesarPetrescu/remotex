@@ -296,6 +296,13 @@ class StdioCodexAdapter(SessionAdapter):
                 await self._queue.put(SessionEvent("turn-completed", {
                     "error": str(exc),
                 }))
+        elif ftype == "turn-interrupt":
+            if not self._thread_id:
+                return
+            try:
+                await self._request("turn/interrupt", {"threadId": self._thread_id})
+            except Exception as exc:  # noqa: BLE001
+                log.warning("turn/interrupt failed: %s", exc)
         elif ftype == "approval":
             # TODO: wire elicitation / approval response. The protocol
             # supports thread/increment_elicitation + resolve variants;

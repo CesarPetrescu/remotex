@@ -51,34 +51,48 @@ data class UiState(
 )
 
 /**
- * Reasoning effort levels. Empty string → don't override; let codex use
- * the model's default (almost always "medium"). The other values are
- * the intersection of what every visible model supports, so picking one
- * won't fail for the model the user chose.
+ * Reasoning effort levels surfaced to the UI. Empty string = "don't
+ * override" (codex falls back to the model's default, usually medium).
+ * Per-model support filters this set — see [ModelOption.efforts].
  */
-val REASONING_EFFORTS = listOf("", "low", "medium", "high", "xhigh")
+const val EFFORT_DEFAULT = ""
+val ALL_EFFORTS = listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")
 
 /**
- * Pinned list of models exposed by `codex 0.122.0` (visible, non-hidden).
- * First option "" means "let codex use its configured default" — usually
- * gpt-5.4. Keep in sync with `codex app-server`'s `model/list`; you can
- * re-pull the live list anytime from a daemon with:
- *
- *     cat /tmp/list-models3.py  # see repo tooling
+ * Visible models from `codex 0.122.0` model/list, with the exact
+ * supported reasoning efforts per model so the effort picker can
+ * filter itself. Keep in sync with codex upgrades.
  */
-data class ModelOption(val id: String, val label: String, val hint: String)
+data class ModelOption(
+    val id: String,
+    val label: String,
+    val hint: String,
+    val efforts: List<String>,
+)
 
 val MODEL_OPTIONS = listOf(
-    ModelOption("", "default", "codex picks"),
-    ModelOption("gpt-5.4", "gpt-5.4", "latest frontier (default)"),
-    ModelOption("gpt-5.4-mini", "gpt-5.4 · mini", "smaller frontier"),
-    ModelOption("gpt-5.3-codex", "gpt-5.3 · codex", "codex-optimized"),
-    ModelOption("gpt-5.3-codex-spark", "gpt-5.3 · codex spark", "ultra-fast coding"),
-    ModelOption("gpt-5.2", "gpt-5.2", "long-running agents"),
-    ModelOption("gpt-5.2-codex", "gpt-5.2 · codex", "codex-optimized"),
-    ModelOption("gpt-5.1-codex-max", "gpt-5.1 · codex max", "deep reasoning"),
-    ModelOption("gpt-5.1-codex-mini", "gpt-5.1 · codex mini", "cheaper/faster"),
+    ModelOption("", "default", "codex picks", ALL_EFFORTS),
+    ModelOption("gpt-5.4", "gpt-5.4", "latest frontier (default)",
+        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
+    ModelOption("gpt-5.4-mini", "gpt-5.4 · mini", "smaller frontier",
+        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
+    ModelOption("gpt-5.3-codex", "gpt-5.3 · codex", "codex-optimized",
+        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
+    ModelOption("gpt-5.3-codex-spark", "gpt-5.3 · codex spark", "ultra-fast coding",
+        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
+    ModelOption("gpt-5.2", "gpt-5.2", "long-running agents",
+        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
+    ModelOption("gpt-5.2-codex", "gpt-5.2 · codex", "codex-optimized",
+        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
+    ModelOption("gpt-5.1-codex-max", "gpt-5.1 · codex max", "deep reasoning",
+        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
+    ModelOption("gpt-5.1-codex-mini", "gpt-5.1 · codex mini", "cheaper/faster",
+        listOf(EFFORT_DEFAULT, "medium", "high")),  // only medium/high supported
 )
+
+/** Effort list the UI should show given the currently-picked model. */
+fun effortsFor(modelId: String): List<String> =
+    MODEL_OPTIONS.firstOrNull { it.id == modelId }?.efforts ?: ALL_EFFORTS
 
 class RemotexViewModel(private val relayUrl: String) : ViewModel() {
     private val client = RelayClient(baseUrl = relayUrl)
@@ -94,11 +108,29 @@ class RemotexViewModel(private val relayUrl: String) : ViewModel() {
     }
 
     fun setModel(model: String) {
-        _state.update { it.copy(model = model) }
+        _state.update {
+            val supported = effortsFor(model)
+            val nextEffort = if (it.effort in supported) it.effort else EFFORT_DEFAULT
+            it.copy(model = model, effort = nextEffort)
+        }
     }
 
     fun setEffort(effort: String) {
         _state.update { it.copy(effort = effort) }
+    }
+
+    /** Fire a turn-interrupt frame. Daemon translates into codex turn/interrupt. */
+    fun interruptTurn() {
+        val sock = socket ?: return
+        val sid = _state.value.session?.sessionId ?: return
+        val frame = Json.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject {
+                put("type", "turn-interrupt")
+                put("session_id", sid)
+            },
+        )
+        sock.sendJson(frame)
     }
 
     fun selectHost(id: String) {

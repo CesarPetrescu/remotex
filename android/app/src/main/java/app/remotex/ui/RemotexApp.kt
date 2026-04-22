@@ -23,9 +23,10 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -91,6 +92,9 @@ fun RemotexApp(relayUrl: String) {
                 Screen.Session -> SessionScreen(
                     state = state,
                     onSend = vm::sendTurn,
+                    onStop = vm::interruptTurn,
+                    onModelChange = vm::setModel,
+                    onEffortChange = vm::setEffort,
                 )
             }
             state.error?.let { err ->
@@ -134,7 +138,11 @@ private fun RemotexBar(state: UiState, onBack: () -> Unit) {
         navigationIcon = {
             if (state.screen == Screen.Session) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Hosts", tint = Ink)
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Hosts",
+                        tint = Ink,
+                    )
                 }
             }
         },
@@ -168,8 +176,8 @@ private fun HostsScreen(
     onTokenChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onHostTap: (Host) -> Unit,
-    onModelChange: (String) -> Unit,
-    onEffortChange: (String) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onModelChange: (String) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onEffortChange: (String) -> Unit,
 ) {
     Column(
         Modifier
@@ -178,21 +186,6 @@ private fun HostsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         TokenField(state.userToken, onTokenChange)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ModelPickerField(
-                selected = state.model,
-                onSelect = onModelChange,
-                modifier = Modifier.weight(1f),
-            )
-            PickerField(
-                label = "REASONING",
-                selected = state.effort,
-                options = REASONING_EFFORTS,
-                displayFor = { if (it.isEmpty()) "default" else it },
-                onSelect = onEffortChange,
-                modifier = Modifier.weight(1f),
-            )
-        }
         Button(
             onClick = onRefresh,
             modifier = Modifier.fillMaxWidth(),
@@ -411,7 +404,13 @@ private fun HostRow(host: Host, onClick: () -> Unit) {
 // -------------------- Session screen --------------------
 
 @Composable
-private fun SessionScreen(state: UiState, onSend: (String) -> Unit) {
+private fun SessionScreen(
+    state: UiState,
+    onSend: (String) -> Unit,
+    onStop: () -> Unit,
+    onModelChange: (String) -> Unit,
+    onEffortChange: (String) -> Unit,
+) {
     Column(Modifier.fillMaxSize()) {
         MetaBar(state)
         EventList(
@@ -420,10 +419,15 @@ private fun SessionScreen(state: UiState, onSend: (String) -> Unit) {
             connected = state.status == Status.Connected,
             modifier = Modifier.weight(1f, fill = true),
         )
-        Composer(
-            enabled = state.status == Status.Connected && !state.pending,
+        ComposerBar(
+            connected = state.status == Status.Connected,
             pending = state.pending,
+            model = state.model,
+            effort = state.effort,
+            onModelChange = onModelChange,
+            onEffortChange = onEffortChange,
             onSend = onSend,
+            onStop = onStop,
         )
     }
 }
@@ -587,68 +591,224 @@ private fun Modifier.fillMaxWidthZero(): Modifier = this.height(24.dp) // visual
 // -------------------- Composer --------------------
 
 @Composable
-private fun Composer(enabled: Boolean, pending: Boolean, onSend: (String) -> Unit) {
+private fun ComposerBar(
+    connected: Boolean,
+    pending: Boolean,
+    model: String,
+    effort: String,
+    onModelChange: (String) -> Unit,
+    onEffortChange: (String) -> Unit,
+    onSend: (String) -> Unit,
+    onStop: () -> Unit,
+) {
     var text by remember { mutableStateOf("") }
+    val textEnabled = connected && !pending
     Surface(
         color = MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
+        Column(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(6.dp),
-                border = BorderStroke(1.dp, Line),
-                modifier = Modifier.weight(1f),
-            ) {
-                BasicTextField(
-                    value = text,
-                    onValueChange = { if (enabled) text = it },
-                    enabled = enabled,
-                    textStyle = TextStyle(
-                        color = if (enabled) Ink else InkDim,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
-                    ),
-                    singleLine = false,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = {
-                        if (enabled && text.isNotBlank()) {
-                            onSend(text); text = ""
-                        }
-                    }),
-                    cursorBrush = SolidColor(Amber),
-                    decorationBox = { inner ->
-                        Box(Modifier.padding(horizontal = 10.dp, vertical = 10.dp)) {
-                            if (text.isEmpty()) {
-                                Text(
-                                    if (pending) "codex is thinking…" else "ask codex…",
-                                    color = InkDim,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 13.sp,
-                                )
-                            }
-                            inner()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
+            // Row 1 — model + effort as compact chips
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                CompactModelPicker(
+                    selected = model,
+                    onSelect = onModelChange,
+                    modifier = Modifier.weight(1f),
+                )
+                CompactEffortPicker(
+                    model = model,
+                    selected = effort,
+                    onSelect = onEffortChange,
+                    modifier = Modifier.weight(1f),
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            IconButton(
-                enabled = enabled && text.isNotBlank(),
-                onClick = {
-                    onSend(text); text = ""
-                },
-            ) {
-                Icon(
-                    Icons.Filled.Send,
-                    contentDescription = "Send",
-                    tint = if (enabled && text.isNotBlank()) Amber else InkDim,
+            // Row 2 — prompt + send/stop
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(22.dp),
+                    border = BorderStroke(1.dp, Line),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    BasicTextField(
+                        value = text,
+                        onValueChange = { if (textEnabled) text = it },
+                        enabled = textEnabled,
+                        textStyle = TextStyle(
+                            color = if (textEnabled) Ink else InkDim,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 14.sp,
+                        ),
+                        singleLine = false,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = {
+                            if (textEnabled && text.isNotBlank()) {
+                                onSend(text); text = ""
+                            }
+                        }),
+                        cursorBrush = SolidColor(Amber),
+                        decorationBox = { inner ->
+                            Box(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                                if (text.isEmpty() && !pending) {
+                                    Text(
+                                        "ask codex",
+                                        color = InkDim,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 14.sp,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                SendOrStopButton(
+                    pending = pending,
+                    canSend = textEnabled && text.isNotBlank(),
+                    onSend = { onSend(text); text = "" },
+                    onStop = onStop,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SendOrStopButton(
+    pending: Boolean,
+    canSend: Boolean,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+) {
+    // A 44dp circular button that flips icon based on pending.
+    Surface(
+        color = when {
+            pending -> Warn
+            canSend -> Amber
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        },
+        shape = CircleShape,
+        modifier = Modifier.size(44.dp),
+    ) {
+        IconButton(
+            onClick = { if (pending) onStop() else if (canSend) onSend() },
+            enabled = pending || canSend,
+            modifier = Modifier.size(44.dp),
+        ) {
+            Icon(
+                imageVector = if (pending) Icons.Filled.Stop else Icons.Filled.ArrowUpward,
+                contentDescription = if (pending) "Stop" else "Send",
+                tint = Color.Black,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactModelPicker(
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val current = MODEL_OPTIONS.firstOrNull { it.id == selected } ?: MODEL_OPTIONS.first()
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = modifier.clickable { expanded = true },
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "model",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                current.label,
+                color = Amber,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            MODEL_OPTIONS.forEach { opt ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(opt.label, color = Ink, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                            Text(opt.hint, color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        }
+                    },
+                    onClick = { onSelect(opt.id); expanded = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactEffortPicker(
+    model: String,
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val options = effortsFor(model)
+    val effectiveSelected = if (selected in options) selected else ""
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, Line),
+        modifier = modifier.clickable { expanded = true },
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "effort",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (effectiveSelected.isEmpty()) "default" else effectiveSelected,
+                color = Amber,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { opt ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (opt.isEmpty()) "default" else opt,
+                            color = Ink,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 13.sp,
+                        )
+                    },
+                    onClick = { onSelect(opt); expanded = false },
                 )
             }
         }
