@@ -50,7 +50,11 @@ fun MarkdownText(
     fontSize: androidx.compose.ui.unit.TextUnit = 13.sp,
     trailingCursor: Boolean = false,
 ) {
-    val blocks = remember(text) { parseBlocks(text) }
+    // Close obvious unclosed tokens during streaming so partial output
+    // doesn't flicker plain → styled when the real closer arrives. If the
+    // caller isn't streaming, `trailingCursor=false` skips this pass.
+    val rendered = if (trailingCursor) balanceMarkdown(text) else text
+    val blocks = remember(rendered) { parseBlocks(rendered) }
     Column(Modifier.fillMaxWidth()) {
         blocks.forEachIndexed { idx, block ->
             if (idx > 0) Spacer(Modifier.height(6.dp))
@@ -76,6 +80,32 @@ fun MarkdownText(
             }
         }
     }
+}
+
+/**
+ * Close trailing unclosed tokens so partial markdown renders cleanly while
+ * streaming. Mirrors Ember's `_balance_markdown`: triple-fence balance
+ * across the buffer, then inline balance (backticks, then **) on the last
+ * line. Single-* italic is intentionally not balanced — every stray `*`
+ * would flicker italic.
+ */
+internal fun balanceMarkdown(s: String): String {
+    val lines = s.split("\n").toMutableList()
+    val openFences = lines.count { it.trimStart().startsWith("```") } % 2 == 1
+    if (openFences) lines.add("```")
+    val last = lines.last()
+    val singleTicks = last.replace("```", "")
+    var patched = last
+    if (singleTicks.count { it == '`' } % 2 == 1) patched += "`"
+    // count "**" occurrences
+    var boldCount = 0
+    var i = 0
+    while (i < patched.length - 1) {
+        if (patched[i] == '*' && patched[i + 1] == '*') { boldCount++; i += 2 } else i++
+    }
+    if (boldCount % 2 == 1) patched += "**"
+    lines[lines.lastIndex] = patched
+    return lines.joinToString("\n")
 }
 
 // --- block model --------------------------------------------------------

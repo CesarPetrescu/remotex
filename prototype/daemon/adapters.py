@@ -163,10 +163,11 @@ def _scripted_reply(user_input: str) -> list[str]:
 # Real stdio adapter — spawns `codex app-server` and bridges JSON-RPC
 # ---------------------------------------------------------------------------
 
-# codex item `type` (camelCase) → our relay item_type (snake_case)
+# codex item `type` (camelCase or bare) → our relay item_type (snake_case)
 _ITEM_TYPE_MAP = {
     "agentMessage": "agent_message",
-    "agentReasoning": "agent_reasoning",
+    "reasoning": "agent_reasoning",         # codex emits `type: "reasoning"`
+    "agentReasoning": "agent_reasoning",    # older name, keep for compat
     "commandExecution": "tool_call",
     "fileChange": "file_change",
     "userMessage": "user_message",  # echoed; we drop these client-side
@@ -232,6 +233,8 @@ class StdioCodexAdapter(SessionAdapter):
             "ephemeral": False,
         })
         self._thread_id = thread["thread"]["id"]
+        # Enable streamed reasoning summaries for every turn by default.
+        self._reasoning_summary = "auto"
         await self._queue.put(SessionEvent("session-started", {
             "model": thread.get("model") or model_hint,
             "cwd": thread.get("cwd", self._cwd),
@@ -280,6 +283,9 @@ class StdioCodexAdapter(SessionAdapter):
             params: dict = {
                 "threadId": self._thread_id,
                 "input": [{"type": "text", "text": text}],
+                # Ask codex to stream reasoning summaries as deltas rather
+                # than only emitting them with item/completed at the end.
+                "summary": self._reasoning_summary,
             }
             # Optional per-turn overrides. Codex applies these to this turn
             # and every subsequent turn on the thread.
@@ -404,12 +410,32 @@ class StdioCodexAdapter(SessionAdapter):
                 **_item_extras(item),
             }))
         elif method.startswith("item/") and method.endswith("/delta"):
-            codex_type = method.split("/")[1]  # e.g. agentMessage
+            # e.g. item/agentMessage/delta → codex_type = "agentMessage"
+            codex_type = method.split("/")[1]
             await self._queue.put(SessionEvent("item-delta", {
                 "turn_id": params.get("turnId"),
                 "item_id": params.get("itemId"),
                 "item_type": _snake_item_type(codex_type),
                 "delta": params.get("delta", ""),
+            }))
+        elif method == "item/reasoning/summaryTextDelta":
+            # Reasoning streams under a different method family than
+            # agentMessage; normalize here so the client sees the same
+            # item-delta envelope.
+            await self._queue.put(SessionEvent("item-delta", {
+                "turn_id": params.get("turnId"),
+                "item_id": params.get("itemId"),
+                "item_type": "agent_reasoning",
+                "delta": params.get("delta", ""),
+            }))
+        elif method == "item/reasoning/summaryPartAdded":
+            # A new summary "part" starts — use a double-newline so
+            # consecutive reasoning summaries render as separate blocks.
+            await self._queue.put(SessionEvent("item-delta", {
+                "turn_id": params.get("turnId"),
+                "item_id": params.get("itemId"),
+                "item_type": "agent_reasoning",
+                "delta": "\n\n" if params.get("summaryIndex", 0) > 0 else "",
             }))
         elif method == "item/completed":
             item = params.get("item") or {}
@@ -458,14 +484,16 @@ def _item_extras(item: dict) -> dict:
             extras["text"] = item["text"]
         if "phase" in item:
             extras["phase"] = item["phase"]
-    elif t == "agentReasoning":
-        # Codex stuffs reasoning text under different keys across versions;
-        # try the common shapes.
-        for key in ("text", "summary"):
-            if key in item:
-                extras["text"] = item[key]
-                break
-        if "content" in item:
+    elif t in ("reasoning", "agentReasoning"):
+        # Final reasoning object has `summary: [text, ...]` and `content: []`.
+        # We've been streaming summary deltas into the client already, so
+        # the final text matches what the client already rendered.
+        summary = item.get("summary")
+        if isinstance(summary, list) and summary:
+            extras["text"] = "\n\n".join(s for s in summary if isinstance(s, str))
+        elif "text" in item:
+            extras["text"] = item["text"]
+        elif "content" in item:
             extras["text"] = _summarize_reasoning(item["content"])
     elif t == "commandExecution":
         cmd = item.get("command") or item.get("commandLine")
