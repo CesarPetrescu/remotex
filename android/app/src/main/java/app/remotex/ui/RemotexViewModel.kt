@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.remotex.model.FsEntry
 import app.remotex.model.Host
+import app.remotex.model.SearchResult
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
 import app.remotex.net.RelayClient
@@ -36,7 +37,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
 
-enum class Screen { Hosts, Threads, Files, Session }
+enum class Screen { Hosts, Threads, Files, Session, Search }
 
 enum class Status { Idle, Opening, Connecting, Connected, Disconnected, Error }
 
@@ -84,6 +85,9 @@ data class UiState(
     val effort: String = "medium",   // none/minimal/low/medium/high/xhigh
     val threads: List<ThreadInfo> = emptyList(),
     val threadsLoading: Boolean = false,
+    val searchQuery: String = "",
+    val searchResults: List<SearchResult> = emptyList(),
+    val searchLoading: Boolean = false,
     val browsePath: String = "",
     val browseEntries: List<FsEntry> = emptyList(),
     val browseLoading: Boolean = false,
@@ -218,6 +222,45 @@ class RemotexViewModel(
         _state.update { it.copy(screen = Screen.Threads) }
     }
 
+    fun goToSearch() {
+        _state.update { it.copy(screen = Screen.Search) }
+    }
+
+    fun setSearchQuery(query: String) {
+        _state.update { it.copy(searchQuery = query) }
+    }
+
+    fun searchChats() {
+        val query = _state.value.searchQuery.trim()
+        if (query.isEmpty()) {
+            _state.update { it.copy(searchResults = emptyList(), searchLoading = false) }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(searchLoading = true, error = null) }
+            try {
+                val results = client.searchChats(_state.value.userToken, query, limit = 20)
+                _state.update {
+                    it.copy(searchResults = results, searchLoading = false)
+                }
+            } catch (t: Throwable) {
+                _state.update {
+                    it.copy(searchLoading = false, error = t.message ?: "search failed")
+                }
+            }
+        }
+    }
+
+    fun openSearchResult(result: SearchResult) {
+        val threadId = result.threadId
+        if (threadId.isNullOrBlank()) {
+            _state.update { it.copy(error = "This result has no resumable Codex thread yet.") }
+            return
+        }
+        _state.update { it.copy(selectedHostId = result.hostId) }
+        openSession(resumeThreadId = threadId, cwd = result.cwd, hostId = result.hostId)
+    }
+
     fun goToFiles(initialPath: String? = null) {
         val start = initialPath?.ifBlank { null }
             ?: _state.value.browsePath.ifBlank { null }
@@ -309,8 +352,8 @@ class RemotexViewModel(
         }
     }
 
-    fun openSession(resumeThreadId: String? = null, cwd: String? = null) {
-        val target = _state.value.selectedHostId ?: return
+    fun openSession(resumeThreadId: String? = null, cwd: String? = null, hostId: String? = null) {
+        val target = hostId ?: _state.value.selectedHostId ?: return
         closeSession()
         userClosed = false
         _state.update {

@@ -28,6 +28,10 @@ const initialState = {
   selectedHostId: null,
   threads: [],
   threadsLoading: false,
+  searchQuery: '',
+  searchResults: [],
+  searchLoading: false,
+  searchConfig: null,
   browsePath: '',
   browseEntries: [],
   browseLoading: false,
@@ -69,6 +73,20 @@ function reducer(state, action) {
       return { ...state, threads: action.threads, threadsLoading: false };
     case 'THREADS_LOADING':
       return { ...state, threadsLoading: action.loading };
+
+    case 'SEARCH_QUERY':
+      return { ...state, searchQuery: action.query };
+    case 'SEARCH_CONFIG':
+      return { ...state, searchConfig: action.config };
+    case 'SEARCH_LOADING':
+      return { ...state, searchLoading: action.loading };
+    case 'SEARCH_RESULTS':
+      return {
+        ...state,
+        searchResults: action.results,
+        searchLoading: false,
+        searchQuery: action.query ?? state.searchQuery,
+      };
 
     case 'BROWSE_LOADING':
       return {
@@ -370,6 +388,16 @@ export function useRemotex() {
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Threads });
   }, []);
 
+  const goToSearch = useCallback(async () => {
+    dispatch({ type: 'SET_SCREEN', screen: SCREENS.Search });
+    try {
+      const config = await apiRef.current.searchConfig();
+      dispatch({ type: 'SEARCH_CONFIG', config });
+    } catch (t) {
+      dispatch({ type: 'SET_ERROR', error: t.message });
+    }
+  }, []);
+
   const refreshHosts = useCallback(async () => {
     dispatch({ type: 'HOSTS_LOADING', loading: true });
     try {
@@ -449,8 +477,8 @@ export function useRemotex() {
   // --- session ---
 
   const openSession = useCallback(
-    async ({ threadId = null, cwd = null } = {}) => {
-      const hostId = latestInputsRef.current.selectedHostId;
+    async ({ threadId = null, cwd = null, hostId: hostOverride = null } = {}) => {
+      const hostId = hostOverride || latestInputsRef.current.selectedHostId;
       if (!hostId) return;
       closeSession();
       userClosedRef.current = false;
@@ -469,6 +497,42 @@ export function useRemotex() {
       }
     },
     [attachSocket, closeSession],
+  );
+
+  const searchChats = useCallback(async (query) => {
+    const cleaned = (query || '').trim();
+    dispatch({ type: 'SEARCH_QUERY', query });
+    if (!cleaned) {
+      dispatch({ type: 'SEARCH_RESULTS', results: [], query });
+      return;
+    }
+    dispatch({ type: 'SEARCH_LOADING', loading: true });
+    try {
+      const results = await apiRef.current.searchChats(cleaned, { limit: 20 });
+      dispatch({ type: 'SEARCH_RESULTS', results, query: cleaned });
+    } catch (t) {
+      dispatch({ type: 'SEARCH_LOADING', loading: false });
+      dispatch({ type: 'SET_ERROR', error: t.message });
+    }
+  }, []);
+
+  const openSearchResult = useCallback(
+    (result) => {
+      if (!result?.thread_id) {
+        dispatch({
+          type: 'SET_ERROR',
+          error: 'This result has no resumable Codex thread yet.',
+        });
+        return;
+      }
+      dispatch({ type: 'SELECT_HOST', id: result.host_id });
+      openSession({
+        hostId: result.host_id,
+        threadId: result.thread_id,
+        cwd: result.cwd || null,
+      });
+    },
+    [openSession],
   );
 
   const sendTurn = useCallback(
@@ -546,6 +610,7 @@ export function useRemotex() {
     () => ({
       state,
       setToken: (t) => dispatch({ type: 'SET_TOKEN', token: t }),
+      setSearchQuery: (query) => dispatch({ type: 'SEARCH_QUERY', query }),
       setModel: (m) => dispatch({ type: 'SET_MODEL', model: m }),
       setEffort: (e) => dispatch({ type: 'SET_EFFORT', effort: e }),
       setPermissions: (p) => dispatch({ type: 'SET_PERMS', permissions: p }),
@@ -553,10 +618,13 @@ export function useRemotex() {
       clearError: () => dispatch({ type: 'SET_ERROR', error: null }),
       goToHosts,
       goToThreads,
+      goToSearch,
       goToFiles,
       refreshHosts,
       openHost,
       refreshThreads,
+      searchChats,
+      openSearchResult,
       browseDir,
       browseUp,
       openSession,
@@ -573,10 +641,13 @@ export function useRemotex() {
       state,
       goToHosts,
       goToThreads,
+      goToSearch,
       goToFiles,
       refreshHosts,
       openHost,
       refreshThreads,
+      searchChats,
+      openSearchResult,
       browseDir,
       browseUp,
       openSession,

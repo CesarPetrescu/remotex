@@ -30,15 +30,45 @@ final class RelayClient {
         return try decoder.decode(HostsResponse.self, from: data).hosts
     }
 
-    func openSession(baseURL: String, userToken: String, hostId: String) async throws -> String {
+    func openSession(
+        baseURL: String,
+        userToken: String,
+        hostId: String,
+        threadId: String? = nil,
+        cwd: String? = nil
+    ) async throws -> String {
         var request = URLRequest(url: try url(baseURL: baseURL, path: "/api/sessions"))
         request.httpMethod = "POST"
         request.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["host_id": hostId])
+        var body: [String: Any] = ["host_id": hostId]
+        if let threadId, !threadId.isEmpty {
+            body["thread_id"] = threadId
+        }
+        if let cwd, !cwd.isEmpty {
+            body["cwd"] = cwd
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let data = try await data(for: request)
         return try decoder.decode(OpenSessionResponse.self, from: data).sessionId
+    }
+
+    func searchChats(baseURL: String, userToken: String, query: String, limit: Int = 20) async throws -> [SearchResult] {
+        var components = URLComponents(url: try url(baseURL: baseURL, path: "/api/search"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        guard let searchURL = components?.url else {
+            throw RelayClientError.invalidURL
+        }
+        var request = URLRequest(url: searchURL)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
+
+        let data = try await data(for: request)
+        return try decoder.decode(SearchResponse.self, from: data).results
     }
 
     private func data(for request: URLRequest) async throws -> Data {
@@ -65,4 +95,3 @@ final class RelayClient {
         return url
     }
 }
-

@@ -3,7 +3,7 @@ import { SCREENS } from '../config';
 
 // Top bar across every screen. Shows the Remotex brand, the current
 // session status, and a back affordance on non-root screens.
-export function Header({ state, onBack }) {
+export function Header({ state, onBack, onSearch }) {
   const showBack = state.screen !== SCREENS.Hosts;
   return (
     <header className="bar">
@@ -15,6 +15,9 @@ export function Header({ state, onBack }) {
         <span className="back-spacer" />
       )}
       <span className="brand">REMOTEX</span>
+      <button type="button" className="header-search" onClick={onSearch}>
+        Search
+      </button>
       <StatusBadge status={state.status} />
     </header>
   );

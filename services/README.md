@@ -1,4 +1,4 @@
-# Remotex services — relay + daemon
+# Remotex services - relay + daemon
 
 The backend for Remotex: the central relay that rendezvous-routes
 clients to hosts, and the per-host daemon that spawns `codex
@@ -10,6 +10,7 @@ with `scripts/e2e_test.py`.
 ```
 services/
 ├── relay/app.py                   aiohttp relay + SQLite inventory + WS routing
+├── relay/search.py                Postgres/pgvector semantic chat search
 ├── daemon/
 │   ├── __main__.py                CLI: init / run / status
 │   ├── config.py                  TOML config, cross-platform paths
@@ -26,15 +27,17 @@ services/
 ## Requirements
 
 - Python 3.11+
-- `pip install aiohttp` (the only non-stdlib dependency)
+- `pip install -r requirements.txt`
+- Optional for semantic search: Postgres with pgvector plus an
+  OpenAI-compatible Qwen3-Embedding-8B endpoint.
 
 ## Run locally
 
 ```bash
-# Terminal 1 — the relay (serves API + web UI on http://127.0.0.1:8080)
+# Terminal 1 - the relay (serves API + web UI on http://127.0.0.1:8080)
 python3 relay/app.py --host 127.0.0.1 --port 8080
 
-# Terminal 2 — a daemon (uses the seeded demo bridge token)
+# Terminal 2 - a daemon (uses the seeded demo bridge token)
 python3 -m daemon init \
     --relay-url ws://127.0.0.1:8080/ws/daemon \
     --bridge-token demo-bridge-token \
@@ -45,7 +48,7 @@ python3 -m daemon run --config ./demo-config.toml
 
 # Browser
 open http://127.0.0.1:8080/
-# Token field is pre-filled with demo-user-token — click Load hosts,
+# Token field is pre-filled with demo-user-token - click Load hosts,
 # pick the demo host, Open session, type a prompt.
 ```
 
@@ -55,7 +58,7 @@ open http://127.0.0.1:8080/
 python3 scripts/e2e_test.py
 ```
 
-Expected output ends with `E2E: OK — full flow exercised relay <-> daemon <-> client`.
+Expected output ends with `E2E: OK - full flow exercised relay <-> daemon <-> client`.
 The test boots relay + daemon in-process, drives the REST API and a
 client WebSocket, and asserts the scripted sequence of session events
 arrives in order.
@@ -73,15 +76,18 @@ how to replace them with Keycloak-issued credentials.
 
 ## What's real vs. mocked
 
-- **Relay transport** — real. The WS routing, SQLite inventory, bearer
+- **Relay transport** - real. The WS routing, SQLite inventory, bearer
   auth middleware, and REST endpoints all work.
-- **Daemon → relay** — real. Outbound WSS with hello + session routing
+- **Semantic search** - real when configured. The relay stores completed
+  turn chunks in Postgres/pgvector and embeds them through an
+  OpenAI-compatible Qwen3-Embedding-8B API.
+- **Daemon → relay** - real. Outbound WSS with hello + session routing
   and exponential backoff reconnect.
-- **Codex integration** — mocked. The default adapter emits a scripted
+- **Codex integration** - mocked. The default adapter emits a scripted
   sequence of events shaped like the real Codex App Server protocol.
   `daemon/adapters.py::StdioCodexAdapter` is the skeleton for the real
   stdio bridge; see `docs/codex_app_server_protocol.md`.
-- **User auth** — token lookup against SQLite only. No Keycloak yet.
+- **User auth** - token lookup against SQLite only. No Keycloak yet.
 
 ## Next steps
 

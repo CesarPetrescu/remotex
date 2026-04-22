@@ -8,6 +8,7 @@ export const SCREENS = {
   Threads: 'threads',
   Files: 'files',
   Session: 'session',
+  Search: 'search',
 };
 
 export const STATUS = {

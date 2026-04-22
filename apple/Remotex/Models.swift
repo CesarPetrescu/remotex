@@ -30,6 +30,42 @@ struct OpenSessionResponse: Decodable {
     }
 }
 
+struct SearchResult: Identifiable, Decodable, Equatable {
+    let id: String
+    let hostId: String
+    let sessionId: String
+    let threadId: String?
+    let turnId: String?
+    let kind: String
+    let role: String
+    let snippet: String
+    let text: String
+    let cwd: String?
+    let model: String?
+    let createdAt: Int?
+    let score: Double
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case hostId = "host_id"
+        case sessionId = "session_id"
+        case threadId = "thread_id"
+        case turnId = "turn_id"
+        case kind
+        case role
+        case snippet
+        case text
+        case cwd
+        case model
+        case createdAt = "created_at"
+        case score
+    }
+}
+
+struct SearchResponse: Decodable {
+    let results: [SearchResult]
+}
+
 struct SessionInfo: Equatable {
     let sessionId: String
     let hostId: String
@@ -64,4 +100,3 @@ struct StreamItem: Identifiable, Equatable {
     var detail: String = ""
     var completed: Bool = false
 }
-

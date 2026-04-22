@@ -8,6 +8,7 @@ import { HostsScreen } from './screens/HostsScreen';
 import { ThreadsScreen } from './screens/ThreadsScreen';
 import { FilesScreen } from './screens/FilesScreen';
 import { SessionScreen } from './screens/SessionScreen';
+import { SearchScreen } from './screens/SearchScreen';
 
 export default function App() {
   const r = useRemotex();
@@ -20,6 +21,8 @@ export default function App() {
       r.goToThreads();
     } else if (state.screen === SCREENS.Files) {
       r.goToThreads();
+    } else if (state.screen === SCREENS.Search) {
+      r.goToHosts();
     } else if (state.screen === SCREENS.Threads) {
       r.goToHosts();
     }
@@ -37,7 +40,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header state={state} onBack={onBack} />
+      <Header state={state} onBack={onBack} onSearch={r.goToSearch} />
       <main className="screen-host">
         {state.screen === SCREENS.Hosts && (
           <HostsScreen
@@ -61,6 +64,14 @@ export default function App() {
             onNavigate={r.browseDir}
             onUp={r.browseUp}
             onStartHere={r.startSessionInCurrentPath}
+          />
+        )}
+        {state.screen === SCREENS.Search && (
+          <SearchScreen
+            state={state}
+            onQueryChange={r.setSearchQuery}
+            onSearch={r.searchChats}
+            onOpenResult={r.openSearchResult}
           />
         )}
         {state.screen === SCREENS.Session && (

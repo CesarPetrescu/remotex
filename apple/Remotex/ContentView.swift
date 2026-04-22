@@ -77,6 +77,35 @@ private struct HostsView: View {
                     }
                 }
             }
+
+            Section("Search") {
+                TextField("Search chats", text: $viewModel.searchQuery)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.system(.body, design: .monospaced))
+                    .onSubmit {
+                        viewModel.searchChats()
+                    }
+                Button {
+                    viewModel.searchChats()
+                } label: {
+                    Label(
+                        viewModel.searchLoading ? "Searching" : "Search chats",
+                        systemImage: "magnifyingglass"
+                    )
+                }
+                if viewModel.searchResults.isEmpty {
+                    EmptyStateRow(text: viewModel.searchLoading ? "searching" : "no search results")
+                } else {
+                    ForEach(viewModel.searchResults) { result in
+                        Button {
+                            viewModel.openSearchResult(result)
+                        } label: {
+                            SearchResultRow(result: result)
+                        }
+                    }
+                }
+            }
         }
         .scrollContentBackground(.hidden)
         .background(Color.remotexBackground)
@@ -108,6 +137,30 @@ private struct HostRow: View {
             Image(systemName: "chevron.right")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Color.remotexMuted)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct SearchResultRow: View {
+    let result: SearchResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(result.snippet.isEmpty ? result.text : result.snippet)
+                .foregroundStyle(Color.remotexText)
+                .lineLimit(4)
+            HStack(spacing: 8) {
+                Text(result.role)
+                    .foregroundStyle(Color.remotexAccent)
+                Text("\(Int(result.score * 100))%")
+                if let cwd = result.cwd, !cwd.isEmpty {
+                    Text(cwd)
+                        .lineLimit(1)
+                }
+            }
+            .font(.caption.monospaced())
+            .foregroundStyle(Color.remotexMuted)
         }
         .padding(.vertical, 4)
     }
@@ -311,4 +364,3 @@ private struct EmptyStateRow: View {
 #Preview {
     ContentView()
 }
-

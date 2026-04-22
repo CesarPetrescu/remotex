@@ -1,14 +1,41 @@
 name: remotex
 
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SEARCH_POSTGRES_DB:-remotex}
+      POSTGRES_USER: ${SEARCH_POSTGRES_USER:-remotex}
+      POSTGRES_PASSWORD: ${SEARCH_POSTGRES_PASSWORD:-remotex-search}
+    volumes:
+      - search-data:/var/lib/postgresql/data
+    networks:
+      - remotex
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SEARCH_POSTGRES_USER:-remotex} -d ${SEARCH_POSTGRES_DB:-remotex}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   relay:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.relay
     image: remotex/relay:local
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       TZ: ${TZ:-Etc/UTC}
+      SEARCH_DATABASE_URL: postgresql://${SEARCH_POSTGRES_USER:-remotex}:${SEARCH_POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${SEARCH_POSTGRES_DB:-remotex}
+      EMBEDDING_API_BASE_URL: ${EMBEDDING_API_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-4096}
+      EMBEDDING_MAX_CONTEXT_TOKENS: ${EMBEDDING_MAX_CONTEXT_TOKENS:-32768}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-16}
     volumes:
       - relay-data:/data
     ports:
@@ -45,6 +72,7 @@ services:
 
 volumes:
   relay-data:
+  search-data:
   caddy-data:
   caddy-config:
 

@@ -1,4 +1,4 @@
-# Remotex deploy — Docker Compose
+# Remotex deploy - Docker Compose
 
 Self-host the relay + web client with one command. This is the
 "single box, no Kubernetes" path; see
@@ -13,13 +13,13 @@ deploy/
 │                        then bundles the built assets into the relay
 │                        container so one image serves both the API
 │                        and the web UI.
-├── docker-compose.yml   relay service + optional Caddy TLS profile
+├── docker-compose.yml   relay, pgvector search store + optional Caddy TLS
 ├── Caddyfile            TLS reverse proxy config (activated with --profile tls)
 ├── .env.example         variables for the tls profile
 └── README.md            this file
 ```
 
-## Quickstart — relay only (no TLS)
+## Quickstart - relay only (no TLS)
 
 ```bash
 cd deploy
@@ -28,19 +28,50 @@ docker compose up -d --build
 
 The relay binds to `127.0.0.1:8080` on the host. SQLite lives in a
 named volume (`remotex_relay-data`), so restarts preserve hosts,
-bridge tokens, and sessions.
+bridge tokens, and sessions. Semantic search chunks and vectors live
+in the Postgres/pgvector volume (`remotex_search-data`).
 
 ```bash
 curl -H "Authorization: Bearer demo-user-token" \
      http://127.0.0.1:8080/api/hosts
 ```
 
-Web control UI is at http://127.0.0.1:8080/ — it's the
+Web control UI is at http://127.0.0.1:8080/ - it's the
 `apps/web/` React client, compiled into static assets during the
 image build and served by the relay itself (no separate web
 container).
 
-## Quickstart — with TLS (Caddy + Let's Encrypt)
+## Semantic Search
+
+The Compose stack includes Postgres with pgvector. Search is visible
+in the clients, but results require an OpenAI-compatible embedding
+endpoint. LiteLLM works when it exposes `/v1/embeddings`:
+
+```bash
+cd deploy
+cp .env.example .env
+$EDITOR .env
+docker compose up -d --build
+```
+
+Set at least:
+
+```dotenv
+EMBEDDING_API_BASE_URL=http://your-litellm-host:80/v1
+EMBEDDING_API_KEY=your-litellm-master-key
+EMBEDDING_MODEL=qwen3-embedding
+EMBEDDING_DIMENSIONS=4096
+EMBEDDING_MAX_CONTEXT_TOKENS=32768
+```
+
+The relay exposes non-secret effective config at:
+
+```bash
+curl -H "Authorization: Bearer demo-user-token" \
+     http://127.0.0.1:8080/api/search/config
+```
+
+## Quickstart - with TLS (Caddy + Let's Encrypt)
 
 Point a DNS record at the server first, then:
 
@@ -58,6 +89,7 @@ the relay container.
 
 ```bash
 docker compose logs -f relay
+docker compose logs -f postgres
 docker compose --profile tls logs -f caddy
 ```
 
@@ -100,7 +132,7 @@ For the local-only run, swap `wss://relay.example.com` for
 Docker Compose gets you a self-hosted demo, not a hardened service.
 Open items tracked against the roadmap:
 
-- Postgres backend (currently SQLite in the volume).
+- Move the primary relay inventory from SQLite to Postgres.
 - Keycloak / OIDC auth (currently demo bearer tokens seeded on first run).
 - Audit log + metrics.
 - Bounded queues / backpressure on session fan-out.

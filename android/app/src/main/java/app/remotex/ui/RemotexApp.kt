@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -75,6 +76,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import app.remotex.model.FsEntry
 import app.remotex.model.Host
+import app.remotex.model.SearchResult
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
 import app.remotex.ui.theme.Amber
@@ -106,6 +108,9 @@ fun RemotexApp(relayUrl: String) {
     BackHandler(enabled = state.screen == Screen.Threads) {
         vm.goToHosts()
     }
+    BackHandler(enabled = state.screen == Screen.Search) {
+        vm.goToHosts()
+    }
 
     // Kick a reconnect when we come back to the foreground after a pause.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -130,8 +135,10 @@ fun RemotexApp(relayUrl: String) {
                     Screen.Threads -> ({ vm.goToHosts() })
                     Screen.Files -> ({ vm.goToThreads() })
                     Screen.Session -> ({ vm.goToThreads() })
+                    Screen.Search -> ({ vm.goToHosts() })
                     Screen.Hosts -> ({})
                 },
+                onSearch = { vm.goToSearch() },
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
@@ -157,6 +164,12 @@ fun RemotexApp(relayUrl: String) {
                     onNavigate = vm::browseDir,
                     onUp = vm::browseUp,
                     onStartHere = vm::startSessionInCurrentPath,
+                )
+                Screen.Search -> SearchScreen(
+                    state = state,
+                    onQueryChange = vm::setSearchQuery,
+                    onSearch = vm::searchChats,
+                    onOpenResult = vm::openSearchResult,
                 )
                 Screen.Session -> SessionScreen(
                     state = state,
@@ -221,7 +234,7 @@ fun RemotexApp(relayUrl: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RemotexBar(state: UiState, onBack: () -> Unit) {
+private fun RemotexBar(state: UiState, onBack: () -> Unit, onSearch: () -> Unit) {
     TopAppBar(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -249,6 +262,11 @@ private fun RemotexBar(state: UiState, onBack: () -> Unit) {
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
         ),
+        actions = {
+            IconButton(onClick = onSearch) {
+                Icon(Icons.Filled.Search, contentDescription = "Search", tint = Ink)
+            }
+        },
     )
 }
 
@@ -685,6 +703,145 @@ private fun shortenCwd(cwd: String): String {
     val home = System.getProperty("user.home")
     val trimmed = if (home != null && cwd.startsWith(home)) "~" + cwd.substring(home.length) else cwd
     return if (trimmed.length > 30) "…" + trimmed.takeLast(27) else trimmed
+}
+
+// -------------------- Search screen --------------------
+
+@Composable
+private fun SearchScreen(
+    state: UiState,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onOpenResult: (SearchResult) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "semantic chat search".uppercase(),
+            color = InkDim,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+        )
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RectangleShape,
+            border = BorderStroke(1.dp, Line),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            BasicTextField(
+                value = state.searchQuery,
+                onValueChange = onQueryChange,
+                textStyle = TextStyle(
+                    color = Ink,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                ),
+                cursorBrush = SolidColor(Amber),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+                singleLine = true,
+                modifier = Modifier.padding(10.dp).fillMaxWidth(),
+            )
+        }
+        Button(
+            onClick = onSearch,
+            enabled = !state.searchLoading,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Amber,
+                contentColor = Color.Black,
+                disabledContainerColor = MaterialTheme.colorScheme.surface,
+                disabledContentColor = InkDim,
+            ),
+            shape = RectangleShape,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                if (state.searchLoading) "Searching" else "Search chats",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+            )
+        }
+        when {
+            state.searchLoading && state.searchResults.isEmpty() -> Text(
+                "searching...",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(16.dp),
+            )
+            state.searchResults.isEmpty() -> Text(
+                "enter a query to find previous answers and reasoning",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(16.dp),
+            )
+            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(state.searchResults, key = { it.id }) { result ->
+                    SearchResultRow(result, onClick = { onOpenResult(result) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultRow(result: SearchResult, onClick: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RectangleShape,
+        border = BorderStroke(1.dp, Line),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                result.snippet.ifBlank { result.text },
+                color = Ink,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row {
+                Text(
+                    result.role,
+                    color = Amber,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${(result.score * 100.0).toInt()}%",
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    relativeAge(result.createdAt ?: 0L),
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+                result.cwd?.let {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        shortenCwd(it),
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
 }
 
 // -------------------- Files screen --------------------

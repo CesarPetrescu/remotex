@@ -53,4 +53,14 @@ export class RelayClient {
       body: JSON.stringify(body),
     }).then((r) => r.session_id);
   }
+
+  searchConfig() {
+    return this.#request('/api/search/config');
+  }
+
+  searchChats(query, { hostId = null, limit = 20 } = {}) {
+    const qs = new URLSearchParams({ q: query, limit: String(limit) });
+    if (hostId) qs.set('host_id', hostId);
+    return this.#request(`/api/search?${qs.toString()}`).then((r) => r.results);
+  }
 }

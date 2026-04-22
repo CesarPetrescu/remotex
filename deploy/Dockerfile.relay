@@ -37,7 +37,14 @@ EXPOSE 8080
 
 RUN useradd --system --uid 10001 --home /app relay \
     && chown -R relay:relay /app /data
-USER relay
+# Stay root through ENTRYPOINT so the startup script can fix /data
+# ownership after Docker mounts the volume — the volume mount happens
+# after the Dockerfile's `chown`, so without this the `relay` user
+# can't write the SQLite DB. The script drops to `relay` via setpriv
+# before exec'ing the relay.
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request,sys; \

@@ -18,22 +18,26 @@ flowchart TB
         A["Android app<br/><code>android/</code>"]
         I["iPhone app<br/><code>apple/</code>"]
     end
-    R["<b>Remotex relay</b><br/><code>services/relay</code><br/>auth · hosts · sessions · routing"]
+    R["<b>Remotex relay</b><br/><code>services/relay</code><br/>auth · hosts · sessions · routing · search"]
     D["<b>Host daemon</b><br/><code>services/daemon</code><br/>runs on the codex machine"]
     X["<code>codex app-server</code><br/>official OpenAI binary"]
+    P["Postgres + pgvector<br/><code>deploy/docker-compose.yml</code>"]
+    E["Qwen3-Embedding-8B<br/>OpenAI-compatible embeddings API"]
 
     W -- "HTTPS + WSS<br/>user bearer token" --> R
     A -- "HTTPS + WSS<br/>user bearer token" --> R
     I -- "HTTPS + WSS<br/>user bearer token" --> R
     D == "outbound WSS<br/>bridge token" ==> R
     D == "local stdio<br/>JSON-RPC" ==> X
+    R -- "chat chunks + vectors" --> P
+    R -- "embedding requests" --> E
 
     classDef clientNode fill:#1a1e26,stroke:#e8a756,color:#e8dfd0;
     classDef relayNode fill:#14171d,stroke:#7dc87d,color:#e8dfd0;
     classDef daemonNode fill:#14171d,stroke:#5f8fb0,color:#e8dfd0;
     classDef codexNode fill:#0d0f13,stroke:#9a958a,color:#9a958a;
     class W,A,I clientNode;
-    class R relayNode;
+    class R,P,E relayNode;
     class D daemonNode;
     class X codexNode;
 ```
@@ -109,6 +113,9 @@ cd android
 8. The daemon translates that into Codex `turn/start` over stdio.
 9. Codex notifications are normalized into `session-event` frames and
    streamed back through the relay to the client.
+10. When semantic search is configured, the relay stores completed user
+    prompts, final Codex answers, and reasoning chunks in pgvector so web,
+    Android, and iPhone clients can search prior chats through `/api/search`.
 
 ## Repo Layout
 
@@ -118,7 +125,7 @@ remotex/
 ├── android/               Kotlin + Jetpack Compose native client
 ├── apple/                 SwiftUI iPhone client
 ├── services/
-│   ├── relay/             aiohttp relay + SQLite inventory + WS routing
+│   ├── relay/             aiohttp relay + SQLite inventory + WS routing + search
 │   ├── daemon/            outbound-WSS daemon + Codex adapters
 │   ├── web/               legacy single-file demo UI
 │   ├── scripts/e2e_test.py
@@ -229,7 +236,18 @@ docker compose up -d --build
 ```
 
 This builds the web client, bundles it into the relay image, and serves
-everything from one container on `127.0.0.1:8080`.
+everything from the relay container on `127.0.0.1:8080`. The Compose
+stack also starts Postgres with pgvector for semantic chat search.
+
+To enable Qwen3 embedding search through LiteLLM, set these in `deploy/.env`:
+
+```dotenv
+EMBEDDING_API_BASE_URL=http://your-litellm-host:80/v1
+EMBEDDING_API_KEY=your-litellm-master-key
+EMBEDDING_MODEL=qwen3-embedding
+EMBEDDING_DIMENSIONS=4096
+EMBEDDING_MAX_CONTEXT_TOKENS=32768
+```
 
 For TLS:
 
@@ -249,8 +267,9 @@ docker compose --profile tls up -d --build
 | Mock adapter | Working for tests and offline demos |
 | Web client | Lists hosts, opens sessions, sends text turns, streams reasoning/tool/agent events |
 | Android client | Lists hosts, opens/resumes threads, renders events, sends turns, supports images, model/effort controls, permissions, approvals, interrupt, reconnect |
-| iPhone client | Starter SwiftUI app; lists hosts, opens sessions, sends text turns, streams events |
-| Docker Compose | Working relay + web bundle, optional Caddy TLS |
+| iPhone client | Starter SwiftUI app; lists hosts, opens sessions, sends text turns, streams events, searches chats |
+| Semantic chat search | Captures completed turns, chunks user/Codex/reasoning text, embeds with Qwen3-Embedding-8B, stores vectors in pgvector, exposes web/Android/iPhone search |
+| Docker Compose | Working relay + web bundle, pgvector search store, optional Caddy TLS |
 | CI | ESLint, Vite builds, npm audit, Ruff, backend e2e, Android debug APK artifact, iPhone simulator build |
 
 ## Protocol Surface

@@ -25,6 +25,11 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+try:  # package import when tests import relay.app
+    from .search import SearchConfig, SearchService, SearchUnavailable
+except ImportError:  # script import when Docker runs python relay/app.py
+    from search import SearchConfig, SearchService, SearchUnavailable
+
 log = logging.getLogger("relay")
 
 DEMO_USER_TOKEN = "demo-user-token"
@@ -198,6 +203,14 @@ class Store:
             (_now(), session_id),
         )
         self.conn.commit()
+
+    def session_info(self, session_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT id, host_id, owner_token, opened_at, closed_at "
+            "FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +418,9 @@ async def open_session(request: web.Request) -> web.Response:
     if hub.daemon_for(host_id) is None:
         raise web.HTTPBadGateway(reason="host offline")
     sid = store.open_session(host_id, user["token"])
+    session = store.session_info(sid)
+    if session:
+        request.app["search"].capture_session_opened(session)
     # Stash per-session overrides so ws_client can thread them into the
     # session-open frame it later sends to the daemon.
     overrides: dict = {}
@@ -420,6 +436,54 @@ async def open_session(request: web.Request) -> web.Response:
         "thread_id": resume_thread_id,
         "cwd": cwd,
     }, status=201)
+
+
+async def search_config(request: web.Request) -> web.Response:
+    await require_user(request)
+    search: SearchService = request.app["search"]
+    return web.json_response(search.config_payload())
+
+
+async def search_chats(request: web.Request) -> web.Response:
+    user = await require_user(request)
+    query = (request.query.get("q") or "").strip()
+    if not query:
+        raise web.HTTPBadRequest(reason="q query parameter required")
+    host_id = (request.query.get("host_id") or "").strip() or None
+    if host_id and request.app["store"].host_owner(host_id) != user["token"]:
+        raise web.HTTPNotFound(reason="host not found")
+    try:
+        limit = int(request.query.get("limit") or 20)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason="limit must be an integer") from exc
+    search: SearchService = request.app["search"]
+    try:
+        results = await search.search(
+            owner_token=user["token"],
+            query=query,
+            limit=limit,
+            host_id=host_id,
+        )
+    except SearchUnavailable as exc:
+        raise web.HTTPServiceUnavailable(reason=str(exc)) from exc
+    return web.json_response({"results": results})
+
+
+async def reindex_search(request: web.Request) -> web.Response:
+    user = await require_user(request)
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except json.JSONDecodeError:
+        body = {}
+    host_id = (body.get("host_id") or request.query.get("host_id") or "").strip() or None
+    if host_id and request.app["store"].host_owner(host_id) != user["token"]:
+        raise web.HTTPNotFound(reason="host not found")
+    search: SearchService = request.app["search"]
+    try:
+        chunks = await search.reindex(user["token"], host_id=host_id)
+    except SearchUnavailable as exc:
+        raise web.HTTPServiceUnavailable(reason=str(exc)) from exc
+    return web.json_response({"chunks": chunks})
 
 
 async def index(request: web.Request) -> web.Response:
@@ -454,6 +518,22 @@ def _make_root_static(filename: str):
 # ---------------------------------------------------------------------------
 # WebSocket handlers
 # ---------------------------------------------------------------------------
+
+_SEARCH_EVENT_KINDS = {
+    "session-started",
+    "turn-started",
+    "item-completed",
+    "turn-completed",
+    "history-end",
+}
+
+
+def _search_should_capture(frame: dict) -> bool:
+    event = frame.get("event")
+    if not isinstance(event, dict):
+        return False
+    return event.get("kind") in _SEARCH_EVENT_KINDS
+
 
 async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse(heartbeat=20)
@@ -502,8 +582,13 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 client_ws = hub.client_for(sid)
                 if client_ws is not None and not client_ws.closed:
                     await client_ws.send_json(frame)
+                session = store.session_info(sid)
+                if session and ftype == "session-event" and _search_should_capture(frame):
+                    request.app["search"].capture_session_event(session, frame)
                 if ftype == "session-closed":
                     store.close_session(sid)
+                    if session:
+                        request.app["search"].capture_session_closed(session)
             elif ftype in ("threads-list-response", "fs-read-response"):
                 req_id = frame.get("request_id")
                 fut = hub.pending_admin.get(req_id) if req_id else None
@@ -585,6 +670,10 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                 continue
             # Forward client-originated frames to the daemon untouched.
             frame["session_id"] = session_id
+            if frame.get("type") == "turn-start":
+                session = store.session_info(session_id)
+                if session:
+                    request.app["search"].capture_client_turn(session, frame)
             daemon_ws = hub.daemon_for(host_id)
             if daemon_ws is None or daemon_ws.closed:
                 await ws.send_json({"type": "error", "error": "host offline"})
@@ -609,6 +698,9 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     app["store"] = Store(db_path)
     app["hub"] = Hub()
     app["static_root"] = static_root
+    app["search"] = SearchService(SearchConfig.from_env())
+    app.on_startup.append(_start_services)
+    app.on_cleanup.append(_stop_services)
 
     app.router.add_get("/", index)
     app.router.add_get("/api/hosts", list_hosts)
@@ -617,6 +709,9 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     app.router.add_get("/api/hosts/{host_id}/threads", list_host_threads)
     app.router.add_get("/api/hosts/{host_id}/fs", list_host_fs)
     app.router.add_post("/api/sessions", open_session)
+    app.router.add_get("/api/search/config", search_config)
+    app.router.add_get("/api/search", search_chats)
+    app.router.add_post("/api/search/reindex", reindex_search)
     app.router.add_get("/ws/daemon", ws_daemon)
     app.router.add_get("/ws/client", ws_client)
     # Vite drops hashed bundles into static_root/assets; the legacy
@@ -628,6 +723,14 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     for name in _ROOT_STATIC_FILES:
         app.router.add_get(f"/{name}", _make_root_static(name))
     return app
+
+
+async def _start_services(app: web.Application) -> None:
+    await app["search"].start()
+
+
+async def _stop_services(app: web.Application) -> None:
+    await app["search"].stop()
 
 
 def main() -> None:

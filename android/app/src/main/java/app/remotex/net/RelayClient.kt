@@ -6,6 +6,8 @@ import app.remotex.model.Host
 import app.remotex.model.HostsResponse
 import app.remotex.model.OpenSessionRequest
 import app.remotex.model.OpenSessionResponse
+import app.remotex.model.SearchResponse
+import app.remotex.model.SearchResult
 import app.remotex.model.ThreadInfo
 import app.remotex.model.ThreadsResponse
 import kotlinx.coroutines.Dispatchers
@@ -106,6 +108,24 @@ class RelayClient(
             check(resp.isSuccessful) { "readDirectory: ${resp.code} ${resp.message}" }
             val body = resp.body?.string().orEmpty()
             json.decodeFromString(FsListResponse.serializer(), body)
+        }
+    }
+
+    suspend fun searchChats(
+        userToken: String,
+        query: String,
+        limit: Int = 20,
+    ): List<SearchResult> = withContext(Dispatchers.IO) {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val req = Request.Builder()
+            .url("$baseUrl/api/search?q=$encoded&limit=$limit")
+            .header("Authorization", "Bearer $userToken")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            check(resp.isSuccessful) { "searchChats: ${resp.code} ${resp.message}" }
+            val body = resp.body?.string().orEmpty()
+            json.decodeFromString(SearchResponse.serializer(), body).results
         }
     }
 }
