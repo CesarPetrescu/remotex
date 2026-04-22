@@ -1,0 +1,3 @@
+# Copy to local.properties and adjust if your SDK lives elsewhere.
+# This file is per-machine and must not be committed (it's ignored).
+sdk.dir=/opt/android-sdk
