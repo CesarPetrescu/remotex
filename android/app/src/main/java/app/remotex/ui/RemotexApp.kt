@@ -179,11 +179,8 @@ private fun HostsScreen(
     ) {
         TokenField(state.userToken, onTokenChange)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PickerField(
-                label = "MODEL",
-                selected = state.model.ifEmpty { "default" },
-                options = MODEL_OPTIONS,
-                displayFor = { if (it.isEmpty()) "default" else it },
+            ModelPickerField(
+                selected = state.model,
                 onSelect = onModelChange,
                 modifier = Modifier.weight(1f),
             )
@@ -191,7 +188,7 @@ private fun HostsScreen(
                 label = "REASONING",
                 selected = state.effort,
                 options = REASONING_EFFORTS,
-                displayFor = { it },
+                displayFor = { if (it.isEmpty()) "default" else it },
                 onSelect = onEffortChange,
                 modifier = Modifier.weight(1f),
             )
@@ -227,6 +224,65 @@ private fun HostsScreen(
                 items(state.hosts, key = { it.id }) { h ->
                     HostRow(h) { onHostTap(h) }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelPickerField(
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val current = MODEL_OPTIONS.firstOrNull { it.id == selected } ?: MODEL_OPTIONS.first()
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(4.dp),
+        modifier = modifier.clickable { expanded = true },
+    ) {
+        Column(Modifier.padding(8.dp)) {
+            Text("MODEL", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                current.label,
+                color = Ink,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                current.hint,
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            MODEL_OPTIONS.forEach { opt ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                opt.label,
+                                color = Ink,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                            )
+                            Text(
+                                opt.hint,
+                                color = InkDim,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                            )
+                        }
+                    },
+                    onClick = { onSelect(opt.id); expanded = false },
+                )
             }
         }
     }

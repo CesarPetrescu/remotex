@@ -50,9 +50,35 @@ data class UiState(
     val effort: String = "medium",   // none/minimal/low/medium/high/xhigh
 )
 
-val REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
-// Seed list — codex accepts any string it's configured for. User can still type a custom one.
-val MODEL_OPTIONS = listOf("", "gpt-5.4", "gpt-5-codex", "gpt-5", "o3", "o3-mini")
+/**
+ * Reasoning effort levels. Empty string → don't override; let codex use
+ * the model's default (almost always "medium"). The other values are
+ * the intersection of what every visible model supports, so picking one
+ * won't fail for the model the user chose.
+ */
+val REASONING_EFFORTS = listOf("", "low", "medium", "high", "xhigh")
+
+/**
+ * Pinned list of models exposed by `codex 0.122.0` (visible, non-hidden).
+ * First option "" means "let codex use its configured default" — usually
+ * gpt-5.4. Keep in sync with `codex app-server`'s `model/list`; you can
+ * re-pull the live list anytime from a daemon with:
+ *
+ *     cat /tmp/list-models3.py  # see repo tooling
+ */
+data class ModelOption(val id: String, val label: String, val hint: String)
+
+val MODEL_OPTIONS = listOf(
+    ModelOption("", "default", "codex picks"),
+    ModelOption("gpt-5.4", "gpt-5.4", "latest frontier (default)"),
+    ModelOption("gpt-5.4-mini", "gpt-5.4 · mini", "smaller frontier"),
+    ModelOption("gpt-5.3-codex", "gpt-5.3 · codex", "codex-optimized"),
+    ModelOption("gpt-5.3-codex-spark", "gpt-5.3 · codex spark", "ultra-fast coding"),
+    ModelOption("gpt-5.2", "gpt-5.2", "long-running agents"),
+    ModelOption("gpt-5.2-codex", "gpt-5.2 · codex", "codex-optimized"),
+    ModelOption("gpt-5.1-codex-max", "gpt-5.1 · codex max", "deep reasoning"),
+    ModelOption("gpt-5.1-codex-mini", "gpt-5.1 · codex mini", "cheaper/faster"),
+)
 
 class RemotexViewModel(private val relayUrl: String) : ViewModel() {
     private val client = RelayClient(baseUrl = relayUrl)
