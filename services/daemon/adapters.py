@@ -199,6 +199,9 @@ class StdioCodexAdapter(SessionAdapter):
         self.binary = codex_binary
         self._cwd = default_cwd or os.path.expanduser("~")
         self._resume_thread_id = resume_thread_id
+        # Mutable working directory: thread/start kicks off in
+        # `default_cwd`, /cd swaps it, every turn/start rides with it.
+        self._current_cwd = self._cwd
         self._proc: asyncio.subprocess.Process | None = None
         self._queue: asyncio.Queue[SessionEvent | None] = asyncio.Queue()
         self._reader_task: asyncio.Task | None = None
@@ -363,6 +366,11 @@ class StdioCodexAdapter(SessionAdapter):
             params: dict = {
                 "threadId": self._thread_id,
                 "input": codex_input,
+                # Apply the latest /cd target on every turn. Codex
+                # documents `cwd` as "override for this turn and
+                # subsequent turns," so passing it every time keeps
+                # the daemon and codex in sync even on resumed threads.
+                "cwd": self._current_cwd,
                 # Ask codex to stream reasoning summaries as deltas rather
                 # than only emitting them with item/completed at the end.
                 "summary": self._reasoning_summary,
@@ -422,6 +430,17 @@ class StdioCodexAdapter(SessionAdapter):
 
     async def _handle_slash(self, frame: dict) -> None:
         command = (frame.get("command") or "").lower().strip()
+        args = (frame.get("args") or "").strip()
+        if command == "cd":
+            await self._handle_cd(args)
+            return
+        if command == "pwd":
+            await self._queue.put(SessionEvent("slash-ack", {
+                "command": "pwd",
+                "ok": True,
+                "message": self._current_cwd or "(unset)",
+            }))
+            return
         if command == "compact":
             try:
                 await self._request("thread/compact/start", {"threadId": self._thread_id})
@@ -472,6 +491,30 @@ class StdioCodexAdapter(SessionAdapter):
                 "ok": False,
                 "error": f"unknown slash command: /{command}",
             }))
+
+    async def _handle_cd(self, args: str) -> None:
+        if not args:
+            await self._queue.put(SessionEvent("slash-ack", {
+                "command": "cd", "ok": False,
+                "error": "usage: /cd <absolute path>",
+            }))
+            return
+        # Expand ~ and $HOME; anchor relative paths to the current cwd
+        # so `/cd subdir` is intuitive once you're already inside a repo.
+        expanded = os.path.expanduser(os.path.expandvars(args))
+        if not os.path.isabs(expanded):
+            expanded = os.path.normpath(os.path.join(self._current_cwd, expanded))
+        if not os.path.isdir(expanded):
+            await self._queue.put(SessionEvent("slash-ack", {
+                "command": "cd", "ok": False,
+                "error": f"not a directory: {expanded}",
+            }))
+            return
+        self._current_cwd = expanded
+        await self._queue.put(SessionEvent("slash-ack", {
+            "command": "cd", "ok": True,
+            "message": f"cwd → {expanded}",
+        }))
 
     async def _resolve_approval(self, frame: dict) -> None:
         approval_id = frame.get("approval_id")

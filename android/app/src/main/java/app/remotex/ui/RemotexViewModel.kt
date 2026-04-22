@@ -386,12 +386,16 @@ class RemotexViewModel(
         if (attachments.isEmpty() && input.startsWith("/")) {
             val bare = input.substring(1).trim()
             val cmd = bare.substringBefore(' ').lowercase()
+            // Forward everything after the command as `args`, so /cd <path>
+            // (and future commands that take arguments) reach the daemon.
+            val args = if (' ' in bare) bare.substringAfter(' ').trim() else ""
             if (cmd.isNotEmpty()) {
                 val frame = Json.encodeToString(
                     JsonObject.serializer(),
                     buildJsonObject {
                         put("type", "slash-command")
                         put("command", cmd)
+                        if (args.isNotEmpty()) put("args", args)
                     },
                 )
                 sock.sendJson(frame)
