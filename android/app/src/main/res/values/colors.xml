@@ -1,16 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Remotex brand palette — derived from docs/brand/logo.png.
-         Navy background + cyan accents + cool off-white text. -->
-    <color name="bg">#FF061E3A</color>
-    <color name="panel">#FF0C2A4D</color>
-    <color name="panel_2">#FF133660</color>
-    <color name="line">#FF1F3D6A</color>
+    <!-- Remotex palette — cyan/teal accents from docs/brand/logo.png,
+         pitched to OLED-dark surfaces so the app is easy on the eyes
+         at night and power-efficient on OLED panels. -->
+    <color name="bg">#FF050910</color>
+    <color name="panel">#FF0A1120</color>
+    <color name="panel_2">#FF121A2C</color>
+    <color name="line">#FF1D2940</color>
     <color name="ink">#FFE3EDFA</color>
     <color name="ink_dim">#FF88A4C4</color>
     <color name="amber">#FF5EE1FF</color>          <!-- cyan accent -->
     <color name="ok">#FF6AE0C2</color>              <!-- teal -->
     <color name="warn">#FFFF7070</color>            <!-- soft red -->
     <color name="accent">#FF3AA0E8</color>          <!-- deeper cyan -->
+    <!-- The launcher tile keeps the logo's own navy so the icon reads
+         as the brand mark even when the app UI itself is OLED-dark. -->
     <color name="brand_bg">#FF061E3A</color>
 </resources>

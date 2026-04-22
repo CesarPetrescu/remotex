@@ -2,11 +2,23 @@
   "name": "Remotex",
   "short_name": "Remotex",
   "icons": [
-    { "src": "/favicon-32.png", "sizes": "32x32", "type": "image/png" },
-    { "src": "/favicon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+    {
+      "src": "/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
   ],
-  "theme_color": "#061E3A",
-  "background_color": "#061E3A",
+  "theme_color": "#050910",
+  "background_color": "#050910",
   "display": "standalone"
 }

@@ -1,14 +1,15 @@
 /*
- * Brand palette — sampled from docs/brand/logo.png.
- * Navy background + cyan accents + cool off-white text. Token names
- * left unchanged (still called --amber) so the Android and web
- * palettes map 1:1; the hex values carry the rebrand.
+ * OLED-dark palette — cyan/teal accents sampled from
+ * docs/brand/logo.png, surfaces pitched near-black so the web
+ * client looks and feels like the Android app (both are meant for
+ * late-night sessions on phones with OLED screens). Token names
+ * kept as `--amber` etc. so existing CSS rules don't need renames.
  */
 :root {
-  --bg: #061e3a;
-  --panel: #0c2a4d;
-  --panel-2: #133660;
-  --line: #1f3d6a;
+  --bg: #050910;
+  --panel: #0a1120;
+  --panel-2: #121a2c;
+  --line: #1d2940;
   --ink: #e3edfa;
   --ink-dim: #88a4c4;
   --amber: #5ee1ff;          /* cyan accent */
