@@ -28,7 +28,13 @@ class DaemonClient:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                log.warning("connection lost: %s (retry in %.1fs)", exc, backoff)
+                # Some aiohttp WS errors have empty str(); log the class
+                # too so crashes aren't silent in systemd journals.
+                msg = str(exc) or "<no message>"
+                log.warning(
+                    "connection lost: %s: %s (retry in %.1fs)",
+                    type(exc).__name__, msg, backoff,
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
 
@@ -58,19 +64,33 @@ class DaemonClient:
                     async with send_lock:
                         await ws.send_json(frame)
 
-                async for msg in ws:
-                    if msg.type != aiohttp.WSMsgType.TEXT:
-                        continue
-                    try:
-                        frame = json.loads(msg.data)
-                    except json.JSONDecodeError:
-                        continue
-                    await self._dispatch(frame, send)
+                try:
+                    async for msg in ws:
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        try:
+                            frame = json.loads(msg.data)
+                        except json.JSONDecodeError:
+                            continue
+                        await self._dispatch(frame, send)
+                finally:
+                    # Always tear down sessions when the WS ends, whether
+                    # it ended cleanly or by exception. Leaving them alive
+                    # leaks codex app-server subprocesses because their
+                    # adapter.stop() is what terminates the child.
+                    await self._close_all_sessions()
 
-                # clean up any lingering sessions
-                for runner in list(self._sessions.values()):
-                    await runner.stop()
-                self._sessions.clear()
+    async def _close_all_sessions(self) -> None:
+        runners = list(self._sessions.values())
+        self._sessions.clear()
+        for runner in runners:
+            try:
+                await asyncio.wait_for(runner.stop(), timeout=5.0)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "session %s: stop failed (%s: %s)",
+                    runner.session_id, type(exc).__name__, exc,
+                )
 
     async def _dispatch(self, frame: dict, send: Callable[[dict], Awaitable[None]]) -> None:
         ftype = frame.get("type")
