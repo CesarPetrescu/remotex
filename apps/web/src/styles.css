@@ -1,14 +1,20 @@
+/*
+ * Brand palette — sampled from docs/brand/logo.png.
+ * Navy background + cyan accents + cool off-white text. Token names
+ * left unchanged (still called --amber) so the Android and web
+ * palettes map 1:1; the hex values carry the rebrand.
+ */
 :root {
-  --bg: #0d0f13;
-  --panel: #14171d;
-  --panel-2: #1a1e26;
-  --line: #262a33;
-  --ink: #e8dfd0;
-  --ink-dim: #9a958a;
-  --amber: #e8a756;
-  --ok: #7dc87d;
-  --warn: #e05a3e;
-  --accent: #d97642;
+  --bg: #061e3a;
+  --panel: #0c2a4d;
+  --panel-2: #133660;
+  --line: #1f3d6a;
+  --ink: #e3edfa;
+  --ink-dim: #88a4c4;
+  --amber: #5ee1ff;          /* cyan accent */
+  --ok: #6ae0c2;             /* teal */
+  --warn: #ff7070;           /* soft red */
+  --accent: #3aa0e8;         /* deeper cyan for hover/hint */
   --mono: 'JetBrains Mono', ui-monospace, monospace;
   --sans: 'Inter', system-ui, sans-serif;
 }

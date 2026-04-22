@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#FF0D0F13</color>
-    <color name="panel">#FF14171D</color>
-    <color name="panel_2">#FF1A1E26</color>
-    <color name="line">#FF262A33</color>
-    <color name="ink">#FFE8DFD0</color>
-    <color name="ink_dim">#FF9A958A</color>
-    <color name="amber">#FFE8A756</color>
-    <color name="ok">#FF7DC87D</color>
-    <color name="warn">#FFE05A3E</color>
-    <color name="accent">#FFD97642</color>
-    <!-- Navy from the logo art, used as the adaptive-icon background so
-         the launcher tile reads as the canonical Remotex mark. -->
+    <!-- Remotex brand palette — derived from docs/brand/logo.png.
+         Navy background + cyan accents + cool off-white text. -->
+    <color name="bg">#FF061E3A</color>
+    <color name="panel">#FF0C2A4D</color>
+    <color name="panel_2">#FF133660</color>
+    <color name="line">#FF1F3D6A</color>
+    <color name="ink">#FFE3EDFA</color>
+    <color name="ink_dim">#FF88A4C4</color>
+    <color name="amber">#FF5EE1FF</color>          <!-- cyan accent -->
+    <color name="ok">#FF6AE0C2</color>              <!-- teal -->
+    <color name="warn">#FFFF7070</color>            <!-- soft red -->
+    <color name="accent">#FF3AA0E8</color>          <!-- deeper cyan -->
     <color name="brand_bg">#FF061E3A</color>
 </resources>

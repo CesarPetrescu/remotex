@@ -6,15 +6,21 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val Bg = Color(0xFF0D0F13)
-private val Panel = Color(0xFF14171D)
-private val Panel2 = Color(0xFF1A1E26)
-val Line = Color(0xFF262A33)
-val Ink = Color(0xFFE8DFD0)
-val InkDim = Color(0xFF9A958A)
-val Amber = Color(0xFFE8A756)
-val Ok = Color(0xFF7DC87D)
-val Warn = Color(0xFFE05A3E)
+// Palette derived from docs/brand/logo.png — navy background, cyan
+// gradient strokes, cool off-white text. Keep the tokens here as the
+// single source of truth for both Android and web themes.
+
+private val Bg = Color(0xFF061E3A)        // logo navy
+private val Panel = Color(0xFF0C2A4D)     // one step up from bg
+private val Panel2 = Color(0xFF133660)    // elevated surface
+val Line = Color(0xFF1F3D6A)              // subtle divider
+val Ink = Color(0xFFE3EDFA)               // primary text, cool white
+val InkDim = Color(0xFF88A4C4)             // secondary text
+val Amber = Color(0xFF5EE1FF)              // brand accent (cyan from logo)
+                                          // name kept for migration — swap later
+val AccentDeep = Color(0xFF3AA0E8)        // deeper accent for hover / hint
+val Ok = Color(0xFF6AE0C2)                // teal, sits inside the blue family
+val Warn = Color(0xFFFF7070)              // soft red, still legible on navy
 
 private val RemotexColors = darkColorScheme(
     primary = Amber,
@@ -31,8 +37,6 @@ private val RemotexColors = darkColorScheme(
 
 @Composable
 fun RemotexTheme(
-    // Always dark in the wireframe aesthetic; parameter kept so the
-    // system can still flip us if future designs need a light mode.
     @Suppress("UNUSED_PARAMETER") darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
