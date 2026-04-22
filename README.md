@@ -53,11 +53,11 @@ Codex app server process.
 
 ## Screenshots
 
-A live web session — pick an online host, open a session, send a prompt,
+A live web session: pick an online host, open a session, send a prompt,
 watch reasoning, tool calls, and streamed agent messages arrive live:
 
 <p align="center">
-  <img src="docs/screenshots/client-session.png" alt="Remotex web client — live session" width="820" />
+  <img src="docs/screenshots/client-session.png" alt="Remotex web client - live session" width="820" />
 </p>
 
 The three surfaces side-by-side (click to view full size):
@@ -65,15 +65,15 @@ The three surfaces side-by-side (click to view full size):
 <table>
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/client-desktop.png" alt="Web — desktop idle" width="420" /><br/>
+      <img src="docs/screenshots/client-desktop.png" alt="Web - desktop idle" width="420" /><br/>
       <sub><b>Web · desktop</b> (1440 × 900)</sub>
     </td>
     <td align="center" valign="top" width="25%">
-      <img src="docs/screenshots/client-mobile.png" alt="Web — mobile" width="180" /><br/>
+      <img src="docs/screenshots/client-mobile.png" alt="Web - mobile" width="180" /><br/>
       <sub><b>Web · mobile</b> (390 × 844)</sub>
     </td>
     <td align="center" valign="top" width="25%">
-      <img src="docs/screenshots/android-installed.png" alt="Android — real device" width="180" /><br/>
+      <img src="docs/screenshots/android-installed.png" alt="Android - real device" width="180" /><br/>
       <sub><b>Android</b> (Kotlin + Compose)</sub>
     </td>
   </tr>
