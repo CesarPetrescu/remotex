@@ -273,6 +273,15 @@ class RemotexViewModel(
                 error = null,
                 events = emptyList(),
                 session = null,
+                // Plan mode is a per-session toggle on the daemon side
+                // (each adapter has its own _next_collab_mode). The UI
+                // banner has to reset too so it doesn't claim plan mode
+                // is active in a brand-new thread that hasn't been put
+                // in plan mode yet.
+                planMode = false,
+                pendingApproval = null,
+                slashFeedback = null,
+                pendingImages = emptyList(),
             )
         }
         viewModelScope.launch {
@@ -474,7 +483,15 @@ class RemotexViewModel(
         socket = null
         socketJob?.cancel()
         socketJob = null
-        _state.update { it.copy(status = Status.Idle, pending = false) }
+        _state.update {
+            it.copy(
+                status = Status.Idle,
+                pending = false,
+                planMode = false,
+                pendingApproval = null,
+                slashFeedback = null,
+            )
+        }
     }
 
     // --- frame parsing ------------------------------------------------------
