@@ -427,6 +427,30 @@ async def index(request: web.Request) -> web.Response:
     return web.FileResponse(root / "index.html")
 
 
+# Known root-level static files shipped by the Vite build (apps/web/dist)
+# and by the legacy services/web tree. Served through the same handler so
+# the relay doesn't need a separate route per filename or a wildcard match
+# that would also swallow /api/* and /ws/* paths.
+_ROOT_STATIC_FILES = (
+    "favicon.ico",
+    "favicon-32.png",
+    "favicon-192.png",
+    "apple-touch-icon.png",
+    "site.webmanifest",
+    "robots.txt",
+)
+
+
+def _make_root_static(filename: str):
+    async def handler(request: web.Request) -> web.FileResponse:
+        root = request.app["static_root"]
+        path = root / filename
+        if not path.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path)
+    return handler
+
+
 # ---------------------------------------------------------------------------
 # WebSocket handlers
 # ---------------------------------------------------------------------------
@@ -595,7 +619,14 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     app.router.add_post("/api/sessions", open_session)
     app.router.add_get("/ws/daemon", ws_daemon)
     app.router.add_get("/ws/client", ws_client)
-    app.router.add_static("/assets", str(static_root), show_index=False)
+    # Vite drops hashed bundles into static_root/assets; the legacy
+    # single-file demo has no /assets dir. Only mount the route when the
+    # directory exists so the old tree still serves.
+    assets_dir = static_root / "assets"
+    if assets_dir.is_dir():
+        app.router.add_static("/assets", str(assets_dir), show_index=False)
+    for name in _ROOT_STATIC_FILES:
+        app.router.add_get(f"/{name}", _make_root_static(name))
     return app
 
 
