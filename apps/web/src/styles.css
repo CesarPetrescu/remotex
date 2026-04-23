@@ -896,6 +896,21 @@ main.screen-host {
 .item-body { color: var(--ink); }
 .item-user { border-left-color: var(--ink-dim); }
 .item-reasoning { border-left-color: #555; color: var(--ink-dim); font-style: italic; }
+details.item-reasoning > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+details.item-reasoning > summary::-webkit-details-marker { display: none; }
+details.item-reasoning > summary::before {
+  content: '▸ ';
+  display: inline-block;
+  width: 1em;
+  font-style: normal;
+  color: var(--ink-dim);
+  transition: transform 120ms ease;
+}
+details.item-reasoning[open] > summary::before { content: '▾ '; }
 .item-tool { border-left-color: var(--accent); }
 .item-tool .item-label { color: var(--accent); }
 .item-agent { border-left-color: var(--amber); }

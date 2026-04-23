@@ -888,7 +888,7 @@ function buildItemEvent(data) {
   const replayed = Boolean(data.replayed);
   switch (data.item_type) {
     case 'agent_reasoning':
-      return { id, role: 'reasoning', text: data.text || '', completed: replayed };
+      return { id, role: 'reasoning', text: data.text || '', completed: replayed, replayed };
     case 'agent_message':
       return { id, role: 'agent', text: data.text || '', completed: replayed };
     case 'tool_call':

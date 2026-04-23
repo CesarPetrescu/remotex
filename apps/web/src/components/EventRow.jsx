@@ -5,6 +5,14 @@ import { MarkdownText } from '../util/markdown';
 // (left-accent color, body style) while user messages stay plain.
 export function EventRow({ event, pending }) {
   const isStreaming = pending && !event.completed;
+  if (event.role === 'reasoning') {
+    return (
+      <details className="item item-reasoning" open={!event.replayed}>
+        <summary className="item-label">{labelFor(event)}</summary>
+        <MarkdownText text={event.text || '…'} className="dim" />
+      </details>
+    );
+  }
   return (
     <div className={`item item-${event.role}`}>
       <div className="item-label">{labelFor(event)}</div>
