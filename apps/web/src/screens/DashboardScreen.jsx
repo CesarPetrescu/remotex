@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { joinPath, shortenCwd } from '../util/path';
+
+import { shortenCwd } from '../util/path';
 import { relativeAge } from '../util/time';
 import { STATUS } from '../config';
 
@@ -26,8 +27,7 @@ export function DashboardScreen({
   onSearchChange,
   onRunSearch,
   onBrowseFiles,
-  onBrowseDir,
-  onBrowseUp,
+  onOpenFolderPicker,
   onStartInCwd,
   onRefreshThreads,
   onOpenManageHosts,
@@ -60,8 +60,7 @@ export function DashboardScreen({
       <FolderSelectionPanel
         state={state}
         canStart={!!selectedHost?.online}
-        onBrowseDir={onBrowseDir}
-        onBrowseUp={onBrowseUp}
+        onOpenFolderPicker={onOpenFolderPicker}
         onStartInCwd={onStartInCwd}
       />
     </div>
@@ -288,31 +287,23 @@ function ActionTile({ icon, title, subtitle, onClick, disabled }) {
 function FolderSelectionPanel({
   state,
   canStart,
-  onBrowseDir,
-  onBrowseUp,
+  onOpenFolderPicker,
   onStartInCwd,
 }) {
-  const [input, setInput] = useState(state.browsePath || '');
-  useEffect(() => {
-    setInput(state.browsePath || '');
-  }, [state.browsePath]);
-
   const path = state.browsePath || '/';
-  const dirs = state.browseEntries.filter((e) => e.isDirectory);
-  const showing = dirs.slice(0, 12);
 
   return (
     <section className="card card-folder">
       <div className="card-head card-head-split">
-        <span className="card-eyebrow">FOLDER SELECTION</span>
+        <span className="card-eyebrow">WORKSPACE</span>
         <div className="card-head-actions">
           <button
             type="button"
             className="btn-surface btn-sm"
-            onClick={onBrowseUp}
-            disabled={!canStart || path === '/'}
+            onClick={onOpenFolderPicker}
+            disabled={!canStart}
           >
-            ↑ Up
+            Browse…
           </button>
           <button
             type="button"
@@ -324,53 +315,21 @@ function FolderSelectionPanel({
           </button>
         </div>
       </div>
-      <div className="folder-cwd-row">
-        <span className="folder-cwd-label">Current working directory</span>
-        <div className="folder-cwd-input">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onBrowseDir(input || '/');
-            }}
-            placeholder="/home/user"
-            spellCheck={false}
-            disabled={!canStart}
-          />
-          <button
-            type="button"
-            className="btn-surface btn-sm"
-            onClick={() => onBrowseDir(input || '/')}
-            disabled={!canStart}
-          >
-            Change
-          </button>
-        </div>
-      </div>
-      {state.browseLoading && state.browseEntries.length === 0 ? (
-        <div className="folder-empty">loading…</div>
-      ) : showing.length === 0 ? (
-        <div className="folder-empty">
-          {canStart ? 'no subdirectories here' : 'select an online host first'}
-        </div>
-      ) : (
-        <div className="folder-grid">
-          {showing.map((entry) => (
-            <button
-              key={entry.fileName}
-              type="button"
-              className="folder-tile"
-              onClick={() => onBrowseDir(joinPath(path, entry.fileName))}
-            >
-              <span className="folder-tile-icon" aria-hidden="true">
-                ▤
-              </span>
-              <span className="folder-tile-name">{entry.fileName}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <button
+        type="button"
+        className="folder-current"
+        onClick={onOpenFolderPicker}
+        disabled={!canStart}
+        title="Open folder picker"
+      >
+        <span className="folder-current-icon" aria-hidden="true">▤</span>
+        <span className="folder-current-path">
+          {canStart ? path : 'select an online host to pick a working directory'}
+        </span>
+        <span className="folder-current-hint">
+          {canStart ? 'tap to browse' : ''}
+        </span>
+      </button>
     </section>
   );
 }

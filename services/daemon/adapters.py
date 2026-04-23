@@ -346,8 +346,13 @@ class StdioCodexAdapter(SessionAdapter):
             await self._handle_slash(frame)
             return
         if ftype == "turn-start":
+            if not self._ready and self._resume_task and not self._resume_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(self._resume_task), timeout=20.0)
+                except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                    pass
             if not self._thread_id or not self._ready:
-                log.warning("turn-start before thread ready; rejecting")
+                log.info("turn-start before thread ready; rejecting")
                 message = (
                     "history is visible, but Codex could not resume this saved chat yet"
                     if self._resume_error

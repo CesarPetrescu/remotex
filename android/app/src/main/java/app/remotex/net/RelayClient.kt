@@ -112,6 +112,31 @@ class RelayClient(
         }
     }
 
+    suspend fun mkdir(
+        userToken: String,
+        hostId: String,
+        parent: String,
+        name: String,
+    ): Unit = withContext(Dispatchers.IO) {
+        val body = buildString {
+            append('{')
+            append("\"path\":\"").append(parent.replace("\\", "\\\\").replace("\"", "\\\"")).append('"')
+            append(",\"name\":\"").append(name.replace("\\", "\\\\").replace("\"", "\\\"")).append('"')
+            append('}')
+        }
+        val req = Request.Builder()
+            .url("$baseUrl/api/hosts/$hostId/fs/mkdir")
+            .header("Authorization", "Bearer $userToken")
+            .post(body.toRequestBody(jsonMedia))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = resp.body?.string().orEmpty()
+                error("mkdir: ${resp.code} ${resp.message} $msg")
+            }
+        }
+    }
+
     suspend fun getHostTelemetry(
         userToken: String,
         hostId: String,

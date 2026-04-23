@@ -122,6 +122,9 @@ class DaemonClient:
         if ftype == "fs-read-request":
             asyncio.create_task(self._handle_fs_read(frame, send))
             return
+        if ftype == "fs-mkdir-request":
+            asyncio.create_task(self._handle_fs_mkdir(frame, send))
+            return
         if ftype == "session-open" and sid:
             if sid in self._sessions:
                 return
@@ -166,6 +169,51 @@ class DaemonClient:
                 "type": "fs-read-response",
                 "request_id": request_id,
                 "path": path,
+                "error": str(exc),
+            })
+
+    async def _handle_fs_mkdir(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        """Create a directory. We do this directly with os.makedirs rather
+        than going through codex, since the app-server doesn't expose a
+        mkdir RPC. Path is expected to be absolute; the daemon trusts the
+        relay to have authenticated the caller."""
+        import os
+
+        request_id = frame.get("request_id")
+        parent = frame.get("path") or ""
+        name = (frame.get("name") or "").strip()
+
+        def _abs_join(p: str, n: str) -> str:
+            # Guard against path traversal in the `name`; keep it to a
+            # single segment of safe characters. Slashes/.. would allow
+            # writing outside the chosen parent.
+            if not n or "/" in n or n in (".", ".."):
+                raise ValueError("invalid folder name")
+            return os.path.join(p, n)
+
+        try:
+            target = _abs_join(parent, name)
+            os.makedirs(target, exist_ok=False)
+            await send({
+                "type": "fs-mkdir-response",
+                "request_id": request_id,
+                "path": target,
+            })
+        except FileExistsError:
+            await send({
+                "type": "fs-mkdir-response",
+                "request_id": request_id,
+                "error": "folder already exists",
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.warning("fs/mkdir failed for %s/%s: %s", parent, name, exc)
+            await send({
+                "type": "fs-mkdir-response",
+                "request_id": request_id,
                 "error": str(exc),
             })
 

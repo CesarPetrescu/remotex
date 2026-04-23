@@ -434,6 +434,53 @@ async def list_host_fs(request: web.Request) -> web.Response:
     })
 
 
+async def mkdir_host_fs(request: web.Request) -> web.Response:
+    """Ask the daemon to create a new directory under a given parent.
+    Body: {"path": "<parent>", "name": "<single-segment>"}."""
+    user = await require_user(request)
+    host_id = request.match_info["host_id"]
+    store: Store = request.app["store"]
+    hub: Hub = request.app["hub"]
+    if store.host_owner(host_id) != user["token"]:
+        raise web.HTTPNotFound(reason="host not found")
+    daemon_ws = hub.daemon_for(host_id)
+    if daemon_ws is None or daemon_ws.closed:
+        raise web.HTTPBadGateway(reason="host offline")
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise web.HTTPBadRequest(reason="invalid json") from exc
+    parent = (body.get("path") or "").strip()
+    name = (body.get("name") or "").strip()
+    if not parent:
+        raise web.HTTPBadRequest(reason="path is required")
+    if not name or "/" in name or name in (".", ".."):
+        raise web.HTTPBadRequest(reason="invalid folder name")
+    req_id = f"req_{uuid.uuid4().hex[:12]}"
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+    hub.pending_admin[req_id] = fut
+    try:
+        await daemon_ws.send_json({
+            "type": "fs-mkdir-request",
+            "request_id": req_id,
+            "path": parent,
+            "name": name,
+        })
+        try:
+            payload = await asyncio.wait_for(fut, timeout=10.0)
+        except asyncio.TimeoutError as exc:
+            raise web.HTTPGatewayTimeout(reason="daemon did not respond in time") from exc
+    finally:
+        hub.pending_admin.pop(req_id, None)
+    if "error" in payload:
+        raise web.HTTPBadGateway(reason=f"daemon error: {payload['error']}")
+    return web.json_response({
+        "host_id": host_id,
+        "path": payload.get("path"),
+    }, status=201)
+
+
 async def list_host_threads(request: web.Request) -> web.Response:
     """Forward a `thread/list` request to the daemon, await the response."""
     user = await require_user(request)
@@ -804,7 +851,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     await hub.forget_session(sid)
                     if session:
                         request.app["search"].capture_session_closed(session)
-            elif ftype in ("threads-list-response", "fs-read-response"):
+            elif ftype in ("threads-list-response", "fs-read-response", "fs-mkdir-response"):
                 req_id = frame.get("request_id")
                 fut = hub.pending_admin.get(req_id) if req_id else None
                 if fut is not None and not fut.done():
@@ -986,6 +1033,7 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     app.router.add_post("/api/hosts/{host_id}/api-key", issue_api_key)
     app.router.add_get("/api/hosts/{host_id}/threads", list_host_threads)
     app.router.add_get("/api/hosts/{host_id}/fs", list_host_fs)
+    app.router.add_post("/api/hosts/{host_id}/fs/mkdir", mkdir_host_fs)
     app.router.add_get("/api/hosts/{host_id}/telemetry", get_host_telemetry)
     app.router.add_post("/api/sessions", open_session)
     app.router.add_get("/api/search/config", search_config)
@@ -1029,6 +1077,7 @@ def main() -> None:
     )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     app = make_app(args.db, Path(args.web_root))
     log.info("relay listening on http://%s:%d", args.host, args.port)
     web.run_app(app, host=args.host, port=args.port, print=None)

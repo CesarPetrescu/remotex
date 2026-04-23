@@ -38,6 +38,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.util.UUID
 import kotlin.math.min
@@ -341,6 +342,19 @@ class RemotexViewModel(
         if (p.isEmpty() || p == "/") return
         val parent = p.trimEnd('/').substringBeforeLast('/', "/").ifEmpty { "/" }
         browseDir(parent)
+    }
+
+    fun createFolder(name: String) {
+        val target = _state.value.selectedHostId ?: return
+        val parent = _state.value.browsePath.ifEmpty { "/" }
+        viewModelScope.launch {
+            try {
+                client.mkdir(_state.value.userToken, target, parent, name)
+                browseDir(parent)
+            } catch (t: Throwable) {
+                _state.update { it.copy(error = t.message ?: "mkdir failed") }
+            }
+        }
     }
 
     fun startSessionInCurrentPath() {
@@ -660,7 +674,7 @@ class RemotexViewModel(
         when (msg.string("type")) {
             "attached" -> {
                 reconnectAttempt = 0
-                _state.update { it.copy(status = Status.Connected, error = null) }
+                _state.update { it.copy(status = Status.Connecting, error = null) }
             }
             "pong" -> Unit
             "session-closed" -> _state.update {
@@ -692,10 +706,21 @@ class RemotexViewModel(
         when (kind) {
             "session-started" -> {
                 reconnectAttempt = 0
+                val transport = data.string("transport") ?: "stdio"
+                val resuming = data["resuming"]?.jsonPrimitive?.contentOrNull == "true"
+                val readOnlyHistory = transport == "history"
                 _state.update {
                     it.copy(
-                        status = Status.Connected,
-                        error = null,
+                        status = when {
+                            readOnlyHistory -> Status.Error
+                            resuming -> Status.Connecting
+                            else -> Status.Connected
+                        },
+                        error = when {
+                            readOnlyHistory -> "Saved chat is history-only. Start a new session to continue."
+                            resuming -> "Resuming saved chat…"
+                            else -> null
+                        },
                         session = it.session?.copy(
                             model = data.string("model") ?: it.session.model,
                             cwd = data.string("cwd") ?: it.session.cwd,
@@ -783,7 +808,34 @@ class RemotexViewModel(
 
             "turn-completed" -> _state.update { it.copy(pending = false) }
 
-            "history-begin", "history-end", "thread-status" -> {
+            "thread-status" -> {
+                when (data.string("status")) {
+                    "resumed" -> {
+                        reconnectAttempt = 0
+                        _state.update {
+                            it.copy(
+                                status = Status.Connected,
+                                error = null,
+                                session = it.session?.copy(
+                                    model = data.string("model") ?: it.session.model,
+                                    cwd = data.string("cwd") ?: it.session.cwd,
+                                ),
+                            )
+                        }
+                    }
+                    "resume-failed" -> {
+                        _state.update {
+                            it.copy(
+                                status = Status.Error,
+                                pending = false,
+                                error = data.string("error") ?: "Saved chat could not be resumed.",
+                            )
+                        }
+                    }
+                }
+            }
+
+            "history-begin", "history-end" -> {
                 // informational markers — consumers can render a divider later
             }
 

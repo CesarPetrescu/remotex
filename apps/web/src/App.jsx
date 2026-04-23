@@ -9,6 +9,7 @@ import { DashboardScreen } from './screens/DashboardScreen';
 import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
 import { TelemetrySidebar } from './components/TelemetrySidebar';
+import { FolderPickerModal } from './components/FolderPickerModal';
 import { shortenCwd } from './util/path';
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
   const { state } = r;
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
   const selectedHost = state.hosts.find((h) => h.id === state.selectedHostId);
   const telemetry = state.selectedHostId
@@ -123,8 +125,7 @@ export default function App() {
               r.goToFiles();
               setLeftOpen(false);
             }}
-            onBrowseDir={r.browseDir}
-            onBrowseUp={r.browseUp}
+            onOpenFolderPicker={() => setFolderPickerOpen(true)}
             onStartInCwd={() => openSession({ cwd: state.browsePath || null })}
             onRefreshThreads={() => r.refreshThreads()}
             onOpenManageHosts={() => setLeftOpen(true)}
@@ -154,6 +155,20 @@ export default function App() {
           value={formatSync(telemetry?.lastUpdate)}
         />
       </footer>
+
+      <FolderPickerModal
+        open={folderPickerOpen}
+        initialPath={state.browsePath || '/'}
+        onClose={() => setFolderPickerOpen(false)}
+        onListDirectory={r.listDirectory}
+        onCreateFolder={r.createFolder}
+        onSelect={(p) => {
+          setFolderPickerOpen(false);
+          // Keep the dashboard badge in sync before opening the session.
+          r.browseDir(p);
+          openSession({ cwd: p });
+        }}
+      />
 
       <ApprovalDialog prompt={state.pendingApproval} onDecision={r.resolveApproval} />
       <Toast message={state.error} tone="error" onDismiss={r.clearError} />

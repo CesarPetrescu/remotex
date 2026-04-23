@@ -44,6 +44,16 @@ export class RelayClient {
     );
   }
 
+  mkdir(hostId, path, name) {
+    return this.#request(
+      `/api/hosts/${encodeURIComponent(hostId)}/fs/mkdir`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ path, name }),
+      },
+    );
+  }
+
   getHostTelemetry(hostId) {
     return this.#request(
       `/api/hosts/${encodeURIComponent(hostId)}/telemetry`,

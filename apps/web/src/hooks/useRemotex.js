@@ -320,7 +320,7 @@ export function useRemotex() {
   const handleFrame = useCallback((frame) => {
     if (frame.type === 'attached') {
       reconnectAttemptRef.current = 0;
-      dispatch({ type: 'SESSION_STATUS', status: STATUS.Connected });
+      dispatch({ type: 'SESSION_STATUS', status: STATUS.Connecting });
       dispatch({ type: 'SET_ERROR', error: null });
       dispatch({
         type: 'SESSION_INFO',
@@ -348,13 +348,32 @@ export function useRemotex() {
     const ev = frame.event || {};
     const data = ev.data || {};
     switch (ev.kind) {
-      case 'session-started':
-        dispatch({ type: 'SESSION_STATUS', status: STATUS.Connected });
+      case 'session-started': {
+        const transport = data.transport || 'stdio';
+        const resuming = data.resuming === true;
+        const readOnlyHistory = transport === 'history';
+        dispatch({
+          type: 'SESSION_STATUS',
+          status: readOnlyHistory
+            ? STATUS.Error
+            : resuming
+              ? STATUS.Connecting
+              : STATUS.Connected,
+        });
         dispatch({
           type: 'SESSION_INFO',
           info: { model: data.model, cwd: data.cwd },
         });
+        dispatch({
+          type: 'SET_ERROR',
+          error: readOnlyHistory
+            ? 'Saved chat is history-only. Start a new session to continue.'
+            : resuming
+              ? 'Resuming saved chat…'
+              : null,
+        });
         return;
+      }
       case 'item-started': {
         const ev = buildItemEvent(data);
         if (ev) dispatch({ type: 'APPEND_EVENT', event: ev });
@@ -411,10 +430,26 @@ export function useRemotex() {
         });
         return;
       }
+      case 'thread-status':
+        if (data.status === 'resumed') {
+          dispatch({ type: 'SESSION_STATUS', status: STATUS.Connected });
+          dispatch({
+            type: 'SESSION_INFO',
+            info: { model: data.model, cwd: data.cwd },
+          });
+          dispatch({ type: 'SET_ERROR', error: null });
+        } else if (data.status === 'resume-failed') {
+          dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });
+          dispatch({
+            type: 'SET_ERROR',
+            error: data.error || 'Saved chat could not be resumed.',
+          });
+          dispatch({ type: 'PENDING', pending: false });
+        }
+        return;
       case 'turn-started':
       case 'history-begin':
       case 'history-end':
-      case 'thread-status':
         return;
       default:
         return;
@@ -650,6 +685,25 @@ export function useRemotex() {
     if (p === '/') return;
     browseDir(parentPath(p));
   }, [browseDir]);
+
+  const createFolder = useCallback(
+    async (parent, name) => {
+      const target = latestInputsRef.current.selectedHostId;
+      if (!target) throw new Error('no host selected');
+      await apiRef.current.mkdir(target, parent, name);
+      await browseDir(parent);
+    },
+    [browseDir],
+  );
+
+  // Lightweight directory listing that returns the payload directly without
+  // touching the dashboard's browse state. The folder-picker modal uses this
+  // so it can navigate independently of the tile grid below it.
+  const listDirectory = useCallback(async (path) => {
+    const target = latestInputsRef.current.selectedHostId;
+    if (!target) throw new Error('no host selected');
+    return apiRef.current.readDirectory(target, path);
+  }, []);
 
   // --- session ---
 
@@ -976,6 +1030,8 @@ export function useRemotex() {
       openSearchResult,
       browseDir,
       browseUp,
+      createFolder,
+      listDirectory,
       openSession,
       startSessionInCurrentPath: () =>
         openSession({ cwd: latestInputsRef.current.browsePath || null }),
@@ -1000,6 +1056,8 @@ export function useRemotex() {
       openSearchResult,
       browseDir,
       browseUp,
+      createFolder,
+      listDirectory,
       openSession,
       closeSession,
       sendTurn,
