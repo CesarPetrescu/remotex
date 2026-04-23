@@ -10,6 +10,7 @@ RUN npm ci --no-audit --no-fund
 COPY apps/web/index.html ./
 COPY apps/web/vite.config.js ./
 COPY apps/web/src ./src
+COPY apps/web/public ./public
 RUN npm run build
 
 # ----- Stage 2: relay runtime ------------------------------------------------
