@@ -110,11 +110,11 @@ class SearchConfig:
             title_generation_enabled=_bool_env("CHAT_TITLE_ENABLED", True),
             title_max_input_tokens=_int_env(
                 "CHAT_TITLE_MAX_INPUT_TOKENS",
-                12000,
+                16000,
                 minimum=512,
                 maximum=30000,
             ),
-            title_max_attempts=_int_env("CHAT_TITLE_MAX_ATTEMPTS", 8, minimum=1, maximum=50),
+            title_max_attempts=_int_env("CHAT_TITLE_MAX_ATTEMPTS", 10000, minimum=1, maximum=1000000),
         )
 
     @property
@@ -1241,18 +1241,13 @@ class SearchService:
         session, turns = await self._title_context(session_id)
         if not session or not turns:
             return
-        if not bool(session["title_is_generic"]):
-            return
         attempts = int(session["title_attempts"] or 0)
         if attempts >= self.config.title_max_attempts:
             return
 
-        desired_turns = min(len(turns), attempts + 1)
-        title_turn_count = int(session["title_turn_count"] or 0)
-        if desired_turns <= title_turn_count and _str_or_none(session["title"]):
-            return
-
-        selected = turns[:desired_turns]
+        # Summarize the last 10 turns (or fewer if the session is short).
+        selected = turns[-10:]
+        desired_turns = len(selected)
         transcript = _format_title_transcript(
             selected,
             max_tokens=min(
@@ -1300,6 +1295,7 @@ class SearchService:
             )
             if not session:
                 return None, []
+            # Pull the most recent 10 turns (descending) and flip to chronological.
             turn_rows = await conn.fetch(
                 """
                 SELECT turn_id, user_text, started_at, completed_at
@@ -1311,12 +1307,12 @@ class SearchService:
                     WHERE i.session_id = search_turns.session_id
                       AND i.turn_id = search_turns.turn_id
                   )
-                ORDER BY started_at ASC
-                LIMIT $2
+                ORDER BY started_at DESC
+                LIMIT 10
                 """,
                 session_id,
-                self.config.title_max_attempts,
             )
+            turn_rows = list(reversed(turn_rows))
             turns: list[dict[str, Any]] = []
             for turn in turn_rows:
                 items = await conn.fetch(
@@ -1586,7 +1582,9 @@ Rules:
 - Do not include markdown, JSON, explanations, or <think> blocks.
 - Title must be 3-9 words.
 - Title must name the actual task, product, file, bug, or decision when possible.
-- Description must be one sentence, max 180 characters.
+- Description must summarize the last 10 turns in 2-3 concise sentences
+  (max ~400 characters). Capture the current focus, key decisions, and
+  anything in-flight. Prefer the most recent turns over the oldest.
 - Set isGeneric=true if the transcript is too vague, only a greeting, only setup,
   or the best title would be generic.
 - Set isGeneric=false only when the title is specific enough that a user could
@@ -1715,8 +1713,8 @@ def _clean_title(value: str) -> str:
 
 def _clean_description(value: str) -> str:
     description = re.sub(r"\s+", " ", (value or "").strip()).strip()
-    if len(description) > 180:
-        description = description[:177].rstrip() + "..."
+    if len(description) > 400:
+        description = description[:397].rstrip() + "..."
     return description
 
 

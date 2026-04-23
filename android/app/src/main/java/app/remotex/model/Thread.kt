@@ -7,6 +7,9 @@ import kotlinx.serialization.Serializable
 data class ThreadInfo(
     val id: String,
     val preview: String = "",
+    val title: String? = null,
+    val description: String? = null,
+    @SerialName("title_is_generic") val titleIsGeneric: Boolean = true,
     @SerialName("created_at") val createdAt: Long? = null,
     @SerialName("updated_at") val updatedAt: Long? = null,
     val cwd: String? = null,

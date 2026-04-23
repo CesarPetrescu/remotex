@@ -641,6 +641,9 @@ private fun ThreadsScreen(
 
 @Composable
 private fun ThreadRow(thread: ThreadInfo, onClick: () -> Unit) {
+    val hasSpecificTitle = !thread.title.isNullOrBlank() && !thread.titleIsGeneric
+    val title = if (hasSpecificTitle) thread.title!! else thread.preview.ifBlank { "(no preview)" }
+    val description = if (hasSpecificTitle) (thread.description?.takeIf { it.isNotBlank() } ?: thread.preview.takeIf { it.isNotBlank() }) else null
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RectangleShape,
@@ -649,13 +652,24 @@ private fun ThreadRow(thread: ThreadInfo, onClick: () -> Unit) {
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(
-                thread.preview.ifBlank { "(no preview)" },
+                title,
                 color = Ink,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (description != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    description,
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Spacer(Modifier.height(4.dp))
             Row {
                 Text(
