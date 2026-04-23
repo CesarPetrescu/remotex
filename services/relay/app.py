@@ -382,11 +382,20 @@ async def list_host_threads(request: web.Request) -> web.Response:
     if "error" in payload:
         raise web.HTTPBadGateway(reason=f"daemon error: {payload['error']}")
     threads = payload.get("threads") or []
+    thread_ids = [t.get("id") for t in threads if t.get("id") and not t.get("ephemeral")]
+    metadata = await request.app["search"].thread_metadata(
+        owner_token=user["token"],
+        host_id=host_id,
+        thread_ids=thread_ids,
+    )
     # Reshape to a compact payload for clients (keep only what the UI needs).
     summarized = [
         {
             "id": t.get("id"),
             "preview": t.get("preview") or "",
+            "title": (metadata.get(t.get("id")) or {}).get("title"),
+            "description": (metadata.get(t.get("id")) or {}).get("description"),
+            "title_is_generic": (metadata.get(t.get("id")) or {}).get("title_is_generic", True),
             "created_at": t.get("createdAt"),
             "updated_at": t.get("updatedAt"),
             "cwd": t.get("cwd"),
@@ -444,29 +453,78 @@ async def search_config(request: web.Request) -> web.Response:
     return web.json_response(search.config_payload())
 
 
-async def search_chats(request: web.Request) -> web.Response:
-    user = await require_user(request)
+def _parse_search_params(request: web.Request, user: dict) -> dict:
     query = (request.query.get("q") or "").strip()
     if not query:
         raise web.HTTPBadRequest(reason="q query parameter required")
     host_id = (request.query.get("host_id") or "").strip() or None
     if host_id and request.app["store"].host_owner(host_id) != user["token"]:
         raise web.HTTPNotFound(reason="host not found")
+    rerank_param = (request.query.get("rerank") or "").strip().lower()
+    if rerank_param in ("", "auto"):
+        rerank: bool | None = None
+    elif rerank_param in ("1", "true", "yes", "on"):
+        rerank = True
+    elif rerank_param in ("0", "false", "no", "off"):
+        rerank = False
+    else:
+        raise web.HTTPBadRequest(reason="rerank must be auto/true/false")
     try:
         limit = int(request.query.get("limit") or 20)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason="limit must be an integer") from exc
+    return dict(
+        owner_token=user["token"],
+        query=query,
+        limit=limit,
+        host_id=host_id,
+        thread_id=(request.query.get("thread_id") or "").strip() or None,
+        session_id=(request.query.get("session_id") or "").strip() or None,
+        role=(request.query.get("role") or "").strip() or None,
+        kind=(request.query.get("kind") or "").strip() or None,
+        mode=(request.query.get("mode") or "hybrid").strip().lower() or "hybrid",
+        rerank=rerank,
+    )
+
+
+async def search_chats(request: web.Request) -> web.Response:
+    user = await require_user(request)
+    params = _parse_search_params(request, user)
     search: SearchService = request.app["search"]
     try:
-        results = await search.search(
-            owner_token=user["token"],
-            query=query,
-            limit=limit,
-            host_id=host_id,
-        )
+        payload = await search.search(**params)
     except SearchUnavailable as exc:
         raise web.HTTPServiceUnavailable(reason=str(exc)) from exc
-    return web.json_response({"results": results})
+    return web.json_response(payload)
+
+
+async def search_chats_stream(request: web.Request) -> web.StreamResponse:
+    user = await require_user(request)
+    params = _parse_search_params(request, user)
+    search: SearchService = request.app["search"]
+
+    response = web.StreamResponse(
+        status=200,
+        headers={
+            "Content-Type": "application/x-ndjson",
+            # Tell proxies not to buffer this stream — each event should land
+            # at the browser the instant a signal finishes.
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
+    await response.prepare(request)
+
+    async def emit(event: dict) -> None:
+        await response.write(json.dumps(event).encode("utf-8") + b"\n")
+        await response.drain()
+
+    try:
+        await search.search_stream(emit, **params)
+    except SearchUnavailable as exc:
+        await emit({"type": "error", "message": str(exc)})
+    await response.write_eof()
+    return response
 
 
 async def reindex_search(request: web.Request) -> web.Response:
@@ -487,6 +545,21 @@ async def reindex_search(request: web.Request) -> web.Response:
 
 
 async def index(request: web.Request) -> web.Response:
+    root = request.app["static_root"]
+    return web.FileResponse(root / "index.html")
+
+
+async def spa_fallback(request: web.Request) -> web.Response:
+    # Any GET that didn't match an API/WS/asset route falls through to the
+    # SPA. Lets the client-side router handle URLs like `/search?q=foo`,
+    # `/host/abc`, or `/host/abc/files` without the server needing to know
+    # about every screen. Paths with an extension (e.g. .png, .js) are not
+    # served from here — they'd be served by the specific static routes
+    # already registered, and if missing they should 404 rather than
+    # serving HTML for a missing image.
+    path = request.match_info.get("tail", "")
+    if "." in path.rsplit("/", 1)[-1]:
+        raise web.HTTPNotFound()
     root = request.app["static_root"]
     return web.FileResponse(root / "index.html")
 
@@ -615,6 +688,7 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
     hub: Hub = request.app["hub"]
 
     session_id: str | None = None
+    host_id: str | None = None
     try:
         hello = await asyncio.wait_for(ws.receive(), timeout=10)
         if hello.type != WSMsgType.TEXT:
@@ -685,6 +759,16 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
         log.exception("client ws error: %s", exc)
     finally:
         if session_id:
+            if host_id:
+                daemon_ws = hub.daemon_for(host_id)
+                if daemon_ws is not None and not daemon_ws.closed:
+                    try:
+                        await daemon_ws.send_json({
+                            "type": "session-close",
+                            "session_id": session_id,
+                        })
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("session-close forward failed: %s", exc)
             await hub.detach_client(session_id)
     return ws
 
@@ -711,6 +795,7 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     app.router.add_post("/api/sessions", open_session)
     app.router.add_get("/api/search/config", search_config)
     app.router.add_get("/api/search", search_chats)
+    app.router.add_get("/api/search/stream", search_chats_stream)
     app.router.add_post("/api/search/reindex", reindex_search)
     app.router.add_get("/ws/daemon", ws_daemon)
     app.router.add_get("/ws/client", ws_client)
@@ -722,6 +807,10 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
         app.router.add_static("/assets", str(assets_dir), show_index=False)
     for name in _ROOT_STATIC_FILES:
         app.router.add_get(f"/{name}", _make_root_static(name))
+    # SPA fallback — must be registered LAST so every specific route above
+    # gets first pick. Any remaining GET under `/` returns index.html so
+    # the client router can own its own URLs.
+    app.router.add_get("/{tail:.*}", spa_fallback)
     return app
 
 

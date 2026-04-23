@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import datetime as dt
 import json
 import logging
 import os
@@ -32,6 +33,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import AsyncIterator
 
 log = logging.getLogger("daemon.adapters")
@@ -210,6 +212,11 @@ class StdioCodexAdapter(SessionAdapter):
         self._pending: dict[int, asyncio.Future] = {}
         self._next_id = 0
         self._thread_id: str | None = None
+        self._ready = False
+        self._resume_task: asyncio.Task | None = None
+        self._resume_error: str | None = None
+        self._history_replayed = False
+        self._reasoning_summary = "auto"
         # Live turn id — set on turn/started, cleared on turn/completed.
         # Needed because turn/interrupt wants turnId, not threadId.
         self._turn_id: str | None = None
@@ -226,6 +233,23 @@ class StdioCodexAdapter(SessionAdapter):
     # --- lifecycle -------------------------------------------------------
 
     async def start(self) -> None:
+        if self._resume_thread_id:
+            local_turns = _load_rollout_history(self._resume_thread_id)
+            if local_turns:
+                meta = _load_rollout_metadata(self._resume_thread_id)
+                self._thread_id = self._resume_thread_id
+                self._resume_error = "history-only"
+                await self._queue.put(SessionEvent("session-started", {
+                    "model": meta.get("model") or "codex history",
+                    "cwd": meta.get("cwd") or self._cwd,
+                    "thread_id": self._thread_id,
+                    "transport": "history",
+                    "resuming": False,
+                }))
+                await self._replay_history(local_turns)
+                self._history_replayed = True
+                return
+
         cmd = shlex.split(self.binary) + ["app-server"]
         log.info("spawning %s (cwd=%s)", " ".join(cmd), self._cwd)
         self._proc = await asyncio.create_subprocess_exec(
@@ -249,30 +273,34 @@ class StdioCodexAdapter(SessionAdapter):
         await self._notify("initialized", {})
 
         if self._resume_thread_id:
-            # Reattach to an existing thread from disk so prior turns are
-            # in codex's context window.
-            resp = await self._request("thread/resume", {
-                "threadId": self._resume_thread_id,
-            })
-            thread = {"thread": resp.get("thread", {"id": self._resume_thread_id}),
-                      "model": resp.get("model"),
-                      "cwd": resp.get("cwd", self._cwd)}
-        else:
-            thread = await self._request("thread/start", {
+            self._thread_id = self._resume_thread_id
+            await self._queue.put(SessionEvent("session-started", {
+                "model": model_hint,
                 "cwd": self._cwd,
-                "ephemeral": False,
-            })
-        self._thread_id = thread["thread"].get("id", self._resume_thread_id)
-        # Enable streamed reasoning summaries for every turn by default.
-        self._reasoning_summary = "auto"
-        # Replay the prior turn history for resumed threads so the client
-        # shows what was said before. Done after session-started so the UI
-        # can tell "live" from "replayed".
-        if self._resume_thread_id:
+                "thread_id": self._thread_id,
+                "transport": "stdio",
+                "resuming": True,
+            }))
             try:
-                await self._replay_history()
+                local_turns = _load_rollout_history(self._resume_thread_id)
+                if local_turns:
+                    await self._replay_history(local_turns)
+                    self._history_replayed = True
             except Exception as exc:  # noqa: BLE001
-                log.warning("history replay failed: %s", exc)
+                log.warning("local history replay failed: %s", exc)
+
+            # Codex can be slow or get stuck loading large/active rollout
+            # files. Show local transcript immediately and finish the live
+            # attach in the background so clicking a saved chat is responsive.
+            self._resume_task = asyncio.create_task(self._finish_resume(model_hint))
+            return
+
+        thread = await self._request("thread/start", {
+            "cwd": self._cwd,
+            "ephemeral": False,
+        })
+        self._thread_id = thread["thread"].get("id", self._resume_thread_id)
+        self._ready = True
         await self._queue.put(SessionEvent("session-started", {
             "model": thread.get("model") or model_hint,
             "cwd": thread.get("cwd", self._cwd),
@@ -281,15 +309,13 @@ class StdioCodexAdapter(SessionAdapter):
         }))
 
     async def stop(self) -> None:
-        if self._thread_id and self._proc and self._proc.returncode is None:
-            # Best-effort archive; ignore failures during shutdown.
+        if self._resume_task:
+            self._resume_task.cancel()
             try:
-                await asyncio.wait_for(
-                    self._request("thread/archive", {"threadId": self._thread_id}),
-                    timeout=1.0,
-                )
-            except Exception:  # noqa: BLE001
+                await self._resume_task
+            except asyncio.CancelledError:
                 pass
+            self._resume_task = None
         if self._proc and self._proc.returncode is None:
             try:
                 self._proc.terminate()
@@ -320,8 +346,16 @@ class StdioCodexAdapter(SessionAdapter):
             await self._handle_slash(frame)
             return
         if ftype == "turn-start":
-            if not self._thread_id:
-                log.warning("turn-start before thread ready; dropping")
+            if not self._thread_id or not self._ready:
+                log.warning("turn-start before thread ready; rejecting")
+                message = (
+                    "history is visible, but Codex could not resume this saved chat yet"
+                    if self._resume_error
+                    else "Codex is still resuming this saved chat; try again in a moment"
+                )
+                await self._queue.put(SessionEvent("turn-completed", {
+                    "error": message,
+                }))
                 return
             text = frame.get("input", "")
             codex_input: list[dict] = []
@@ -425,6 +459,48 @@ class StdioCodexAdapter(SessionAdapter):
             if ev is None:
                 return
             yield ev
+
+    async def _finish_resume(self, model_hint: str) -> None:
+        assert self._resume_thread_id
+        try:
+            resp = await self._request("thread/resume", {
+                "threadId": self._resume_thread_id,
+            }, timeout=20.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self._resume_error = str(exc) or type(exc).__name__
+            log.warning(
+                "thread/resume failed for %s: %s",
+                self._resume_thread_id,
+                self._resume_error,
+            )
+            await self._queue.put(SessionEvent("thread-status", {
+                "status": "resume-failed",
+                "error": self._resume_error,
+            }))
+            return
+
+        thread_obj = resp.get("thread") or {"id": self._resume_thread_id}
+        self._thread_id = thread_obj.get("id") or self._resume_thread_id
+        self._current_cwd = resp.get("cwd") or thread_obj.get("cwd") or self._current_cwd
+        self._ready = True
+        self._resume_error = None
+        resume_turns = (
+            thread_obj.get("turns") if isinstance(thread_obj.get("turns"), list) else None
+        )
+        if resume_turns and not self._history_replayed:
+            try:
+                await self._replay_history(resume_turns)
+                self._history_replayed = True
+            except Exception as exc:  # noqa: BLE001
+                log.warning("history replay failed: %s", exc)
+        await self._queue.put(SessionEvent("thread-status", {
+            "status": "resumed",
+            "model": resp.get("model") or model_hint,
+            "cwd": self._current_cwd,
+            "thread_id": self._thread_id,
+        }))
 
     # --- slash commands + approvals ------------------------------------
 
@@ -530,20 +606,21 @@ class StdioCodexAdapter(SessionAdapter):
 
     # --- history replay -------------------------------------------------
 
-    async def _replay_history(self) -> None:
+    async def _replay_history(self, turns: list[dict] | None = None) -> None:
         """Fetch prior turns and emit them as completed session-events."""
         assert self._thread_id
-        resp = await self._request("thread/turns/list", {
-            "threadId": self._thread_id,
-            "limit": 50,
-        })
-        turns = resp.get("data", [])
+        if turns is None:
+            resp = await self._request("thread/turns/list", {
+                "threadId": self._thread_id,
+                "limit": 50,
+                "sortDirection": "asc",
+            })
+            turns = resp.get("data", [])
         if not turns:
             return
+        turns = _sort_turns_chronological(turns)
         await self._queue.put(SessionEvent("history-begin", {"turns": len(turns)}))
-        # Codex returns newest → oldest; reverse so the UI shows them in
-        # chronological order.
-        for turn in reversed(turns):
+        for turn in turns:
             turn_id = turn.get("id")
             for item in turn.get("items", []):
                 codex_type = item.get("type", "")
@@ -583,7 +660,7 @@ class StdioCodexAdapter(SessionAdapter):
 
     # --- JSON-RPC plumbing ----------------------------------------------
 
-    async def _request(self, method: str, params: dict) -> dict:
+    async def _request(self, method: str, params: dict, timeout: float = 60.0) -> dict:
         self._next_id += 1
         req_id = self._next_id
         loop = asyncio.get_running_loop()
@@ -591,7 +668,7 @@ class StdioCodexAdapter(SessionAdapter):
         self._pending[req_id] = fut
         await self._send({"id": req_id, "method": method, "params": params})
         try:
-            return await asyncio.wait_for(fut, timeout=60.0)
+            return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             self._pending.pop(req_id, None)
 
@@ -801,7 +878,7 @@ def _item_extras(item: dict) -> dict:
         if cmd:
             extras["tool"] = "shell"
             extras["args"] = {"command": cmd}
-        output = item.get("output") or item.get("stdout")
+        output = item.get("output") or item.get("stdout") or item.get("aggregatedOutput")
         if output:
             extras["output"] = output
         if "exitCode" in item:
@@ -810,6 +887,237 @@ def _item_extras(item: dict) -> dict:
         if "changes" in item:
             extras["changes"] = item["changes"]
     return extras
+
+
+def _sort_turns_chronological(turns: list[dict]) -> list[dict]:
+    def key(turn: dict) -> tuple[int, str]:
+        ts = _timestamp_value(turn.get("startedAt") or turn.get("completedAt"))
+        return (int(ts), str(turn.get("id") or ""))
+
+    return sorted((t for t in turns if isinstance(t, dict)), key=key)
+
+
+def _load_rollout_history(thread_id: str, max_items: int = 500) -> list[dict]:
+    path = _find_rollout_path(thread_id)
+    if not path:
+        return []
+
+    turns: list[dict] = []
+    current_turn: dict | None = None
+
+    def ensure_turn(turn_id: str | None, ts: int, line_no: int) -> dict:
+        nonlocal current_turn
+        tid = (
+            turn_id
+            or (current_turn.get("id") if current_turn else None)
+            or f"hist_turn_{line_no}"
+        )
+        if current_turn is not None and current_turn.get("id") == tid:
+            return current_turn
+        current_turn = {
+            "id": tid,
+            "startedAt": ts,
+            "items": [],
+        }
+        turns.append(current_turn)
+        return current_turn
+
+    try:
+        with path.open(encoding="utf-8") as fh:
+            for line_no, line in enumerate(fh, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if row.get("type") != "event_msg":
+                    continue
+                payload = row.get("payload") or {}
+                if not isinstance(payload, dict):
+                    continue
+
+                ev = payload.get("type")
+                ts = int(_timestamp_value(row.get("timestamp")) or line_no)
+                turn_id = payload.get("turn_id")
+
+                if ev == "task_started":
+                    current_turn = {
+                        "id": turn_id or f"hist_turn_{line_no}",
+                        "startedAt": payload.get("started_at") or ts,
+                        "items": [],
+                    }
+                    turns.append(current_turn)
+                    continue
+                if ev == "task_complete":
+                    if current_turn is not None:
+                        current_turn["completedAt"] = payload.get("completed_at") or ts
+                    current_turn = None
+                    continue
+
+                turn = ensure_turn(turn_id, ts, line_no)
+                item = _rollout_item(ev, payload, line_no)
+                if item:
+                    turn["items"].append(item)
+    except OSError as exc:
+        log.warning("failed to read rollout history %s: %s", path, exc)
+        return []
+
+    turns = [t for t in turns if t.get("items")]
+    if not turns:
+        return []
+    return _trim_history_items(turns, max_items)
+
+
+def _load_rollout_metadata(thread_id: str) -> dict:
+    path = _find_rollout_path(thread_id)
+    if not path:
+        return {}
+    meta: dict = {}
+    try:
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                payload = row.get("payload") or {}
+                if not isinstance(payload, dict):
+                    continue
+                if row.get("type") == "session_meta":
+                    if payload.get("cwd"):
+                        meta["cwd"] = payload["cwd"]
+                    if payload.get("model"):
+                        meta["model"] = payload["model"]
+                elif row.get("type") == "turn_context":
+                    if payload.get("cwd"):
+                        meta["cwd"] = payload["cwd"]
+                    if payload.get("model"):
+                        meta["model"] = payload["model"]
+    except OSError as exc:
+        log.warning("failed to read rollout metadata %s: %s", path, exc)
+    return meta
+
+
+def _find_rollout_path(thread_id: str) -> Path | None:
+    codex_home = Path.home() / ".codex"
+    matches: list[Path] = []
+    for root in (codex_home / "sessions", codex_home / "archived_sessions"):
+        if not root.is_dir():
+            continue
+        try:
+            matches.extend(root.rglob(f"rollout-*{thread_id}.jsonl"))
+        except OSError:
+            continue
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
+
+
+def _rollout_item(ev: str | None, payload: dict, line_no: int) -> dict | None:
+    if ev == "user_message":
+        text = _trim_history_text(payload.get("message") or payload.get("text"))
+        if not text:
+            return None
+        return {
+            "id": f"hist_user_{line_no}",
+            "type": "userMessage",
+            "content": [{"type": "text", "text": text}],
+        }
+    if ev == "agent_message":
+        text = _trim_history_text(payload.get("message") or payload.get("text"))
+        if not text:
+            return None
+        return {
+            "id": f"hist_agent_{line_no}",
+            "type": "agentMessage",
+            "text": text,
+            "phase": payload.get("phase"),
+        }
+    if ev == "agent_reasoning":
+        text = _trim_history_text(payload.get("message") or payload.get("text"))
+        if not text:
+            return None
+        return {
+            "id": f"hist_reasoning_{line_no}",
+            "type": "agentReasoning",
+            "text": text,
+        }
+    if ev == "exec_command_end":
+        command = _format_rollout_command(payload.get("command"))
+        output = _trim_history_text(
+            payload.get("aggregated_output")
+            or payload.get("aggregatedOutput")
+            or payload.get("stdout"),
+            limit=12000,
+        )
+        if not command and not output:
+            return None
+        item = {
+            "id": payload.get("call_id") or f"hist_tool_{line_no}",
+            "type": "commandExecution",
+        }
+        if command:
+            item["command"] = command
+        if output:
+            item["aggregatedOutput"] = output
+        if "exit_code" in payload:
+            item["exitCode"] = payload.get("exit_code")
+        elif "exitCode" in payload:
+            item["exitCode"] = payload.get("exitCode")
+        return item
+    return None
+
+
+def _trim_history_items(turns: list[dict], max_items: int) -> list[dict]:
+    kept: list[dict] = []
+    total = 0
+    for turn in reversed(turns):
+        items = list(turn.get("items") or [])
+        if not items:
+            continue
+        if total >= max_items:
+            break
+        take = max_items - total
+        if len(items) > take:
+            items = items[-take:]
+        new_turn = {**turn, "items": items}
+        kept.append(new_turn)
+        total += len(items)
+    return list(reversed(kept))
+
+
+def _trim_history_text(value, limit: int = 30000) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n\n[trimmed {len(text) - limit} chars]"
+
+
+def _format_rollout_command(command) -> str:
+    if isinstance(command, list):
+        return " ".join(str(part) for part in command)
+    if isinstance(command, str):
+        return command
+    return ""
+
+
+def _timestamp_value(value) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
 
 
 def _permissions_to_codex(perms: str, cwd: str) -> tuple[dict | None, str | None]:

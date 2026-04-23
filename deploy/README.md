@@ -64,6 +64,22 @@ EMBEDDING_DIMENSIONS=4096
 EMBEDDING_MAX_CONTEXT_TOKENS=32768
 ```
 
+If the same LiteLLM proxy also serves the Qwen LLM, chat
+title/description generation can use it too:
+
+```dotenv
+MAIN_MODEL_API_BASE_URL=http://your-litellm-host:80/v1
+MAIN_MODEL_API_KEY=your-litellm-master-key
+MAIN_MODEL=MainModel
+MAIN_MODEL_CONTEXT_TOKENS=16000
+MAIN_MODEL_DISABLE_THINKING_STYLE=chat_template_kwargs
+CHAT_TITLE_ENABLED=1
+```
+
+The relay sends `chat_template_kwargs: {enable_thinking: false}` so
+Qwen3.6 returns the XML metadata directly instead of streaming a
+`<think>` section first.
+
 The relay exposes non-secret effective config at:
 
 ```bash

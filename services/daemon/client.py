@@ -123,6 +123,10 @@ class DaemonClient:
             runner = _SessionRunner(sid, adapter, send, on_exit=lambda: self._sessions.pop(sid, None))
             self._sessions[sid] = runner
             await runner.start()
+        elif ftype == "session-close" and sid:
+            runner = self._sessions.pop(sid, None)
+            if runner:
+                asyncio.create_task(runner.stop())
         elif sid and sid in self._sessions:
             await self._sessions[sid].handle(frame)
         else:

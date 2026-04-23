@@ -6,6 +6,30 @@
 // live instead of popping when the closer finally arrives.
 
 import { Fragment } from 'react';
+import hljs from 'highlight.js/lib/common';
+import wasm from 'highlight.js/lib/languages/wasm';
+
+// Codex often emits WebAssembly Text — register it under both names.
+// `common` covers js/ts/python/rust/go/java/c/cpp/css/html/json/xml/bash/
+// sql/yaml/markdown/diff/etc, which already matches everything else we see.
+hljs.registerLanguage('wat', wasm);
+hljs.registerLanguage('wasm', wasm);
+
+function highlightCode(code, lang) {
+  if (!code) return '';
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+    } catch { /* fall through to auto */ }
+  }
+  try {
+    return hljs.highlightAuto(code).value;
+  } catch { /* fall through to escape */ }
+  return code
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
 /**
  * Close trailing unclosed tokens so partial markdown renders cleanly
@@ -39,8 +63,18 @@ export function MarkdownText({ text, className, trailingCursor = false }) {
 
 function Block({ block, isLast, trailingCursor }) {
   switch (block.type) {
-    case 'code':
-      return <pre className="md-code">{block.content}</pre>;
+    case 'code': {
+      const html = highlightCode(block.content, block.lang);
+      return (
+        <pre className={`md-code ${block.lang ? `md-lang-${block.lang}` : ''}`}>
+          {block.lang && <span className="md-code-lang">{block.lang}</span>}
+          <code
+            className={`hljs ${block.lang ? `language-${block.lang}` : ''}`}
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </pre>
+      );
+    }
     case 'heading':
       return <div className={`md-h md-h${block.level}`}>{inlineFormat(block.content)}</div>;
     case 'list':
@@ -71,6 +105,7 @@ function parseBlocks(text) {
   while (i < lines.length) {
     const line = lines[i];
     if (line.trimStart().startsWith('```')) {
+      const lang = line.trimStart().slice(3).trim().toLowerCase() || null;
       const buf = [];
       i++;
       while (i < lines.length && !lines[i].trimStart().startsWith('```')) {
@@ -78,7 +113,13 @@ function parseBlocks(text) {
         i++;
       }
       if (i < lines.length) i++;
-      out.push({ type: 'code', content: buf.join('\n') });
+      const content = buf.join('\n');
+      // A fence with no body (common when a one-line snippet starts with
+      // ``` because whitespace got collapsed) would otherwise render as an
+      // empty <pre> box. Skip it — there's nothing to show anyway.
+      if (content.trim()) {
+        out.push({ type: 'code', content, lang });
+      }
       continue;
     }
     const h = /^(#{1,6})\s+(.*)/.exec(line);
@@ -161,8 +202,29 @@ function inlineFormat(text) {
         continue;
       }
     }
+    // Search highlight sentinel. The relay wraps matched terms in « » so
+    // they survive through the markdown renderer; they never appear in
+    // normal Codex output, so the passthrough here is safe everywhere.
+    if (c === '«') {
+      const end = text.indexOf('»', i + 1);
+      if (end !== -1) {
+        out.push(
+          <mark key={key++} className="md-hl">
+            {text.slice(i + 1, end)}
+          </mark>,
+        );
+        i = end + 1;
+        continue;
+      }
+    }
     let j = i;
-    while (j < text.length && text[j] !== '`' && text[j] !== '*' && text[j] !== '_') j++;
+    while (
+      j < text.length &&
+      text[j] !== '`' &&
+      text[j] !== '*' &&
+      text[j] !== '_' &&
+      text[j] !== '«'
+    ) j++;
     if (j > i) {
       out.push(<Fragment key={key++}>{text.slice(i, j)}</Fragment>);
       i = j;

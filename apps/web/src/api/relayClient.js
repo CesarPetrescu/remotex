@@ -58,9 +58,64 @@ export class RelayClient {
     return this.#request('/api/search/config');
   }
 
-  searchChats(query, { hostId = null, limit = 20 } = {}) {
-    const qs = new URLSearchParams({ q: query, limit: String(limit) });
+  searchChats(query, { hostId = null, limit = 20, mode = 'hybrid', threadId = null, role = null, kind = null, rerank = 'auto' } = {}) {
+    const qs = new URLSearchParams({ q: query, limit: String(limit), mode });
     if (hostId) qs.set('host_id', hostId);
-    return this.#request(`/api/search?${qs.toString()}`).then((r) => r.results);
+    if (threadId) qs.set('thread_id', threadId);
+    if (role) qs.set('role', role);
+    if (kind) qs.set('kind', kind);
+    if (rerank !== 'auto') qs.set('rerank', rerank ? '1' : '0');
+    return this.#request(`/api/search?${qs.toString()}`);
+  }
+
+  // Streaming search: emits one event per signal as it completes, then a
+  // fused event, then (if on) a rerank event, then done. The onEvent
+  // callback is invoked with each parsed JSON object. Returns a Promise
+  // that resolves when the stream closes and an `abort` function.
+  searchChatsStream(query, opts = {}) {
+    const { hostId = null, limit = 20, mode = 'hybrid', threadId = null, role = null, kind = null, rerank = 'auto', onEvent, signal } = opts;
+    const qs = new URLSearchParams({ q: query, limit: String(limit), mode });
+    if (hostId) qs.set('host_id', hostId);
+    if (threadId) qs.set('thread_id', threadId);
+    if (role) qs.set('role', role);
+    if (kind) qs.set('kind', kind);
+    if (rerank !== 'auto') qs.set('rerank', rerank ? '1' : '0');
+    const url = `/api/search/stream?${qs.toString()}`;
+    const controller = signal ? null : new AbortController();
+    const abortSignal = signal || controller?.signal;
+    const promise = (async () => {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${this.token}` },
+        signal: abortSignal,
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`${res.status} ${res.statusText}: ${body}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline;
+        while ((newline = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (!line) continue;
+          try {
+            onEvent?.(JSON.parse(line));
+          } catch (err) {
+            console.warn('search stream: bad JSON line', line, err);
+          }
+        }
+      }
+      const tail = buffer.trim();
+      if (tail) {
+        try { onEvent?.(JSON.parse(tail)); } catch (err) { /* ignore */ }
+      }
+    })();
+    return { promise, abort: () => controller?.abort() };
   }
 }
