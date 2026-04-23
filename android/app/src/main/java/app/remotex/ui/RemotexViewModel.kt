@@ -645,6 +645,7 @@ class RemotexViewModel(
                         id = itemId,
                         text = data.string("text") ?: "",
                         completed = replayed,
+                        replayed = replayed,
                     )
                     "agent_message" -> UiEvent.Agent(
                         id = itemId,

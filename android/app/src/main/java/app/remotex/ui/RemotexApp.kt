@@ -56,6 +56,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1227,6 +1228,24 @@ private fun EventRow(event: UiEvent, pending: Boolean) {
                 is UiEvent.Tool -> "TOOL · ${event.tool}"
                 is UiEvent.Agent -> "AGENT"
                 is UiEvent.System -> event.label.uppercase()
+            }
+            if (event is UiEvent.Reasoning) {
+                var expanded by rememberSaveable(event.id) { mutableStateOf(!event.replayed) }
+                Text(
+                    text = (if (expanded) "▾ " else "▸ ") + label,
+                    color = accent,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    modifier = Modifier.clickable { expanded = !expanded },
+                )
+                if (expanded) {
+                    Spacer(Modifier.height(3.dp))
+                    MarkdownText(
+                        text = event.text.ifEmpty { "…" },
+                        color = InkDim,
+                    )
+                }
+                return@Column
             }
             Text(
                 label,

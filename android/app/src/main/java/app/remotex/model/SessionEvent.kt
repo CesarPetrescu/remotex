@@ -22,6 +22,8 @@ sealed class UiEvent {
         override val id: String,
         val text: String,
         val completed: Boolean,
+        /** True when the event arrived as history replay, not live streaming. */
+        val replayed: Boolean = false,
     ) : UiEvent()
 
     data class Tool(
