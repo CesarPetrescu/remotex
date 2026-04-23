@@ -8,6 +8,7 @@
 import { Fragment } from 'react';
 import hljs from 'highlight.js/lib/common';
 import wasm from 'highlight.js/lib/languages/wasm';
+import { CopyButton } from '../components/CopyButton';
 
 // Codex often emits WebAssembly Text — register it under both names.
 // `common` covers js/ts/python/rust/go/java/c/cpp/css/html/json/xml/bash/
@@ -68,6 +69,7 @@ function Block({ block, isLast, trailingCursor }) {
       return (
         <pre className={`md-code ${block.lang ? `md-lang-${block.lang}` : ''}`}>
           {block.lang && <span className="md-code-lang">{block.lang}</span>}
+          <CopyButton getText={() => block.content} />
           <code
             className={`hljs ${block.lang ? `language-${block.lang}` : ''}`}
             dangerouslySetInnerHTML={{ __html: html }}

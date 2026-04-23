@@ -911,6 +911,33 @@ details.item-reasoning > summary::before {
   transition: transform 120ms ease;
 }
 details.item-reasoning[open] > summary::before { content: '▾ '; }
+
+/* Copy-to-clipboard button — sits in the top-right of code blocks. */
+.copy-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 2;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 1px 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.md-code:hover > .copy-btn,
+.item-code:hover > .copy-btn,
+.copy-btn:focus-visible { opacity: 1; }
+.copy-btn:hover { color: var(--ink); }
+.copy-btn.copied { opacity: 1; color: var(--ok, #7fd17f); }
+.copy-btn.failed { opacity: 1; color: var(--warn, #d17f7f); }
+/* When a language badge is present, tuck the copy button left of it. */
+.md-code:has(.md-code-lang) > .copy-btn { right: 42px; }
 .item-tool { border-left-color: var(--accent); }
 .item-tool .item-label { color: var(--accent); }
 .item-agent { border-left-color: var(--amber); }
@@ -921,6 +948,7 @@ details.item-reasoning[open] > summary::before { content: '▾ '; }
   padding: 6px 8px;
   margin-top: 4px;
   white-space: pre-wrap;
+  position: relative;
 }
 .item-code.dim { opacity: 0.8; }
 .item-images {

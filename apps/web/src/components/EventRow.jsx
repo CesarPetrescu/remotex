@@ -1,4 +1,5 @@
 import { MarkdownText } from '../util/markdown';
+import { CopyButton } from './CopyButton';
 
 // One row in the streaming event list. Picks a renderer per role so
 // reasoning, tool calls, and the agent reply each have their own shape
@@ -56,8 +57,18 @@ function renderBody(event, streaming) {
     case 'tool':
       return (
         <>
-          {event.command && <pre className="item-code">{event.command}</pre>}
-          {event.output && <pre className="item-code dim">{event.output}</pre>}
+          {event.command && (
+            <pre className="item-code">
+              <CopyButton getText={() => event.command} />
+              {event.command}
+            </pre>
+          )}
+          {event.output && (
+            <pre className="item-code dim">
+              <CopyButton getText={() => event.output} />
+              {event.output}
+            </pre>
+          )}
         </>
       );
     case 'agent':
