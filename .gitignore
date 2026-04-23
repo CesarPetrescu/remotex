@@ -46,6 +46,9 @@ android/local.properties
 # Codex working dir (created when daemon spawns `codex app-server`)
 .codex/
 
+# Scratch / screenshots
+tmp/
+
 # Android build artifacts
 android/.gradle/
 android/build/

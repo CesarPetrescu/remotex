@@ -29,6 +29,7 @@ services:
         condition: service_healthy
     environment:
       TZ: ${TZ:-Etc/UTC}
+      RELAY_CLIENT_RECONNECT_GRACE_SECONDS: ${RELAY_CLIENT_RECONNECT_GRACE_SECONDS:-75}
       SEARCH_DATABASE_URL: postgresql://${SEARCH_POSTGRES_USER:-remotex}:${SEARCH_POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${SEARCH_POSTGRES_DB:-remotex}
       EMBEDDING_API_BASE_URL: ${EMBEDDING_API_BASE_URL:-}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}

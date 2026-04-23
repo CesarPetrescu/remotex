@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import secrets
 import sqlite3
 import time
@@ -34,6 +35,9 @@ log = logging.getLogger("relay")
 
 DEMO_USER_TOKEN = "demo-user-token"
 DEMO_BRIDGE_TOKEN = "demo-bridge-token"
+CLIENT_RECONNECT_GRACE_SECONDS = float(
+    os.getenv("RELAY_CLIENT_RECONNECT_GRACE_SECONDS", "75")
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -224,30 +228,50 @@ class Hub:
         self.daemons: dict[str, web.WebSocketResponse] = {}
         self.client_sessions: dict[str, web.WebSocketResponse] = {}
         self.session_host: dict[str, str] = {}
+        self.session_open_frames: dict[str, dict] = {}
+        self.client_close_tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
         # request_id → Future awaiting the daemon's response frame
         self.pending_admin: dict[str, asyncio.Future] = {}
+        # Latest telemetry snapshot per host (with relay-side receive ts)
+        self.host_telemetry: dict[str, dict] = {}
 
-    async def attach_daemon(self, host_id: str, ws: web.WebSocketResponse) -> None:
+    async def attach_daemon(self, host_id: str, ws: web.WebSocketResponse) -> web.WebSocketResponse | None:
         async with self._lock:
+            old = self.daemons.get(host_id)
             self.daemons[host_id] = ws
+            return old if old is not ws else None
 
-    async def detach_daemon(self, host_id: str) -> None:
+    async def detach_daemon(self, host_id: str, ws: web.WebSocketResponse | None = None) -> bool:
         async with self._lock:
+            if ws is not None and self.daemons.get(host_id) is not ws:
+                return False
             self.daemons.pop(host_id, None)
-            dead = [sid for sid, hid in self.session_host.items() if hid == host_id]
-            for sid in dead:
-                self.session_host.pop(sid, None)
+            return True
 
     async def attach_client(self, session_id: str, host_id: str, ws: web.WebSocketResponse) -> None:
+        old: web.WebSocketResponse | None = None
+        close_task: asyncio.Task | None = None
         async with self._lock:
+            old = self.client_sessions.get(session_id)
+            close_task = self.client_close_tasks.pop(session_id, None)
             self.client_sessions[session_id] = ws
             self.session_host[session_id] = host_id
+        if close_task:
+            close_task.cancel()
+        if old is not None and old is not ws and not old.closed:
+            await old.close(code=4000, message=b"replaced")
 
-    async def detach_client(self, session_id: str) -> None:
+    async def detach_client(
+        self,
+        session_id: str,
+        ws: web.WebSocketResponse | None = None,
+    ) -> bool:
         async with self._lock:
+            if ws is not None and self.client_sessions.get(session_id) is not ws:
+                return False
             self.client_sessions.pop(session_id, None)
-            self.session_host.pop(session_id, None)
+            return True
 
     def daemon_for(self, host_id: str) -> web.WebSocketResponse | None:
         return self.daemons.get(host_id)
@@ -257,6 +281,65 @@ class Hub:
 
     def host_for_session(self, session_id: str) -> str | None:
         return self.session_host.get(session_id)
+
+    def clients_for_host(self, host_id: str) -> list[web.WebSocketResponse]:
+        """All client sockets currently attached to a session on this host."""
+        return [
+            ws
+            for sid, ws in self.client_sessions.items()
+            if self.session_host.get(sid) == host_id and not ws.closed
+        ]
+
+    async def remember_session_open(self, session_id: str, host_id: str, frame: dict) -> None:
+        async with self._lock:
+            self.session_host[session_id] = host_id
+            self.session_open_frames[session_id] = dict(frame)
+
+    async def update_session_resume(
+        self,
+        session_id: str,
+        *,
+        thread_id: str | None,
+        cwd: str | None,
+    ) -> None:
+        async with self._lock:
+            frame = self.session_open_frames.get(session_id)
+            if not frame:
+                return
+            if thread_id:
+                frame["resume_thread_id"] = thread_id
+            if cwd:
+                frame["cwd"] = cwd
+
+    async def session_open_frame(self, session_id: str) -> dict | None:
+        async with self._lock:
+            frame = self.session_open_frames.get(session_id)
+            return dict(frame) if frame else None
+
+    async def session_open_frames_for_host(self, host_id: str) -> list[dict]:
+        async with self._lock:
+            return [
+                dict(frame)
+                for sid, frame in self.session_open_frames.items()
+                if self.session_host.get(sid) == host_id
+            ]
+
+    async def schedule_session_close(self, session_id: str, task: asyncio.Task) -> None:
+        async with self._lock:
+            old = self.client_close_tasks.pop(session_id, None)
+            self.client_close_tasks[session_id] = task
+        if old and old is not task:
+            old.cancel()
+
+    async def forget_session(self, session_id: str) -> None:
+        current = asyncio.current_task()
+        async with self._lock:
+            self.client_sessions.pop(session_id, None)
+            self.session_host.pop(session_id, None)
+            self.session_open_frames.pop(session_id, None)
+            close_task = self.client_close_tasks.pop(session_id, None)
+        if close_task and close_task is not current:
+            close_task.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +691,52 @@ def _search_should_capture(frame: dict) -> bool:
     return event.get("kind") in _SEARCH_EVENT_KINDS
 
 
+async def _close_backend_session(app: web.Application, host_id: str, session_id: str) -> None:
+    hub: Hub = app["hub"]
+    store: Store = app["store"]
+    daemon_ws = hub.daemon_for(host_id)
+    if daemon_ws is not None and not daemon_ws.closed:
+        try:
+            await daemon_ws.send_json({
+                "type": "session-close",
+                "session_id": session_id,
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.debug("session-close forward failed: %s", exc)
+    session = store.session_info(session_id)
+    store.close_session(session_id)
+    if session:
+        app["search"].capture_session_closed(session)
+    await hub.forget_session(session_id)
+
+
+async def _schedule_backend_close(
+    app: web.Application,
+    host_id: str,
+    session_id: str,
+) -> None:
+    hub: Hub = app["hub"]
+
+    async def delayed_close() -> None:
+        try:
+            await asyncio.sleep(CLIENT_RECONNECT_GRACE_SECONDS)
+            if hub.client_for(session_id) is not None:
+                return
+            await _close_backend_session(app, host_id, session_id)
+            log.info(
+                "session %s closed after %.0fs reconnect grace",
+                session_id,
+                CLIENT_RECONNECT_GRACE_SECONDS,
+            )
+        except asyncio.CancelledError:
+            pass
+
+    await hub.schedule_session_close(
+        session_id,
+        asyncio.create_task(delayed_close(), name=f"client-grace-{session_id}"),
+    )
+
+
 async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
@@ -637,10 +766,14 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             hello.get("platform", "") or "",
         )
         store.mark_host(host_id, True)
-        await hub.attach_daemon(host_id, ws)
+        old_ws = await hub.attach_daemon(host_id, ws)
+        if old_ws is not None and not old_ws.closed:
+            await old_ws.close(code=4000, message=b"daemon-replaced")
         await ws.send_json({"type": "welcome", "host_id": host_id})
         log.info("daemon %s online (hostname=%s platform=%s)",
                  host_id, hello.get("hostname"), hello.get("platform"))
+        for open_frame in await hub.session_open_frames_for_host(host_id):
+            await ws.send_json(open_frame)
 
         async for msg in ws:
             if msg.type != WSMsgType.TEXT:
@@ -658,8 +791,17 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 session = store.session_info(sid)
                 if session and ftype == "session-event" and _search_should_capture(frame):
                     request.app["search"].capture_session_event(session, frame)
+                    event = frame.get("event") or {}
+                    data = event.get("data") or {}
+                    if event.get("kind") == "session-started" and isinstance(data, dict):
+                        await hub.update_session_resume(
+                            sid,
+                            thread_id=data.get("thread_id"),
+                            cwd=data.get("cwd"),
+                        )
                 if ftype == "session-closed":
                     store.close_session(sid)
+                    await hub.forget_session(sid)
                     if session:
                         request.app["search"].capture_session_closed(session)
             elif ftype in ("threads-list-response", "fs-read-response"):
@@ -667,6 +809,27 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 fut = hub.pending_admin.get(req_id) if req_id else None
                 if fut is not None and not fut.done():
                     fut.set_result(frame)
+            elif ftype == "host-telemetry":
+                data = frame.get("data") or {}
+                snapshot = {
+                    "host_id": host_id,
+                    "data": data,
+                    "received_at": time.time(),
+                }
+                hub.host_telemetry[host_id] = snapshot
+                # Fan out to any client sessions already attached to this host
+                # so the UI updates in real time without having to poll.
+                forward = {
+                    "type": "host-telemetry",
+                    "host_id": host_id,
+                    "data": data,
+                    "ts": snapshot["received_at"],
+                }
+                for client_ws in hub.clients_for_host(host_id):
+                    try:
+                        await client_ws.send_json(forward)
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("telemetry fanout failed: %s", exc)
             elif ftype == "ping":
                 await ws.send_json({"type": "pong"})
     except asyncio.TimeoutError:
@@ -675,10 +838,35 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
         log.exception("daemon ws error: %s", exc)
     finally:
         if host_id:
-            store.mark_host(host_id, False)
-            await hub.detach_daemon(host_id)
-            log.info("daemon %s offline", host_id)
+            detached = await hub.detach_daemon(host_id, ws)
+            if detached:
+                store.mark_host(host_id, False)
+                hub.host_telemetry.pop(host_id, None)
+                log.info("daemon %s offline", host_id)
     return ws
+
+
+async def get_host_telemetry(request: web.Request) -> web.Response:
+    """Latest host telemetry snapshot cached by the relay.
+
+    Polled by the web client to keep the telemetry sidebar populated
+    before (and between) active sessions. Clients with an active session
+    on this host also receive push updates over the session WebSocket.
+    """
+    user = await require_user(request)
+    host_id = request.match_info["host_id"]
+    store: Store = request.app["store"]
+    hub: Hub = request.app["hub"]
+    if store.host_owner(host_id) != user["token"]:
+        raise web.HTTPNotFound(reason="host not found")
+    snap = hub.host_telemetry.get(host_id)
+    if snap is None:
+        return web.json_response({"host_id": host_id, "data": None, "ts": None})
+    return web.json_response({
+        "host_id": host_id,
+        "data": snap.get("data"),
+        "ts": snap.get("received_at"),
+    })
 
 
 async def ws_client(request: web.Request) -> web.WebSocketResponse:
@@ -689,6 +877,7 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
 
     session_id: str | None = None
     host_id: str | None = None
+    explicit_close = False
     try:
         hello = await asyncio.wait_for(ws.receive(), timeout=10)
         if hello.type != WSMsgType.TEXT:
@@ -727,12 +916,15 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             await ws.close(code=4503, message=b"host offline")
             return ws
         override_map: dict = request.app.setdefault("session_open_overrides", {})
-        overrides = override_map.pop(session_id, {}) or {}
-        open_frame: dict = {"type": "session-open", "session_id": session_id}
-        if overrides.get("thread_id"):
-            open_frame["resume_thread_id"] = overrides["thread_id"]
-        if overrides.get("cwd"):
-            open_frame["cwd"] = overrides["cwd"]
+        open_frame = await hub.session_open_frame(session_id)
+        if open_frame is None:
+            overrides = override_map.pop(session_id, {}) or {}
+            open_frame = {"type": "session-open", "session_id": session_id}
+            if overrides.get("thread_id"):
+                open_frame["resume_thread_id"] = overrides["thread_id"]
+            if overrides.get("cwd"):
+                open_frame["cwd"] = overrides["cwd"]
+            await hub.remember_session_open(session_id, host_id, open_frame)
         await daemon_ws.send_json(open_frame)
 
         async for msg in ws:
@@ -744,6 +936,13 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                 continue
             # Forward client-originated frames to the daemon untouched.
             frame["session_id"] = session_id
+            if frame.get("type") == "ping":
+                await ws.send_json({"type": "pong", "ts": frame.get("ts")})
+                continue
+            if frame.get("type") == "session-close":
+                explicit_close = True
+                await ws.close(code=1000, message=b"session closed")
+                break
             if frame.get("type") == "turn-start":
                 session = store.session_info(session_id)
                 if session:
@@ -759,17 +958,12 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
         log.exception("client ws error: %s", exc)
     finally:
         if session_id:
-            if host_id:
-                daemon_ws = hub.daemon_for(host_id)
-                if daemon_ws is not None and not daemon_ws.closed:
-                    try:
-                        await daemon_ws.send_json({
-                            "type": "session-close",
-                            "session_id": session_id,
-                        })
-                    except Exception as exc:  # noqa: BLE001
-                        log.debug("session-close forward failed: %s", exc)
-            await hub.detach_client(session_id)
+            detached = await hub.detach_client(session_id, ws)
+            if detached and host_id:
+                if explicit_close:
+                    await _close_backend_session(request.app, host_id, session_id)
+                else:
+                    await _schedule_backend_close(request.app, host_id, session_id)
     return ws
 
 
@@ -792,6 +986,7 @@ def make_app(db_path: str, static_root: Path) -> web.Application:
     app.router.add_post("/api/hosts/{host_id}/api-key", issue_api_key)
     app.router.add_get("/api/hosts/{host_id}/threads", list_host_threads)
     app.router.add_get("/api/hosts/{host_id}/fs", list_host_fs)
+    app.router.add_get("/api/hosts/{host_id}/telemetry", get_host_telemetry)
     app.router.add_post("/api/sessions", open_session)
     app.router.add_get("/api/search/config", search_config)
     app.router.add_get("/api/search", search_chats)

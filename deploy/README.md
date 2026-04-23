@@ -54,6 +54,12 @@ $EDITOR .env
 docker compose up -d --build
 ```
 
+`RELAY_CLIENT_RECONNECT_GRACE_SECONDS` controls how long the relay keeps
+a daemon session alive after a web or mobile socket disappears. The
+default is 75 seconds, which covers phone sleep, Wi-Fi/LTE switches, and
+browser reloads without leaving abandoned Codex processes around for
+long.
+
 Set at least:
 
 ```dotenv

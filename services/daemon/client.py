@@ -4,12 +4,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from typing import Awaitable, Callable
 
 import aiohttp
 
 from .adapters import AdminCodex, SessionAdapter, build_adapter
 from .config import Config
+from .telemetry import TelemetryCollector, telemetry_loop
 
 log = logging.getLogger("daemon.client")
 
@@ -22,6 +24,7 @@ class DaemonClient:
         # spawn on first use; kept alive between calls so we don't eat
         # node startup cost on every thread-list request.
         self._admin = AdminCodex(codex_binary=config.codex_binary)
+        self._telemetry = TelemetryCollector()
 
     async def run(self) -> None:
         backoff = 1.0
@@ -39,11 +42,12 @@ class DaemonClient:
                     "connection lost: %s: %s (retry in %.1fs)",
                     type(exc).__name__, msg, backoff,
                 )
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(backoff + random.uniform(0, min(1.0, backoff * 0.25)))
                 backoff = min(backoff * 2, 30.0)
 
     async def _run_once(self) -> None:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.ws_connect(self.config.relay_url, heartbeat=20) as ws:
                 await ws.send_json({
                     "type": "hello",
@@ -68,6 +72,10 @@ class DaemonClient:
                     async with send_lock:
                         await ws.send_json(frame)
 
+                telemetry_task = asyncio.create_task(
+                    telemetry_loop(self._telemetry, send),
+                    name="daemon-telemetry",
+                )
                 try:
                     async for msg in ws:
                         if msg.type != aiohttp.WSMsgType.TEXT:
@@ -82,6 +90,11 @@ class DaemonClient:
                     # it ended cleanly or by exception. Leaving them alive
                     # leaks codex app-server subprocesses because their
                     # adapter.stop() is what terminates the child.
+                    telemetry_task.cancel()
+                    try:
+                        await telemetry_task
+                    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                        pass
                     await self._close_all_sessions()
 
     async def _close_all_sessions(self) -> None:

@@ -56,7 +56,17 @@ const initialState = {
   slashFeedback: null,
   planMode: false,
   error: null,
+  // hostTelemetry[hostId] = {
+  //   current: { cpu:{percent,cores,temp_c}, memory:{used_bytes,total_bytes,percent},
+  //              gpu:{name,percent,mem_used_mb,mem_total_mb,temp_c}|null,
+  //              network:{up_bps,down_bps}, uptime_s, load_avg:[1m,5m,15m], ts },
+  //   history: { cpu:[], mem:[], gpu:[], up:[], down:[] },  // rolling, newest last
+  //   lastUpdate: epoch_ms
+  // }
+  hostTelemetry: {},
 };
+
+const TELEMETRY_HISTORY_MAX = 60;
 
 // --- reducer ---
 
@@ -224,6 +234,33 @@ function reducer(state, action) {
     case 'SET_PLAN':
       return { ...state, planMode: action.on };
 
+    case 'TELEMETRY': {
+      const hostId = action.hostId;
+      if (!hostId || !action.data) return state;
+      const prev = state.hostTelemetry[hostId];
+      const prevHistory = prev?.history || { cpu: [], mem: [], gpu: [], up: [], down: [] };
+      const d = action.data;
+      const push = (arr, v) => {
+        const next = arr.length >= TELEMETRY_HISTORY_MAX ? arr.slice(1) : arr.slice();
+        next.push(Number.isFinite(v) ? v : 0);
+        return next;
+      };
+      const history = {
+        cpu: push(prevHistory.cpu, d.cpu?.percent ?? 0),
+        mem: push(prevHistory.mem, d.memory?.percent ?? 0),
+        gpu: push(prevHistory.gpu, d.gpu?.percent ?? 0),
+        up: push(prevHistory.up, d.network?.up_bps ?? 0),
+        down: push(prevHistory.down, d.network?.down_bps ?? 0),
+      };
+      return {
+        ...state,
+        hostTelemetry: {
+          ...state.hostTelemetry,
+          [hostId]: { current: d, history, lastUpdate: Date.now() },
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -239,6 +276,7 @@ export function useRemotex() {
   const apiRef = useRef(new RelayClient(state.userToken));
   const socketRef = useRef(null);
   const reconnectRef = useRef(null);
+  const reconnectAttemptRef = useRef(0);
   const userClosedRef = useRef(false);
   // Latest sendTurn inputs (model/effort/perms/images) — read lazily so
   // sendTurn doesn't invalidate on every picker tweak.
@@ -252,6 +290,7 @@ export function useRemotex() {
     browsePath: state.browsePath,
     selectedHostId: state.selectedHostId,
     userToken: state.userToken,
+    sessionId: state.session?.sessionId,
   };
 
   useEffect(() => {
@@ -272,7 +311,7 @@ export function useRemotex() {
       reconnectRef.current = null;
     }
     if (socketRef.current) {
-      socketRef.current.close();
+      socketRef.current.close({ endSession: true });
       socketRef.current = null;
     }
     dispatch({ type: 'SESSION_RESET', status: STATUS.Idle });
@@ -280,7 +319,9 @@ export function useRemotex() {
 
   const handleFrame = useCallback((frame) => {
     if (frame.type === 'attached') {
+      reconnectAttemptRef.current = 0;
       dispatch({ type: 'SESSION_STATUS', status: STATUS.Connected });
+      dispatch({ type: 'SET_ERROR', error: null });
       dispatch({
         type: 'SESSION_INFO',
         info: { sessionId: frame.session_id, hostId: frame.host_id },
@@ -294,6 +335,12 @@ export function useRemotex() {
     }
     if (frame.type === 'error') {
       dispatch({ type: 'SET_ERROR', error: frame.error || 'relay error' });
+      return;
+    }
+    if (frame.type === 'host-telemetry') {
+      if (frame.host_id && frame.data) {
+        dispatch({ type: 'TELEMETRY', hostId: frame.host_id, data: frame.data });
+      }
       return;
     }
     if (frame.type !== 'session-event') return;
@@ -383,10 +430,16 @@ export function useRemotex() {
   const attachSocket = useCallback(
     (sid) => {
       const userToken = latestInputsRef.current.userToken;
+      const previous = socketRef.current;
+      if (previous) {
+        socketRef.current = null;
+        previous.close();
+      }
       const sock = new SessionSocket({
         userToken,
         sessionId: sid,
         onStatus: (s) => {
+          if (socketRef.current !== sock) return;
           if (s === 'connecting') {
             dispatch({ type: 'SESSION_STATUS', status: STATUS.Connecting });
           }
@@ -397,7 +450,7 @@ export function useRemotex() {
             }
             dispatch({ type: 'PENDING', pending: false });
             dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
-            scheduleReconnectRef.current?.(sid, 0);
+            scheduleReconnectRef.current?.(sid);
           }
         },
         onFrame: handleFrame,
@@ -408,23 +461,53 @@ export function useRemotex() {
   );
   attachSocketRef.current = attachSocket;
 
-  const scheduleReconnect = useCallback((sid, attempt) => {
-    const delays = [1000, 2000, 4000, 8000, 16000];
-    if (attempt >= delays.length) {
-      dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });
-      dispatch({ type: 'SET_ERROR', error: 'disconnected — tap to reload' });
-      return;
-    }
+  const scheduleReconnect = useCallback((sid) => {
+    if (reconnectRef.current) clearTimeout(reconnectRef.current);
+    const attempt = reconnectAttemptRef.current;
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const base = offline ? 5000 : Math.min(30000, 1000 * 2 ** Math.min(attempt, 5));
+    const jitter = Math.floor(Math.random() * Math.min(1000, base * 0.25));
+    const delay = base + jitter;
+    reconnectAttemptRef.current = attempt + 1;
+    const label = offline
+      ? 'waiting for network…'
+      : `reconnecting in ${Math.ceil(delay / 1000)}s`;
+    dispatch({ type: 'SET_ERROR', error: label });
     reconnectRef.current = setTimeout(() => {
+      reconnectRef.current = null;
+      if (userClosedRef.current) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        scheduleReconnectRef.current?.(sid);
+        return;
+      }
       dispatch({ type: 'SESSION_STATUS', status: STATUS.Connecting });
+      dispatch({ type: 'SET_ERROR', error: 'reconnecting…' });
       attachSocketRef.current?.(sid);
-      setTimeout(() => {
-        if (socketRef.current?.ws.readyState === WebSocket.OPEN) return;
-        scheduleReconnectRef.current?.(sid, attempt + 1);
-      }, 2000);
-    }, delays[attempt]);
+    }, delay);
   }, []);
   scheduleReconnectRef.current = scheduleReconnect;
+
+  useEffect(() => {
+    const reconnectActiveSession = () => {
+      const sid = latestInputsRef.current.sessionId || socketRef.current?.sessionId;
+      if (!sid || userClosedRef.current) return;
+      if (state.status === STATUS.Connected && socketRef.current?.isOpen()) return;
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      reconnectRef.current = null;
+      reconnectAttemptRef.current = 0;
+      attachSocketRef.current?.(sid);
+    };
+    const onOnline = () => reconnectActiveSession();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') reconnectActiveSession();
+    };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [state.status]);
 
   // --- navigation ---
 
@@ -435,6 +518,10 @@ export function useRemotex() {
 
   const goToThreads = useCallback(() => {
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Threads });
+  }, []);
+
+  const goToSession = useCallback(() => {
+    dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
   }, []);
 
   const goToSearch = useCallback(async () => {
@@ -461,6 +548,35 @@ export function useRemotex() {
   useEffect(() => {
     refreshHosts();
   }, [refreshHosts]);
+
+  // Poll telemetry for whichever host is currently selected / online.
+  // Push updates arrive over the session WS when a session is open; the
+  // poll keeps the sidebar populated when it isn't and back-fills the
+  // first sample immediately after selecting a host.
+  useEffect(() => {
+    const hostId = state.selectedHostId;
+    if (!hostId) return undefined;
+    const host = state.hosts.find((h) => h.id === hostId);
+    if (!host?.online) return undefined;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const snap = await apiRef.current.getHostTelemetry(hostId);
+        if (cancelled) return;
+        if (snap?.data) {
+          dispatch({ type: 'TELEMETRY', hostId, data: snap.data });
+        }
+      } catch {
+        // Transient fetch failures are benign — next tick will retry.
+      }
+    };
+    tick();
+    const h = setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(h);
+    };
+  }, [state.selectedHostId, state.hosts]);
 
   const refreshThreads = useCallback(
     async (hostOverride) => {
@@ -490,6 +606,18 @@ export function useRemotex() {
     },
     [refreshThreads],
   );
+
+  // Auto-select the first online host once the list loads so the
+  // telemetry sidebar + dashboard have data without an extra click.
+  // Declared after refreshThreads to stay out of its TDZ.
+  useEffect(() => {
+    if (state.selectedHostId) return;
+    const firstOnline = state.hosts.find((h) => h.online);
+    if (firstOnline) {
+      dispatch({ type: 'SELECT_HOST', id: firstOnline.id });
+      refreshThreads(firstOnline.id);
+    }
+  }, [state.hosts, state.selectedHostId, refreshThreads]);
 
   const browseDir = useCallback(async (path) => {
     const target = latestInputsRef.current.selectedHostId;
@@ -839,6 +967,7 @@ export function useRemotex() {
       goToHosts,
       goToThreads,
       goToSearch,
+      goToSession,
       goToFiles,
       refreshHosts,
       openHost,
@@ -862,6 +991,7 @@ export function useRemotex() {
       goToHosts,
       goToThreads,
       goToSearch,
+      goToSession,
       goToFiles,
       refreshHosts,
       openHost,

@@ -8,7 +8,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.remotex.model.FsEntry
 import app.remotex.model.Host
+import app.remotex.model.HostTelemetryData
+import app.remotex.model.HostTelemetrySnapshot
 import app.remotex.model.SearchResult
+import app.remotex.model.TelemetryHistory
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
 import app.remotex.net.RelayClient
@@ -33,9 +36,12 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
+import kotlin.math.min
+import kotlin.random.Random
 
 enum class Screen { Hosts, Threads, Files, Session, Search }
 
@@ -96,6 +102,7 @@ data class UiState(
     val pendingApproval: ApprovalPrompt? = null,
     val slashFeedback: String? = null,
     val planMode: Boolean = false,   // true after /plan, cleared on /default
+    val hostTelemetry: Map<String, HostTelemetrySnapshot> = emptyMap(),
 )
 
 /**
@@ -154,7 +161,10 @@ class RemotexViewModel(
     private var socket: SessionSocket? = null
     private var socketJob: Job? = null
     private var reconnectJob: Job? = null
+    private var reconnectAttempt: Int = 0
     private var userClosed: Boolean = false
+    private var telemetryJob: Job? = null
+    private var telemetryHostId: String? = null
 
     fun setToken(token: String) {
         _state.update { it.copy(userToken = token) }
@@ -211,6 +221,40 @@ class RemotexViewModel(
 
     fun selectHost(id: String) {
         _state.update { it.copy(selectedHostId = id) }
+        startTelemetryPoll(id)
+    }
+
+    /** Poll /api/hosts/{id}/telemetry every 3s. Replaces any prior job. */
+    private fun startTelemetryPoll(hostId: String) {
+        if (telemetryHostId == hostId && telemetryJob?.isActive == true) return
+        telemetryHostId = hostId
+        telemetryJob?.cancel()
+        telemetryJob = viewModelScope.launch {
+            while (true) {
+                val targetHost = telemetryHostId ?: break
+                try {
+                    val snap = client.getHostTelemetry(_state.value.userToken, targetHost)
+                    val data = snap.data
+                    if (data != null) applyTelemetry(targetHost, data)
+                } catch (_: Throwable) {
+                    // Transient failures are benign; next tick retries.
+                }
+                delay(3_000L)
+            }
+        }
+    }
+
+    private fun applyTelemetry(hostId: String, data: HostTelemetryData) {
+        _state.update { s ->
+            val prev = s.hostTelemetry[hostId]
+            val history = (prev?.history ?: TelemetryHistory()).push(data)
+            val snapshot = HostTelemetrySnapshot(
+                data = data,
+                history = history,
+                lastUpdateMs = System.currentTimeMillis(),
+            )
+            s.copy(hostTelemetry = s.hostTelemetry + (hostId to snapshot))
+        }
     }
 
     fun goToHosts() {
@@ -310,6 +354,16 @@ class RemotexViewModel(
             try {
                 val hosts = client.listHosts(_state.value.userToken)
                 _state.update { it.copy(hosts = hosts, loading = false) }
+                // Auto-select first online host so the telemetry panel
+                // populates without an extra tap.
+                if (_state.value.selectedHostId == null) {
+                    hosts.firstOrNull { it.online }?.let { h ->
+                        _state.update { it.copy(selectedHostId = h.id) }
+                        startTelemetryPoll(h.id)
+                    }
+                } else {
+                    _state.value.selectedHostId?.let { startTelemetryPoll(it) }
+                }
             } catch (t: Throwable) {
                 _state.update { it.copy(loading = false, error = t.message ?: "refresh failed") }
             }
@@ -399,11 +453,13 @@ class RemotexViewModel(
     }
 
     private fun attachSocket(sid: String) {
+        socket?.close()
+        socketJob?.cancel()
         val sock = SessionSocket(relayUrl, _state.value.userToken, sid)
         socket = sock
-        socketJob?.cancel()
         socketJob = viewModelScope.launch {
             sock.events.collect { ev ->
+                if (socket !== sock) return@collect
                 when (ev) {
                     is SocketEvent.Frame -> handleFrame(ev.text)
                     is SocketEvent.Closed -> handleDropped(sid, "closed")
@@ -429,37 +485,33 @@ class RemotexViewModel(
     }
 
     /**
-     * Backoff reconnect: try 5× with 1s → 2s → 4s → 8s → 16s delays,
-     * then give up. Any frame received will clear the error banner.
+     * Capped exponential backoff with jitter. We keep trying until the user
+     * explicitly leaves the session; mobile networks often disappear for
+     * longer than a fixed retry budget.
      */
     private fun scheduleReconnect(sid: String) {
         reconnectJob?.cancel()
+        val attempt = reconnectAttempt
+        val base = min(30_000L, 1_000L shl min(attempt, 5))
+        val jitter = Random.nextLong(0, min(1_000L, base / 4) + 1)
+        val delayMs = base + jitter
+        reconnectAttempt = attempt + 1
+        _state.update {
+            it.copy(
+                status = Status.Disconnected,
+                error = "reconnecting in ${(delayMs + 999) / 1000}s…",
+            )
+        }
         reconnectJob = viewModelScope.launch {
-            val delays = listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L)
-            for ((attempt, d) in delays.withIndex()) {
-                if (userClosed) return@launch
-                delay(d)
-                if (userClosed) return@launch
-                _state.update {
-                    it.copy(
-                        status = Status.Connecting,
-                        error = "reconnecting (try ${attempt + 1}/${delays.size})…",
-                    )
-                }
-                attachSocket(sid)
-                // Wait briefly for attach / frames to arrive.
-                delay(2_000L)
-                if (_state.value.status == Status.Connected) {
-                    _state.update { it.copy(error = null) }
-                    return@launch
-                }
-            }
+            delay(delayMs)
+            if (userClosed) return@launch
             _state.update {
                 it.copy(
-                    status = Status.Error,
-                    error = "disconnected — tap to reload the thread",
+                    status = Status.Connecting,
+                    error = "reconnecting…",
                 )
             }
+            attachSocket(sid)
         }
     }
 
@@ -468,6 +520,9 @@ class RemotexViewModel(
         val sid = _state.value.session?.sessionId ?: return
         userClosed = false
         reconnectJob?.cancel()
+        reconnectJob = null
+        reconnectAttempt = 0
+        _state.update { it.copy(status = Status.Connecting, error = "reconnecting…") }
         attachSocket(sid)
     }
 
@@ -578,7 +633,8 @@ class RemotexViewModel(
         userClosed = true
         reconnectJob?.cancel()
         reconnectJob = null
-        socket?.close()
+        reconnectAttempt = 0
+        socket?.close(endSession = true)
         socket = null
         socketJob?.cancel()
         socketJob = null
@@ -602,7 +658,11 @@ class RemotexViewModel(
             return
         }
         when (msg.string("type")) {
-            "attached" -> _state.update { it.copy(status = Status.Connected) }
+            "attached" -> {
+                reconnectAttempt = 0
+                _state.update { it.copy(status = Status.Connected, error = null) }
+            }
+            "pong" -> Unit
             "session-closed" -> _state.update {
                 it.copy(status = Status.Disconnected, pending = false)
             }
@@ -612,6 +672,16 @@ class RemotexViewModel(
                 val data = ev["data"]?.jsonObject ?: JsonObject(emptyMap())
                 applyEvent(kind, data)
             }
+            "host-telemetry" -> {
+                val hostId = msg.string("host_id") ?: return
+                val rawData = msg["data"]?.jsonObject ?: return
+                val data = try {
+                    json.decodeFromJsonElement(HostTelemetryData.serializer(), rawData)
+                } catch (_: Throwable) {
+                    return
+                }
+                applyTelemetry(hostId, data)
+            }
             "error" -> _state.update {
                 it.copy(error = msg.string("error") ?: "relay error")
             }
@@ -620,14 +690,18 @@ class RemotexViewModel(
 
     private fun applyEvent(kind: String, data: JsonObject) {
         when (kind) {
-            "session-started" -> _state.update {
-                it.copy(
-                    status = Status.Connected,
-                    session = it.session?.copy(
-                        model = data.string("model") ?: it.session.model,
-                        cwd = data.string("cwd") ?: it.session.cwd,
-                    ),
-                )
+            "session-started" -> {
+                reconnectAttempt = 0
+                _state.update {
+                    it.copy(
+                        status = Status.Connected,
+                        error = null,
+                        session = it.session?.copy(
+                            model = data.string("model") ?: it.session.model,
+                            cwd = data.string("cwd") ?: it.session.cwd,
+                        ),
+                    )
+                }
             }
 
             "turn-started" -> {
@@ -763,6 +837,8 @@ class RemotexViewModel(
 
     override fun onCleared() {
         closeSession()
+        telemetryJob?.cancel()
+        telemetryJob = null
         super.onCleared()
     }
 

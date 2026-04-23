@@ -44,6 +44,12 @@ export class RelayClient {
     );
   }
 
+  getHostTelemetry(hostId) {
+    return this.#request(
+      `/api/hosts/${encodeURIComponent(hostId)}/telemetry`,
+    );
+  }
+
   openSession(hostId, { threadId = null, cwd = null } = {}) {
     const body = { host_id: hostId };
     if (threadId) body.thread_id = threadId;

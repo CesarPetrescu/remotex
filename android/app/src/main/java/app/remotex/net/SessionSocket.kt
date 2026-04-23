@@ -10,6 +10,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import java.util.concurrent.TimeUnit
 
 sealed interface SocketEvent {
     data class Frame(val text: String) : SocketEvent
@@ -26,7 +27,10 @@ class SessionSocket(
     baseUrl: String,
     userToken: String,
     sessionId: String,
-    http: OkHttpClient = OkHttpClient(),
+    http: OkHttpClient = OkHttpClient.Builder()
+        .pingInterval(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build(),
 ) {
     private val _events = MutableSharedFlow<SocketEvent>(
         replay = 0,
@@ -63,11 +67,14 @@ class SessionSocket(
         })
     }
 
-    fun sendJson(json: String) {
-        socket.send(json)
+    fun sendJson(json: String): Boolean {
+        return socket.send(json)
     }
 
-    fun close() {
+    fun close(endSession: Boolean = false) {
+        if (endSession) {
+            socket.send("""{"type":"session-close"}""")
+        }
         socket.close(1000, "client-closed")
     }
 }

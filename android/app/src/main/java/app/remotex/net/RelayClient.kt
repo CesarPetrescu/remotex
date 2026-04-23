@@ -3,6 +3,7 @@ package app.remotex.net
 import app.remotex.model.FsEntry
 import app.remotex.model.FsListResponse
 import app.remotex.model.Host
+import app.remotex.model.HostTelemetryResponse
 import app.remotex.model.HostsResponse
 import app.remotex.model.OpenSessionRequest
 import app.remotex.model.OpenSessionResponse
@@ -108,6 +109,22 @@ class RelayClient(
             check(resp.isSuccessful) { "readDirectory: ${resp.code} ${resp.message}" }
             val body = resp.body?.string().orEmpty()
             json.decodeFromString(FsListResponse.serializer(), body)
+        }
+    }
+
+    suspend fun getHostTelemetry(
+        userToken: String,
+        hostId: String,
+    ): HostTelemetryResponse = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$baseUrl/api/hosts/$hostId/telemetry")
+            .header("Authorization", "Bearer $userToken")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            check(resp.isSuccessful) { "getHostTelemetry: ${resp.code} ${resp.message}" }
+            val body = resp.body?.string().orEmpty()
+            json.decodeFromString(HostTelemetryResponse.serializer(), body)
         }
     }
 

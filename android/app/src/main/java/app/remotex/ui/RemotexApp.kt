@@ -14,10 +14,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -77,6 +81,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import app.remotex.model.FsEntry
 import app.remotex.model.Host
+import app.remotex.model.HostTelemetrySnapshot
 import app.remotex.model.SearchResult
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
@@ -298,46 +303,316 @@ private fun HostsScreen(
     @Suppress("UNUSED_PARAMETER") onModelChange: (String) -> Unit,
     @Suppress("UNUSED_PARAMETER") onEffortChange: (String) -> Unit,
 ) {
-    Column(
-        Modifier
+    val selectedHost = state.hosts.firstOrNull { it.id == state.selectedHostId }
+    val telemetry = state.selectedHostId?.let { state.hostTelemetry[it] }
+    LazyColumn(
+        modifier = Modifier
             .fillMaxSize()
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        TokenField(state.userToken, onTokenChange)
-        Button(
-            onClick = onRefresh,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = Ink,
-            ),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Refresh, contentDescription = null, tint = Ink)
-                Spacer(Modifier.width(8.dp))
-                Text(if (state.loading) "Loading…" else "Load hosts")
-            }
-        }
-        SectionLabel("Hosts")
-        if (state.hosts.isEmpty()) {
-            Text(
-                if (state.loading) "loading…" else "no hosts yet — tap Load hosts",
-                color = InkDim,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(16.dp),
-            )
-        } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+        item { TokenField(state.userToken, onTokenChange) }
+        item {
+            Button(
+                onClick = onRefresh,
                 modifier = Modifier.fillMaxWidth(),
+                shape = RectangleShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = Ink,
+                ),
             ) {
-                items(state.hosts, key = { it.id }) { h ->
-                    HostRow(h) { onHostTap(h) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, tint = Ink)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (state.loading) "Loading…" else "Load hosts")
                 }
             }
         }
+        item { TelemetryPanel(telemetry, selectedHost) }
+        item { SectionLabel("Hosts") }
+        if (state.hosts.isEmpty()) {
+            item {
+                Text(
+                    if (state.loading) "loading…" else "no hosts yet — tap Load hosts",
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+        } else {
+            items(state.hosts, key = { it.id }) { h ->
+                HostRow(h) { onHostTap(h) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TelemetryPanel(snapshot: HostTelemetrySnapshot?, selectedHost: Host?) {
+    val d = snapshot?.data
+    val live = snapshot != null &&
+        (System.currentTimeMillis() - snapshot.lastUpdateMs) < 10_000
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RectangleShape,
+        border = BorderStroke(1.dp, Line),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "SYSTEM TELEMETRY",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                    Text(
+                        selectedHost?.nickname ?: "no host selected",
+                        color = Ink,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(6.dp).background(if (live) Ok else Line))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (live) "Live" else if (selectedHost?.online == true) "Stale" else "Offline",
+                        color = if (live) Ok else InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "3s",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TelemetryCard(
+                    label = "CPU",
+                    main = if (d?.cpu?.percent != null) "${formatPct(d.cpu.percent)}%" else "—",
+                    sub = d?.cpu?.cores?.let { "$it cores" } ?: "",
+                    points = snapshot?.history?.cpu ?: emptyList(),
+                    max = 100f,
+                    color = Amber,
+                    modifier = Modifier.weight(1f),
+                )
+                TelemetryCard(
+                    label = "RAM",
+                    main = if (d?.memory?.percent != null) "${formatPct(d.memory.percent)}%" else "—",
+                    sub = d?.memory?.let { fmtMemoryShort(it.usedBytes, it.totalBytes) } ?: "",
+                    points = snapshot?.history?.mem ?: emptyList(),
+                    max = 100f,
+                    color = Color(0xFF60A5FA),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TelemetryCard(
+                    label = "GPU",
+                    main = when {
+                        d?.gpu?.percent != null -> "${formatPct(d.gpu.percent)}%"
+                        d?.gpu != null -> "—"
+                        else -> "n/a"
+                    },
+                    sub = d?.gpu?.name?.take(24) ?: (if (d?.gpu != null) "" else "no GPU"),
+                    points = snapshot?.history?.gpu ?: emptyList(),
+                    max = 100f,
+                    color = Ok,
+                    modifier = Modifier.weight(1f),
+                )
+                TelemetryCard(
+                    label = "NETWORK",
+                    main = "",
+                    mainRow = {
+                        Row {
+                            Text(
+                                "↑${fmtBps(d?.network?.upBps)}",
+                                color = Color(0xFFF472B6),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "↓${fmtBps(d?.network?.downBps)}",
+                                color = Color(0xFFA78BFA),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                            )
+                        }
+                    },
+                    sub = "",
+                    points = snapshot?.history?.down ?: emptyList(),
+                    secondaryPoints = snapshot?.history?.up ?: emptyList(),
+                    max = null,
+                    color = Color(0xFFA78BFA),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                TelemetryStat("Uptime", fmtUptime(d?.uptimeS))
+                TelemetryStat(
+                    "Load",
+                    d?.loadAvg?.joinToString(" ") { String.format("%.2f", it) } ?: "—",
+                )
+                TelemetryStat(
+                    "Temp",
+                    d?.cpu?.tempC?.let { "${it.toInt()}°C" } ?: "—",
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TelemetryCard(
+    label: String,
+    main: String,
+    sub: String,
+    points: List<Float>,
+    max: Float?,
+    color: Color,
+    modifier: Modifier = Modifier,
+    secondaryPoints: List<Float> = emptyList(),
+    mainRow: (@Composable () -> Unit)? = null,
+) {
+    Surface(
+        color = Color(0xFF121A2C),
+        shape = RectangleShape,
+        border = BorderStroke(1.dp, Line),
+        modifier = modifier,
+    ) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                label,
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+            )
+            if (mainRow != null) {
+                mainRow()
+            } else {
+                Text(
+                    main,
+                    color = Ink,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 18.sp,
+                )
+            }
+            if (sub.isNotEmpty()) {
+                Text(
+                    sub,
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Sparkline(
+                primary = points,
+                secondary = secondaryPoints,
+                primaryColor = color,
+                secondaryColor = Color(0xFFF472B6),
+                max = max,
+                modifier = Modifier.fillMaxWidth().height(28.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun Sparkline(
+    primary: List<Float>,
+    secondary: List<Float> = emptyList(),
+    primaryColor: Color,
+    secondaryColor: Color,
+    max: Float?,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val cap = max ?: listOf(primary.maxOrNull() ?: 0f, secondary.maxOrNull() ?: 0f, 1f).max()
+        fun path(samples: List<Float>): Path? {
+            if (samples.size < 2) return null
+            val step = w / (samples.size - 1).toFloat()
+            val p = Path()
+            samples.forEachIndexed { i, v ->
+                val x = i * step
+                val clamped = v.coerceIn(0f, cap)
+                val y = h - (clamped / cap) * (h - 2f) - 1f
+                if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+            }
+            return p
+        }
+        path(secondary)?.let { drawPath(it, secondaryColor, style = Stroke(width = 1.5f)) }
+        path(primary)?.let { drawPath(it, primaryColor, style = Stroke(width = 1.5f)) }
+    }
+}
+
+@Composable
+private fun TelemetryStat(label: String, value: String) {
+    Column {
+        Text(
+            label.uppercase(),
+            color = InkDim,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 9.sp,
+        )
+        Text(
+            value,
+            color = Ink,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+        )
+    }
+}
+
+private fun formatPct(p: Double): String =
+    if (p >= 10.0) p.toInt().toString() else String.format("%.1f", p)
+
+private fun fmtMemoryShort(used: Long?, total: Long?): String {
+    if (used == null || total == null) return ""
+    val gbU = used / 1024.0 / 1024.0 / 1024.0
+    val gbT = total / 1024.0 / 1024.0 / 1024.0
+    return String.format("%.1f / %.1f GB", gbU, gbT)
+}
+
+private fun fmtBps(bps: Long?): String {
+    val v = bps ?: 0L
+    return when {
+        v >= 1_000_000_000 -> String.format("%.1f Gbps", v / 1_000_000_000.0)
+        v >= 1_000_000 -> String.format("%.1f Mbps", v / 1_000_000.0)
+        v >= 1_000 -> String.format("%.1f kbps", v / 1_000.0)
+        else -> "$v bps"
+    }
+}
+
+private fun fmtUptime(s: Long?): String {
+    if (s == null || s <= 0) return "—"
+    val d = s / 86_400
+    val h = (s % 86_400) / 3_600
+    val m = (s % 3_600) / 60
+    return when {
+        d > 0 -> "${d}d ${h}h"
+        h > 0 -> "${h}h ${m}m"
+        else -> "${m}m"
     }
 }
 
