@@ -15,6 +15,7 @@ export function Composer({
   model,
   effort,
   permissions,
+  models,
   planMode,
   pendingImages,
   onModelChange,
@@ -70,8 +71,8 @@ export function Composer({
         </div>
       )}
       <div className="chip-row">
-        <ModelPicker value={model} onChange={onModelChange} />
-        <EffortPicker model={model} value={effort} onChange={onEffortChange} />
+        <ModelPicker value={model} models={models} onChange={onModelChange} />
+        <EffortPicker model={model} value={effort} models={models} onChange={onEffortChange} />
         <PermissionsPicker value={permissions} onChange={onPermissionsChange} />
       </div>
       {planMode && (

@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { RelayClient } from '../api/relayClient';
 import { SessionSocket } from '../api/sessionSocket';
-import { SCREENS, STATUS, effortsFor } from '../config';
+import { FALLBACK_MODEL_OPTIONS, SCREENS, STATUS, effortsFor } from '../config';
 import { parseSlash } from '../util/slash';
 import { parentPath } from '../util/path';
 import { buildUrl, parseUrl } from '../util/url';
@@ -64,6 +64,10 @@ const initialState = {
   //   lastUpdate: epoch_ms
   // }
   hostTelemetry: {},
+  // Model picker list is fetched from the relay's /api/models endpoint
+  // on first paint and replaces this fallback. See services/relay/models.py
+  // for the canonical source of truth.
+  modelOptions: FALLBACK_MODEL_OPTIONS,
 };
 
 const TELEMETRY_HISTORY_MAX = 60;
@@ -207,7 +211,9 @@ function reducer(state, action) {
       return {
         ...state,
         model: action.model,
-        effort: effortsFor(action.model).includes(state.effort) ? state.effort : '',
+        effort: effortsFor(action.model, state.modelOptions).includes(state.effort)
+          ? state.effort
+          : '',
       };
     case 'SET_EFFORT':
       return { ...state, effort: action.effort };
@@ -233,6 +239,9 @@ function reducer(state, action) {
       return { ...state, slashFeedback: action.text };
     case 'SET_PLAN':
       return { ...state, planMode: action.on };
+
+    case 'MODEL_OPTIONS':
+      return { ...state, modelOptions: action.options };
 
     case 'TELEMETRY': {
       const hostId = action.hostId;
@@ -583,6 +592,26 @@ export function useRemotex() {
   useEffect(() => {
     refreshHosts();
   }, [refreshHosts]);
+
+  // Fetch the canonical model list from the relay once on mount. The
+  // fallback constant in config.js stays in place if the fetch fails so
+  // the picker still renders something the user can pick from.
+  useEffect(() => {
+    let cancelled = false;
+    apiRef.current
+      .listModels()
+      .then((models) => {
+        if (!cancelled && Array.isArray(models) && models.length > 0) {
+          dispatch({ type: 'MODEL_OPTIONS', options: models });
+        }
+      })
+      .catch(() => {
+        // Silent: fallback list already in state.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Poll telemetry for whichever host is currently selected / online.
   // Push updates arrive over the session WS when a session is open; the

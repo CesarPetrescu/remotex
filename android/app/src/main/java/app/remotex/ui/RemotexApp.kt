@@ -1686,6 +1686,7 @@ private fun SessionScreen(
             permissions = state.permissions,
             planMode = state.planMode,
             pendingImages = state.pendingImages,
+            modelOptions = state.modelOptions,
             onModelChange = onModelChange,
             onEffortChange = onEffortChange,
             onPermissionsChange = onPermissionsChange,
@@ -2099,6 +2100,7 @@ private fun ComposerBar(
     permissions: PermissionsMode,
     planMode: Boolean,
     pendingImages: List<PendingImage>,
+    modelOptions: List<ModelOption>,
     onModelChange: (String) -> Unit,
     onEffortChange: (String) -> Unit,
     onPermissionsChange: (PermissionsMode) -> Unit,
@@ -2159,12 +2161,14 @@ private fun ComposerBar(
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CompactModelPicker(
                     selected = model,
+                    options = modelOptions,
                     onSelect = onModelChange,
                     modifier = Modifier.weight(1f),
                 )
                 CompactEffortPicker(
                     model = model,
                     selected = effort,
+                    options = modelOptions,
                     onSelect = onEffortChange,
                     modifier = Modifier.weight(1f),
                 )
@@ -2283,11 +2287,13 @@ private fun SendOrStopButton(
 @Composable
 private fun CompactModelPicker(
     selected: String,
+    options: List<ModelOption>,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val current = MODEL_OPTIONS.firstOrNull { it.id == selected } ?: MODEL_OPTIONS.first()
+    val list = if (options.isNotEmpty()) options else MODEL_OPTIONS
+    val current = list.firstOrNull { it.id == selected } ?: list.first()
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RectangleShape,
@@ -2323,7 +2329,7 @@ private fun CompactModelPicker(
             shadowElevation = 0.dp,
             border = BorderStroke(1.dp, Line),
         ) {
-            MODEL_OPTIONS.forEach { opt ->
+            list.forEach { opt ->
                 DropdownMenuItem(
                     text = {
                         Column {
@@ -2404,12 +2410,13 @@ private fun CompactPermissionsPicker(
 private fun CompactEffortPicker(
     model: String,
     selected: String,
+    options: List<ModelOption>,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val options = effortsFor(model)
-    val effectiveSelected = if (selected in options) selected else ""
+    val efforts = effortsFor(model, options)
+    val effectiveSelected = if (selected in efforts) selected else ""
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RectangleShape,
@@ -2445,7 +2452,7 @@ private fun CompactEffortPicker(
             shadowElevation = 0.dp,
             border = BorderStroke(1.dp, Line),
         ) {
-            options.forEach { opt ->
+            efforts.forEach { opt ->
                 DropdownMenuItem(
                     text = {
                         Text(

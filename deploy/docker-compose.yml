@@ -30,6 +30,8 @@ services:
     environment:
       TZ: ${TZ:-Etc/UTC}
       RELAY_CLIENT_RECONNECT_GRACE_SECONDS: ${RELAY_CLIENT_RECONNECT_GRACE_SECONDS:-75}
+      # Inventory + search both live in the pgvector container.
+      RELAY_DATABASE_URL: postgresql://${SEARCH_POSTGRES_USER:-remotex}:${SEARCH_POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${SEARCH_POSTGRES_DB:-remotex}
       SEARCH_DATABASE_URL: postgresql://${SEARCH_POSTGRES_USER:-remotex}:${SEARCH_POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${SEARCH_POSTGRES_DB:-remotex}
       EMBEDDING_API_BASE_URL: ${EMBEDDING_API_BASE_URL:-}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
@@ -50,8 +52,6 @@ services:
       CHAT_TITLE_ENABLED: ${CHAT_TITLE_ENABLED:-1}
       CHAT_TITLE_MAX_INPUT_TOKENS: ${CHAT_TITLE_MAX_INPUT_TOKENS:-12000}
       CHAT_TITLE_MAX_ATTEMPTS: ${CHAT_TITLE_MAX_ATTEMPTS:-8}
-    volumes:
-      - relay-data:/data
     ports:
       # Bind to localhost only by default; front with Caddy (profile `tls`)
       # or your own reverse proxy for anything public. Override the host
@@ -85,7 +85,6 @@ services:
       - remotex
 
 volumes:
-  relay-data:
   search-data:
   caddy-data:
   caddy-config:

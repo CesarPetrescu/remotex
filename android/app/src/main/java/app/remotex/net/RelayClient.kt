@@ -5,6 +5,8 @@ import app.remotex.model.FsListResponse
 import app.remotex.model.Host
 import app.remotex.model.HostTelemetryResponse
 import app.remotex.model.HostsResponse
+import app.remotex.model.ModelInfo
+import app.remotex.model.ModelsResponse
 import app.remotex.model.OpenSessionRequest
 import app.remotex.model.OpenSessionResponse
 import app.remotex.model.SearchResponse
@@ -29,6 +31,19 @@ class RelayClient(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val jsonMedia = "application/json".toMediaType()
+
+    /** GET /api/models — relay-provided model picker list. Unauthenticated. */
+    suspend fun listModels(): List<ModelInfo> = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$baseUrl/api/models")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            check(resp.isSuccessful) { "listModels: ${resp.code} ${resp.message}" }
+            val body = resp.body?.string().orEmpty()
+            json.decodeFromString(ModelsResponse.serializer(), body).models
+        }
+    }
 
     suspend fun listHosts(userToken: String): List<Host> = withContext(Dispatchers.IO) {
         val req = Request.Builder()

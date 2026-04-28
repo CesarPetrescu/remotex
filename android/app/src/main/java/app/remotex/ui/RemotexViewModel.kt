@@ -88,7 +88,7 @@ data class UiState(
     val events: List<UiEvent> = emptyList(),
     val pending: Boolean = false,
     val error: String? = null,
-    val model: String = "",          // empty → codex default (gpt-5.4 at time of writing)
+    val model: String = "",          // empty → codex default (gpt-5.5 at time of writing)
     val effort: String = "medium",   // none/minimal/low/medium/high/xhigh
     val threads: List<ThreadInfo> = emptyList(),
     val threadsLoading: Boolean = false,
@@ -104,6 +104,9 @@ data class UiState(
     val slashFeedback: String? = null,
     val planMode: Boolean = false,   // true after /plan, cleared on /default
     val hostTelemetry: Map<String, HostTelemetrySnapshot> = emptyMap(),
+    // Picker list. Falls back to the embedded MODEL_OPTIONS list below
+    // until GET /api/models replaces it on first load.
+    val modelOptions: List<ModelOption> = MODEL_OPTIONS,
 )
 
 /**
@@ -128,7 +131,9 @@ data class ModelOption(
 
 val MODEL_OPTIONS = listOf(
     ModelOption("", "default", "codex picks", ALL_EFFORTS),
-    ModelOption("gpt-5.4", "gpt-5.4", "latest frontier (default)",
+    ModelOption("gpt-5.5", "gpt-5.5", "newest frontier",
+        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
+    ModelOption("gpt-5.4", "gpt-5.4", "frontier",
         listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
     ModelOption("gpt-5.4-mini", "gpt-5.4 · mini", "smaller frontier",
         listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
@@ -147,8 +152,8 @@ val MODEL_OPTIONS = listOf(
 )
 
 /** Effort list the UI should show given the currently-picked model. */
-fun effortsFor(modelId: String): List<String> =
-    MODEL_OPTIONS.firstOrNull { it.id == modelId }?.efforts ?: ALL_EFFORTS
+fun effortsFor(modelId: String, options: List<ModelOption> = MODEL_OPTIONS): List<String> =
+    options.firstOrNull { it.id == modelId }?.efforts ?: ALL_EFFORTS
 
 class RemotexViewModel(
     application: Application,
@@ -171,9 +176,33 @@ class RemotexViewModel(
         _state.update { it.copy(userToken = token) }
     }
 
+    init {
+        // Fetch the canonical model list from the relay once. Failure is
+        // silent — the embedded fallback in MODEL_OPTIONS keeps the picker
+        // populated.
+        viewModelScope.launch {
+            try {
+                val remote = client.listModels()
+                if (remote.isNotEmpty()) {
+                    val converted = remote.map {
+                        ModelOption(
+                            id = it.id,
+                            label = it.label,
+                            hint = it.hint,
+                            efforts = if (it.efforts.isEmpty()) ALL_EFFORTS else it.efforts,
+                        )
+                    }
+                    _state.update { it.copy(modelOptions = converted) }
+                }
+            } catch (_: Throwable) {
+                // Keep fallback list; not fatal.
+            }
+        }
+    }
+
     fun setModel(model: String) {
         _state.update {
-            val supported = effortsFor(model)
+            val supported = effortsFor(model, it.modelOptions)
             val nextEffort = if (it.effort in supported) it.effort else EFFORT_DEFAULT
             it.copy(model = model, effort = nextEffort)
         }

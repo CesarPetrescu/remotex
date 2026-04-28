@@ -39,6 +39,7 @@ export function SessionScreen({
         model={state.model}
         effort={state.effort}
         permissions={state.permissions}
+        models={state.modelOptions}
         planMode={state.planMode}
         pendingImages={state.pendingImages}
         onModelChange={onModelChange}

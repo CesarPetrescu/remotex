@@ -1,7 +1,11 @@
 // Shared constants: screens, session status, and the option lists for
-// the model / reasoning effort / permissions pickers. These are the
-// single source of truth the Android app uses too (in Kotlin) — kept in
-// sync here so the two clients always show the same choices.
+// the model / reasoning effort / permissions pickers.
+//
+// MODEL_OPTIONS is now a fallback only. The relay serves the canonical
+// list at GET /api/models; useRemotex fetches it on first paint and
+// cached the result in state. When the fetch fails (offline / ancient
+// relay), the embedded array below is used. Bumping a model now means
+// editing services/relay/models.py — no client edit needed.
 
 export const SCREENS = {
   Hosts: 'hosts',
@@ -29,11 +33,14 @@ export const PERMISSIONS = [
 export const EFFORT_DEFAULT = '';
 export const ALL_EFFORTS = [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'];
 
-// Models visible in `codex 0.122.0`. Effort list is per-model so
-// `gpt-5.1-codex-mini` only shows medium/high (what codex accepts).
-export const MODEL_OPTIONS = [
+// Fallback model list. Used only when GET /api/models fails. Keep it in
+// sync with services/relay/models.py — it is the literal copy that ships
+// for offline use.
+export const FALLBACK_MODEL_OPTIONS = [
   { id: '', label: 'default', hint: 'codex picks', efforts: ALL_EFFORTS },
-  { id: 'gpt-5.4', label: 'gpt-5.4', hint: 'latest frontier (default)',
+  { id: 'gpt-5.5', label: 'gpt-5.5', hint: 'newest frontier',
+    efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.4', label: 'gpt-5.4', hint: 'frontier',
     efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
   { id: 'gpt-5.4-mini', label: 'gpt-5.4 · mini', hint: 'smaller frontier',
     efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
@@ -51,6 +58,11 @@ export const MODEL_OPTIONS = [
     efforts: [EFFORT_DEFAULT, 'medium', 'high'] },
 ];
 
-export function effortsFor(modelId) {
-  return MODEL_OPTIONS.find((m) => m.id === modelId)?.efforts ?? ALL_EFFORTS;
+// Backwards-compatible name. Existing imports continue to work; the
+// list resolves to the fallback until the relay's response replaces
+// it via setModelOptions() from useRemotex.
+export const MODEL_OPTIONS = FALLBACK_MODEL_OPTIONS;
+
+export function effortsFor(modelId, modelOptions = MODEL_OPTIONS) {
+  return modelOptions.find((m) => m.id === modelId)?.efforts ?? ALL_EFFORTS;
 }

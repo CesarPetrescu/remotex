@@ -31,6 +31,18 @@ export class RelayClient {
     return this.#request('/api/hosts').then((r) => r.hosts);
   }
 
+  // GET /api/models: relay-provided list of {id, label, hint, efforts}.
+  // Unauthenticated — the model list is the same for every user, and
+  // the relay needs to serve it before the user has a token.
+  listModels() {
+    return fetch('/api/models')
+      .then((res) => {
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.json();
+      })
+      .then((r) => r.models);
+  }
+
   listThreads(hostId, limit = 25) {
     return this.#request(
       `/api/hosts/${encodeURIComponent(hostId)}/threads?limit=${limit}`,

@@ -1,9 +1,16 @@
 """End-to-end test.
 
-Spins up the relay in-process, starts the daemon in-process (mock
-adapter), then plays the role of a web client: lists hosts, opens a
-session, sends a turn, and asserts the streamed events arrive in the
-expected order.
+Spins up the relay in-process against a real Postgres (the inventory
+store now requires it), starts the daemon in-process (mock adapter),
+then plays the role of a web client: lists hosts, opens a session,
+sends a turn, and asserts the streamed events arrive in the expected
+order.
+
+Set ``E2E_DATABASE_URL`` (or ``SEARCH_DATABASE_URL``) to a Postgres
+instance the test can write to. The test creates ``inventory_*`` tables
+on first run; pgvector and ``search_*`` tables are created lazily by
+the search service if the URL points at a pgvector image, but the e2e
+test only exercises inventory + routing.
 
 Run: python3 scripts/e2e_test.py
 """
@@ -14,7 +21,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 import aiohttp
@@ -25,7 +31,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from daemon.client import DaemonClient  # noqa: E402
 from daemon.config import Config  # noqa: E402
-from relay.app import DEMO_BRIDGE_TOKEN, DEMO_USER_TOKEN, make_app  # noqa: E402
+from relay.app import make_app  # noqa: E402
+from relay.store import DEMO_BRIDGE_TOKEN, DEMO_USER_TOKEN  # noqa: E402
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -42,12 +49,34 @@ async def wait_until(predicate, timeout: float = 5.0, interval: float = 0.1) -> 
     return False
 
 
+async def _reset_inventory(database_url: str) -> None:
+    """Drop inventory tables so each run starts clean. Only touches our
+    tables, never the search_* siblings."""
+    import asyncpg  # type: ignore[import-not-found]
+    conn = await asyncpg.connect(dsn=database_url)
+    try:
+        await conn.execute(
+            "DROP TABLE IF EXISTS inventory_sessions, inventory_bridge_keys, "
+            "inventory_hosts, inventory_users CASCADE"
+        )
+    finally:
+        await conn.close()
+
+
 async def run_test() -> int:
-    tmp = tempfile.TemporaryDirectory()
-    db_path = os.path.join(tmp.name, "relay.db")
+    database_url = os.getenv("E2E_DATABASE_URL") or os.getenv("SEARCH_DATABASE_URL")
+    if not database_url:
+        log.error(
+            "set E2E_DATABASE_URL or SEARCH_DATABASE_URL to a writable Postgres DSN; "
+            "e.g. postgres://remotex:remotex-search@127.0.0.1:5432/remotex"
+        )
+        return 2
+
+    await _reset_inventory(database_url)
+
     web_root = PROJECT_ROOT / "web"
 
-    app = make_app(db_path, web_root)
+    app = make_app(database_url, web_root)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -79,6 +108,14 @@ async def run_test() -> int:
 
         async with aiohttp.ClientSession() as http:
             headers = {"Authorization": f"Bearer {DEMO_USER_TOKEN}"}
+
+            # Smoke-test the new /api/models endpoint.
+            async with http.get(f"{base}/api/models") as resp:
+                assert resp.status == 200, f"models: {resp.status}"
+                models = (await resp.json())["models"]
+                assert any(m["id"] == "" for m in models), "models list missing default"
+                log.info("/api/models returned %d entries", len(models))
+
             async with http.get(f"{base}/api/hosts", headers=headers) as resp:
                 assert resp.status == 200, f"list hosts: {resp.status}"
                 hosts = (await resp.json())["hosts"]
@@ -144,7 +181,6 @@ async def run_test() -> int:
         except (asyncio.CancelledError, Exception):
             pass
         await runner.cleanup()
-        tmp.cleanup()
 
     print("\nE2E: OK — full flow exercised relay <-> daemon <-> client\n")
     return 0

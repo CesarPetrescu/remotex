@@ -46,10 +46,15 @@ export function DashboardHeader({
 
       <div className="dashboard-header-right">
         <HeaderPicker label="Model">
-          <ModelPicker value={state.model} onChange={onModelChange} />
+          <ModelPicker value={state.model} models={state.modelOptions} onChange={onModelChange} />
         </HeaderPicker>
         <HeaderPicker label="Effort">
-          <EffortPicker model={state.model} value={state.effort} onChange={onEffortChange} />
+          <EffortPicker
+            model={state.model}
+            value={state.effort}
+            models={state.modelOptions}
+            onChange={onEffortChange}
+          />
         </HeaderPicker>
         <HeaderPicker label="Perms">
           <PermissionsPicker value={state.permissions} onChange={onPermissionsChange} />

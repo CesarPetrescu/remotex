@@ -5,13 +5,14 @@ import { MODEL_OPTIONS, PERMISSIONS, effortsFor } from '../config';
 // the same ChipDropdown primitive so the popup styling stays
 // consistent with the rest of the boxy UI.
 
-export function ModelPicker({ value, onChange }) {
-  const current = MODEL_OPTIONS.find((m) => m.id === value) || MODEL_OPTIONS[0];
+export function ModelPicker({ value, onChange, models }) {
+  const list = models && models.length > 0 ? models : MODEL_OPTIONS;
+  const current = list.find((m) => m.id === value) || list[0];
   return (
     <ChipDropdown
       label="model"
       value={current.label}
-      items={MODEL_OPTIONS}
+      items={list}
       renderItem={(opt) => (
         <div>
           <div className="dd-line">{opt.label}</div>
@@ -23,8 +24,8 @@ export function ModelPicker({ value, onChange }) {
   );
 }
 
-export function EffortPicker({ model, value, onChange }) {
-  const options = effortsFor(model);
+export function EffortPicker({ model, value, onChange, models }) {
+  const options = effortsFor(model, models && models.length > 0 ? models : MODEL_OPTIONS);
   const display = options.includes(value) ? value : '';
   return (
     <ChipDropdown
