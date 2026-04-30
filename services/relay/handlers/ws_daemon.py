@@ -97,6 +97,18 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 # daemon's event loop stall behind it.
                 await hub.forward_to_client(sid, frame)
                 session = await store.session_info(sid)
+                # Track turn lifecycle + per-session activity so the
+                # client-grace loop knows whether a session is idle or
+                # actively producing output. Any daemon frame counts as
+                # activity; turn-started/completed flip the in-flight bit.
+                if ftype == "session-event":
+                    hub.bump_activity(sid)
+                    event = frame.get("event") or {}
+                    kind = event.get("kind")
+                    if kind == "turn-started":
+                        hub.mark_turn_started(sid)
+                    elif kind in ("turn-completed", "session-closed"):
+                        hub.mark_turn_completed(sid)
                 if session and ftype == "session-event" and _search_should_capture(frame):
                     request.app["search"].capture_session_event(session, frame)
                     event = frame.get("event") or {}
@@ -107,6 +119,12 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                             thread_id=data.get("thread_id"),
                             cwd=data.get("cwd"),
                         )
+                        # Index this session under (host, thread) so a
+                        # client tapping the same thread later can rejoin
+                        # an in-flight turn instead of starting a new one.
+                        thread_id = data.get("thread_id")
+                        if thread_id:
+                            await hub.remember_session_thread(sid, host_id, thread_id)
                 if ftype == "session-closed":
                     await store.close_session(sid)
                     await hub.forget_session(sid)

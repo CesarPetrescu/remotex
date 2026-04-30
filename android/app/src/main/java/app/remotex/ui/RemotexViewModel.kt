@@ -108,6 +108,12 @@ data class UiState(
     // obvious the app isn't hung.
     val resuming: Boolean = false,
     val resumingSinceMs: Long = 0L,
+    // Cumulative token usage for this session. Updated when the daemon
+    // forwards a thread/tokenUsage/updated frame. Reset on session open.
+    val tokensInput: Long = 0L,
+    val tokensOutput: Long = 0L,
+    val tokensCached: Long = 0L,
+    val tokensReasoning: Long = 0L,
     val hostTelemetry: Map<String, HostTelemetrySnapshot> = emptyMap(),
     // Picker list. Falls back to the embedded MODEL_OPTIONS list below
     // until GET /api/models replaces it on first load.
@@ -476,6 +482,10 @@ class RemotexViewModel(
                 pendingImages = emptyList(),
                 resuming = false,
                 resumingSinceMs = 0L,
+                tokensInput = 0L,
+                tokensOutput = 0L,
+                tokensCached = 0L,
+                tokensReasoning = 0L,
             )
         }
         viewModelScope.launch {
@@ -887,6 +897,20 @@ class RemotexViewModel(
 
             "history-begin", "history-end" -> {
                 // informational markers — consumers can render a divider later
+            }
+
+            "token-usage" -> {
+                // Daemon flattens codex's payload to top-level fields.
+                fun pickLong(key: String): Long? =
+                    data[key]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                _state.update {
+                    it.copy(
+                        tokensInput     = pickLong("input")            ?: it.tokensInput,
+                        tokensOutput    = pickLong("output")           ?: it.tokensOutput,
+                        tokensCached    = pickLong("cached_input")     ?: it.tokensCached,
+                        tokensReasoning = pickLong("reasoning_output") ?: it.tokensReasoning,
+                    )
+                }
             }
 
             "approval-request" -> {

@@ -3,6 +3,13 @@ import { Composer } from '../components/Composer';
 import { ResumingBanner } from '../components/ResumingBanner';
 import { STATUS } from '../config';
 
+function formatK(n) {
+  if (n < 1000) return String(n);
+  if (n < 100000) return (n / 1000).toFixed(1) + 'K';
+  if (n < 1000000) return Math.round(n / 1000) + 'K';
+  return (n / 1000000).toFixed(1) + 'M';
+}
+
 export function SessionScreen({
   state,
   onSend,
@@ -23,10 +30,21 @@ export function SessionScreen({
       ]
         .filter(Boolean)
         .join(' · ');
+  const totalIn = state.tokensInput + state.tokensCached;
+  const totalOut = state.tokensOutput + state.tokensReasoning;
+  const haveTokens = totalIn > 0 || totalOut > 0;
 
   return (
     <div className="screen session-screen">
-      <div className="meta">{meta}</div>
+      <div className="meta">
+        <span className="meta-text">{meta}</span>
+        {haveTokens && (
+          <span className="token-chip" title={`input ${state.tokensInput} (+${state.tokensCached} cached) · output ${state.tokensOutput} (+${state.tokensReasoning} reasoning)`}>
+            🪙 <span className="token-up">{formatK(totalIn)}↑</span>{' '}
+            <span className="token-down">{formatK(totalOut)}↓</span>
+          </span>
+        )}
+      </div>
       {state.resuming && <ResumingBanner sinceMs={state.resumingSinceMs} />}
       <EventStream
         events={state.events}

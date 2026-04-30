@@ -754,6 +754,25 @@ class StdioCodexAdapter(SessionAdapter):
             status = params.get("status")
             if status:
                 await self._queue.put(SessionEvent("thread-status", {"status": status}))
+        elif method == "thread/tokenUsage/updated":
+            # Codex's payload (codex 0.128) nests as:
+            #   {threadId, turnId, tokenUsage:{total:{...}, last:{...}, modelContextWindow}}
+            # Flatten `total` into a stable shape clients can render
+            # directly. Keep raw_total for forward-compat in case codex
+            # adds new fields like cache_creation_tokens.
+            usage = params.get("tokenUsage") or {}
+            total = usage.get("total") or {}
+            await self._queue.put(SessionEvent("token-usage", {
+                "thread_id": params.get("threadId"),
+                "turn_id": params.get("turnId"),
+                "input": total.get("inputTokens", 0),
+                "output": total.get("outputTokens", 0),
+                "cached_input": total.get("cachedInputTokens", 0),
+                "reasoning_output": total.get("reasoningOutputTokens", 0),
+                "total": total.get("totalTokens", 0),
+                "context_window": usage.get("modelContextWindow"),
+                "raw_total": total,
+            }))
         else:
-            # Drop mcpServer/*, account/*, thread/tokenUsage/*, etc.
+            # Drop mcpServer/*, account/*, etc.
             log.debug("ignored codex notification: %s", method)

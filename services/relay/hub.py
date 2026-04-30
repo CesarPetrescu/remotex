@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from aiohttp import web
 
@@ -59,6 +60,21 @@ class Hub:
         self.pending_admin: dict[str, asyncio.Future] = {}
         # Latest telemetry snapshot per host (with relay-side receive ts)
         self.host_telemetry: dict[str, dict] = {}
+        # session_id → True while a turn is running on the daemon side.
+        # Updated by ws_daemon as it forwards turn-started / turn-completed.
+        self.turn_in_flight: dict[str, bool] = {}
+        # session_id → time.monotonic() of last activity (any daemon frame
+        # or any client frame). Lets the grace loop distinguish "idle" from
+        # "actively producing output" — so a long-running turn that's
+        # streaming events stays alive past the soft 75s reconnect grace.
+        self.session_activity: dict[str, float] = {}
+        # (host_id, thread_id) → session_id, for "is there already a
+        # session in flight for this thread?" lookup. The session stays
+        # in this index until forget_session() is called.
+        self.thread_session_index: dict[tuple[str, str], str] = {}
+        # session_id → (host_id, thread_id) reverse so forget_session can
+        # clean up the index efficiently.
+        self.session_thread: dict[str, tuple[str, str]] = {}
 
     async def attach_daemon(self, host_id: str, ws: web.WebSocketResponse) -> web.WebSocketResponse | None:
         async with self._lock:
@@ -177,5 +193,53 @@ class Hub:
             self.session_host.pop(session_id, None)
             self.session_open_frames.pop(session_id, None)
             close_task = self.client_close_tasks.pop(session_id, None)
+            self.turn_in_flight.pop(session_id, None)
+            self.session_activity.pop(session_id, None)
+            key = self.session_thread.pop(session_id, None)
+            if key is not None:
+                # Only drop the index entry if it still points at us;
+                # a fresh session for the same thread may have replaced it.
+                if self.thread_session_index.get(key) == session_id:
+                    self.thread_session_index.pop(key, None)
         if close_task and close_task is not current:
             close_task.cancel()
+
+    def bump_activity(self, session_id: str) -> None:
+        """Record that something happened on this session (daemon frame
+        or client frame). Used by the grace loop to keep long-running
+        turns alive while they're actively producing output."""
+        self.session_activity[session_id] = time.monotonic()
+
+    def mark_turn_started(self, session_id: str) -> None:
+        self.turn_in_flight[session_id] = True
+        self.bump_activity(session_id)
+
+    def mark_turn_completed(self, session_id: str) -> None:
+        self.turn_in_flight[session_id] = False
+        self.bump_activity(session_id)
+
+    async def remember_session_thread(
+        self,
+        session_id: str,
+        host_id: str,
+        thread_id: str,
+    ) -> None:
+        """Register that this session is hosting a particular codex thread.
+        The (host, thread) → session reverse index lets a reattaching client
+        find the existing in-flight session instead of starting a new one."""
+        async with self._lock:
+            key = (host_id, thread_id)
+            self.session_thread[session_id] = key
+            self.thread_session_index[key] = session_id
+
+    def active_session_for_thread(self, host_id: str, thread_id: str) -> str | None:
+        """Return the live session_id hosting (host, thread), if any."""
+        sid = self.thread_session_index.get((host_id, thread_id))
+        if sid is None:
+            return None
+        # Sanity: it must still be tracked. (forget_session cleans up the
+        # index, but we double-check in case of races.)
+        if sid not in self.session_host:
+            self.thread_session_index.pop((host_id, thread_id), None)
+            return None
+        return sid

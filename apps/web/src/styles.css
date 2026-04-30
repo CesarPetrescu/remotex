@@ -2738,3 +2738,14 @@ main.screen-host {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+.meta { display: flex; align-items: center; gap: 12px; }
+.meta .meta-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.token-chip .token-up   { color: var(--ink); }
+.token-chip .token-down { color: var(--amber); }

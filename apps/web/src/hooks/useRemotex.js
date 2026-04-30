@@ -59,6 +59,12 @@ const initialState = {
   // Codex can take a minute+ to re-hydrate big rollouts; surfaced as a banner.
   resuming: false,
   resumingSinceMs: 0,
+  // Cumulative codex token totals for the current session. Updated when
+  // the daemon forwards thread/tokenUsage/updated; reset on SESSION_RESET.
+  tokensInput: 0,
+  tokensOutput: 0,
+  tokensCached: 0,
+  tokensReasoning: 0,
   error: null,
   // hostTelemetry[hostId] = {
   //   current: { cpu:{percent,cores,temp_c}, memory:{used_bytes,total_bytes,percent},
@@ -180,7 +186,19 @@ function reducer(state, action) {
         planMode: false,
         resuming: false,
         resumingSinceMs: 0,
+        tokensInput: 0,
+        tokensOutput: 0,
+        tokensCached: 0,
+        tokensReasoning: 0,
         status: action.status ?? STATUS.Idle,
+      };
+    case 'TOKEN_USAGE':
+      return {
+        ...state,
+        tokensInput:     action.input     ?? state.tokensInput,
+        tokensOutput:    action.output    ?? state.tokensOutput,
+        tokensCached:    action.cached    ?? state.tokensCached,
+        tokensReasoning: action.reasoning ?? state.tokensReasoning,
       };
     case 'RESUMING_START':
       return { ...state, resuming: true, resumingSinceMs: action.sinceMs };
@@ -470,6 +488,24 @@ export function useRemotex() {
           dispatch({ type: 'PENDING', pending: false });
         }
         return;
+      case 'token-usage': {
+        // Daemon already flattened codex's nested payload; just pull the
+        // top-level counters and dispatch. Null leaves the prior value alone.
+        const num = (k) => {
+          const v = data[k];
+          if (typeof v === 'number') return v;
+          if (typeof v === 'string' && /^\d+$/.test(v)) return parseInt(v, 10);
+          return null;
+        };
+        dispatch({
+          type: 'TOKEN_USAGE',
+          input:     num('input'),
+          output:    num('output'),
+          cached:    num('cached_input'),
+          reasoning: num('reasoning_output'),
+        });
+        return;
+      }
       case 'turn-started':
       case 'history-begin':
       case 'history-end':

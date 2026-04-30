@@ -11,7 +11,12 @@ from ..store import Store
 async def open_session(request: web.Request) -> web.Response:
     """Reserve a session id. The daemon is not notified until the client
     attaches via /ws/client — otherwise the session-started event would be
-    emitted into the void before the client could observe it."""
+    emitted into the void before the client could observe it.
+
+    If a session is already in flight for this (host, thread), return its
+    id so the caller reattaches rather than spawning a parallel codex.
+    Lets the user disconnect mid-turn (phone sleep, browser close) and
+    rejoin the same in-flight session by tapping the same thread again."""
     user = await require_user(request)
     body = await request.json()
     host_id = body.get("host_id")
@@ -23,6 +28,16 @@ async def open_session(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(reason="host not found")
     if hub.daemon_for(host_id) is None:
         raise web.HTTPBadGateway(reason="host offline")
+    if resume_thread_id:
+        existing = hub.active_session_for_thread(host_id, resume_thread_id)
+        if existing:
+            return web.json_response({
+                "session_id": existing,
+                "host_id": host_id,
+                "thread_id": resume_thread_id,
+                "cwd": cwd,
+                "reused": True,
+            })
     sid = await store.open_session(host_id, user["token"])
     session = await store.session_info(sid)
     if session:

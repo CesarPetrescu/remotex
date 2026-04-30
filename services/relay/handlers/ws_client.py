@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 
 from aiohttp import WSMsgType, web
 
@@ -23,8 +24,19 @@ from ..store import Store
 
 log = logging.getLogger("relay.ws.client")
 
+# Idle sessions (no client AND no recent daemon activity) close after
+# this many seconds. Keeps the soft "phone went to sleep" reconnect
+# window short.
 CLIENT_RECONNECT_GRACE_SECONDS = float(
     os.getenv("RELAY_CLIENT_RECONNECT_GRACE_SECONDS", "75")
+)
+# Hard ceiling: even a session with a turn nominally in flight gets
+# killed after this many seconds of no activity (no daemon frames at
+# all). Set high enough that real long runs (hours) survive natural
+# pauses; default 2h. Pegged to *last activity*, not to turn start —
+# so a job that's still emitting events keeps living.
+SESSION_STALL_CEILING_SECONDS = float(
+    os.getenv("RELAY_SESSION_STALL_CEILING_SECONDS", str(2 * 3600))
 )
 
 
@@ -52,24 +64,69 @@ async def _schedule_backend_close(
     host_id: str,
     session_id: str,
 ) -> None:
-    hub: Hub = app["hub"]
+    """Spin up a background watchdog that decides when (if ever) to close
+    a session whose client has gone away. Two competing rules:
 
-    async def delayed_close() -> None:
+      1. If the session is idle (no turn in flight) and the client has
+         been gone for CLIENT_RECONNECT_GRACE_SECONDS without any daemon
+         activity, close it. This is the "phone went to sleep, never came
+         back" case.
+
+      2. If the session has a turn in flight, keep it alive as long as the
+         daemon keeps emitting frames. Only close after
+         SESSION_STALL_CEILING_SECONDS of complete silence — the run is
+         either hung or the agent is genuinely thinking for hours, and
+         either way someone needs to reattach to do anything about it.
+
+    Activity is updated by ws_daemon every time a frame for this session
+    arrives from the daemon (turn deltas, item completions, etc.).
+    """
+    hub: Hub = app["hub"]
+    poll_interval = 5.0
+    # Seed the activity timestamp so a session that disconnects before
+    # any daemon frame still gets the soft grace before being reaped.
+    hub.session_activity.setdefault(session_id, time.monotonic())
+
+    async def watchdog() -> None:
         try:
-            await asyncio.sleep(CLIENT_RECONNECT_GRACE_SECONDS)
-            if hub.client_for(session_id) is not None:
-                return
+            while True:
+                await asyncio.sleep(poll_interval)
+                if hub.client_for(session_id) is not None:
+                    # Client reattached — let detach_client schedule a
+                    # fresh watchdog if it leaves again.
+                    return
+                last = hub.session_activity.get(session_id, time.monotonic())
+                silent_for = time.monotonic() - last
+                turn_active = hub.turn_in_flight.get(session_id, False)
+                if turn_active:
+                    if silent_for >= SESSION_STALL_CEILING_SECONDS:
+                        log.warning(
+                            "session stalled with turn in flight, killing",
+                            extra={
+                                "session_id": session_id,
+                                "silent_s": int(silent_for),
+                            },
+                        )
+                        break
+                    # Otherwise keep the session alive — daemon is still
+                    # producing output even though no client is watching.
+                    continue
+                if silent_for >= CLIENT_RECONNECT_GRACE_SECONDS:
+                    log.info(
+                        "session closed after grace",
+                        extra={
+                            "session_id": session_id,
+                            "grace_s": CLIENT_RECONNECT_GRACE_SECONDS,
+                        },
+                    )
+                    break
             await _close_backend_session(app, host_id, session_id)
-            log.info(
-                "session closed after grace",
-                extra={"session_id": session_id, "grace_s": CLIENT_RECONNECT_GRACE_SECONDS},
-            )
         except asyncio.CancelledError:
             pass
 
     await hub.schedule_session_close(
         session_id,
-        asyncio.create_task(delayed_close(), name=f"client-grace-{session_id}"),
+        asyncio.create_task(watchdog(), name=f"client-grace-{session_id}"),
     )
 
 
@@ -138,6 +195,10 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                 continue
             # Forward client-originated frames to the daemon untouched.
             frame["session_id"] = session_id
+            # Any frame from the client also counts as "session is alive"
+            # for the watchdog, so an attached client spamming pings keeps
+            # the session warm even if codex is silent.
+            hub.bump_activity(session_id)
             if frame.get("type") == "ping":
                 await ws.send_json({"type": "pong", "ts": frame.get("ts")})
                 continue
