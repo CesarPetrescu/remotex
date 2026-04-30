@@ -132,7 +132,35 @@ docker compose down -v               # -v nukes the SQLite volume too
 
 ## Pointing a daemon at this relay
 
-On any machine that should expose Codex sessions:
+### Linux (systemd user service, recommended)
+
+On any Linux machine that should expose Codex sessions:
+
+```bash
+git clone <this repo>
+cd remotex
+deploy/install-daemon.sh \
+    --relay-url    wss://relay.example.com/ws/daemon \
+    --bridge-token <token from the relay admin flow> \
+    --nickname     mybox
+```
+
+Run it with no flags to be prompted for each value. The installer
+creates a venv at `~/.local/share/remotex/venv`, writes config to
+`~/.remotex/config.toml`, drops a `remotex-daemon.service` unit into
+`~/.config/systemd/user/`, and enables it. Re-run anytime — it's
+idempotent. `deploy/install-daemon.sh --uninstall` removes the unit
+(config and venv stay).
+
+For a relay running on the same box, use `ws://127.0.0.1:8080/ws/daemon`.
+
+To survive logout, allow your user to linger:
+
+```bash
+sudo loginctl enable-linger $USER
+```
+
+### Manual / non-Linux
 
 ```bash
 cd services
@@ -141,13 +169,10 @@ python3 -m daemon init \
     --relay-url wss://relay.example.com/ws/daemon \
     --bridge-token <token from the relay admin flow> \
     --nickname mybox \
-    --mode mock \
+    --mode stdio \
     --config ./demo-config.toml
 python3 -m daemon run --config ./demo-config.toml
 ```
-
-For the local-only run, swap `wss://relay.example.com` for
-`ws://127.0.0.1:8080`.
 
 ## What's still TODO before "production"
 
