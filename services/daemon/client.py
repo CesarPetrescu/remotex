@@ -55,6 +55,7 @@ class DaemonClient:
                     "hostname": self.config.hostname,
                     "platform": self.config.platform_string,
                     "nickname": self.config.nickname,
+                    "os_user": self.config.os_user,
                 })
                 welcome = await ws.receive()
                 if welcome.type != aiohttp.WSMsgType.TEXT:

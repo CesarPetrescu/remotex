@@ -35,10 +35,12 @@ CREATE TABLE IF NOT EXISTS inventory_hosts (
   nickname     TEXT NOT NULL,
   hostname     TEXT,
   platform     TEXT,
+  os_user      TEXT,
   online       BOOLEAN NOT NULL DEFAULT FALSE,
   last_seen    BIGINT,
   created_at   BIGINT NOT NULL
 );
+ALTER TABLE inventory_hosts ADD COLUMN IF NOT EXISTS os_user TEXT;
 CREATE TABLE IF NOT EXISTS inventory_bridge_keys (
   token       TEXT PRIMARY KEY,
   host_id     TEXT NOT NULL REFERENCES inventory_hosts(id) ON DELETE CASCADE,
@@ -248,7 +250,7 @@ class Store:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, nickname, hostname, platform, online, last_seen, created_at
+                SELECT id, nickname, hostname, platform, os_user, online, last_seen, created_at
                 FROM inventory_hosts
                 WHERE owner_token = $1
                 ORDER BY created_at DESC
@@ -273,11 +275,17 @@ class Store:
             )
         return row["owner_token"] if row else None
 
-    async def update_host_identity(self, host_id: str, hostname: str, platform: str) -> None:
+    async def update_host_identity(
+        self,
+        host_id: str,
+        hostname: str,
+        platform: str,
+        os_user: str = "",
+    ) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
-                "UPDATE inventory_hosts SET hostname = $2, platform = $3 WHERE id = $1",
-                host_id, hostname, platform,
+                "UPDATE inventory_hosts SET hostname = $2, platform = $3, os_user = $4 WHERE id = $1",
+                host_id, hostname, platform, os_user or None,
             )
 
     async def mark_host(self, host_id: str, online: bool) -> None:

@@ -14,12 +14,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SERVICES_DIR="${REPO_ROOT}/services"
 UNIT_TEMPLATE="${SCRIPT_DIR}/remotex-daemon.service"
 
-VENV_DIR="${HOME}/.local/share/remotex/venv"
-CONFIG_DIR="${HOME}/.remotex"
-CONFIG_PATH="${CONFIG_DIR}/config.toml"
-UNIT_DIR="${HOME}/.config/systemd/user"
-UNIT_PATH="${UNIT_DIR}/remotex-daemon.service"
-
 RELAY_URL=""
 BRIDGE_TOKEN=""
 NICKNAME=""
@@ -30,6 +24,12 @@ FORCE_CONFIG=0
 NO_ENABLE=0
 UNINSTALL=0
 NON_INTERACTIVE=0
+SYSTEM=0
+RUN_AS_USER=""
+
+# Per-scope paths get set after we parse --system. User scope (default)
+# uses ${HOME}; system scope uses /root for the daemon, /etc for the unit,
+# and runs as either root or the user passed via --run-as-user.
 
 bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
 info()   { printf '\033[36m==>\033[0m %s\n' "$*"; }
@@ -47,10 +47,16 @@ Options:
   --default-cwd PATH    Workspace dir Codex turns run in (default: \$HOME)
   --mode MODE           stdio | mock (default: stdio)
   --codex-binary PATH   Codex executable name or path (default: codex)
-  --force-config        Overwrite an existing ${CONFIG_PATH/$HOME/~}
+  --force-config        Overwrite an existing config file
   --no-enable           Install the unit but do not enable/start it
   --non-interactive     Fail instead of prompting for missing values
   --uninstall           Stop, disable, and remove the unit (keeps config + venv)
+  --system              Install system-wide (requires sudo). Unit goes to
+                        /etc/systemd/system, venv to /root/.local/share/remotex,
+                        config to /root/.remotex/config.toml. Runs as root by
+                        default — use --run-as-user to drop privileges.
+  --run-as-user USER    With --system, set User= in the unit (default: root).
+                        That user must own ~/.codex/auth.json.
   -h, --help            Show this help
 EOF
 }
@@ -67,10 +73,36 @@ while [[ $# -gt 0 ]]; do
     --no-enable)       NO_ENABLE=1; shift ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
     --uninstall)       UNINSTALL=1; shift ;;
+    --system)          SYSTEM=1; shift ;;
+    --run-as-user)     RUN_AS_USER="$2"; shift 2 ;;
     -h|--help)         usage; exit 0 ;;
     *) err "unknown flag: $1"; usage; exit 2 ;;
   esac
 done
+
+if [[ ${SYSTEM} -eq 1 ]]; then
+  if [[ $EUID -ne 0 ]]; then
+    err "--system requires root (try: sudo $0 --system ...)"
+    exit 1
+  fi
+  RUN_AS_USER="${RUN_AS_USER:-root}"
+  RUN_AS_HOME="$(getent passwd "${RUN_AS_USER}" | cut -d: -f6)"
+  if [[ -z "${RUN_AS_HOME}" ]]; then
+    err "user ${RUN_AS_USER} not found in passwd"
+    exit 1
+  fi
+  VENV_DIR="${RUN_AS_HOME}/.local/share/remotex/venv"
+  CONFIG_DIR="${RUN_AS_HOME}/.remotex"
+  CONFIG_PATH="${CONFIG_DIR}/config.toml"
+  UNIT_DIR="/etc/systemd/system"
+  UNIT_PATH="${UNIT_DIR}/remotex-daemon.service"
+else
+  VENV_DIR="${HOME}/.local/share/remotex/venv"
+  CONFIG_DIR="${HOME}/.remotex"
+  CONFIG_PATH="${CONFIG_DIR}/config.toml"
+  UNIT_DIR="${HOME}/.config/systemd/user"
+  UNIT_PATH="${UNIT_DIR}/remotex-daemon.service"
+fi
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { err "required command not found: $1"; exit 1; }
@@ -91,13 +123,19 @@ prompt() {
   printf -v "${var_name}" '%s' "${input}"
 }
 
+# systemctl scope flag: empty for system, "--user" for the per-user service.
+SYSTEMCTL_SCOPE=""
+if [[ ${SYSTEM} -eq 0 ]]; then
+  SYSTEMCTL_SCOPE="--user"
+fi
+
 uninstall() {
   info "stopping and disabling remotex-daemon.service"
-  systemctl --user stop remotex-daemon.service 2>/dev/null || true
-  systemctl --user disable remotex-daemon.service 2>/dev/null || true
+  systemctl ${SYSTEMCTL_SCOPE} stop remotex-daemon.service 2>/dev/null || true
+  systemctl ${SYSTEMCTL_SCOPE} disable remotex-daemon.service 2>/dev/null || true
   if [[ -f "${UNIT_PATH}" ]]; then
     rm -f "${UNIT_PATH}"
-    systemctl --user daemon-reload || true
+    systemctl ${SYSTEMCTL_SCOPE} daemon-reload || true
     info "removed ${UNIT_PATH}"
   else
     info "no unit file at ${UNIT_PATH} (already gone)"
@@ -138,6 +176,9 @@ if [[ ! -d "${VENV_DIR}" ]]; then
   info "creating venv at ${VENV_DIR}"
   mkdir -p "$(dirname "${VENV_DIR}")"
   python3 -m venv "${VENV_DIR}"
+  if [[ ${SYSTEM} -eq 1 && "${RUN_AS_USER}" != "root" ]]; then
+    chown -R "${RUN_AS_USER}:" "$(dirname "${VENV_DIR}")"
+  fi
 else
   info "venv already exists at ${VENV_DIR}"
 fi
@@ -156,10 +197,18 @@ else
     prompt BRIDGE_TOKEN "Bridge token (issued by the relay admin)"
   fi
   if [[ -z "${NICKNAME}" ]]; then
-    prompt NICKNAME "Host nickname shown in clients" "$(hostname)"
+    NICK_DEFAULT="$(hostname)"
+    if [[ ${SYSTEM} -eq 1 ]]; then
+      NICK_DEFAULT="${NICK_DEFAULT} (${RUN_AS_USER})"
+    fi
+    prompt NICKNAME "Host nickname shown in clients" "${NICK_DEFAULT}"
   fi
   if [[ -z "${DEFAULT_CWD}" ]]; then
-    prompt DEFAULT_CWD "Default workspace dir for codex turns" "${HOME}"
+    CWD_DEFAULT="${HOME}"
+    if [[ ${SYSTEM} -eq 1 ]]; then
+      CWD_DEFAULT="${RUN_AS_HOME}"
+    fi
+    prompt DEFAULT_CWD "Default workspace dir for codex turns" "${CWD_DEFAULT}"
   fi
 
   mkdir -p "${CONFIG_DIR}"
@@ -173,30 +222,49 @@ else
       --codex-binary "${CODEX_BINARY}" \
       --default-cwd  "${DEFAULT_CWD}" \
       --config       "${CONFIG_PATH}" )
+  if [[ ${SYSTEM} -eq 1 && "${RUN_AS_USER}" != "root" ]]; then
+    chown -R "${RUN_AS_USER}:" "${CONFIG_DIR}"
+  fi
 fi
 
 info "rendering systemd unit to ${UNIT_PATH}"
 mkdir -p "${UNIT_DIR}"
-sed \
+RENDERED="$(sed \
   -e "s|@@WORKING_DIR@@|${SERVICES_DIR}|g" \
   -e "s|@@VENV_BIN@@|${VENV_DIR}/bin|g" \
   -e "s|@@CONFIG_PATH@@|${CONFIG_PATH}|g" \
-  "${UNIT_TEMPLATE}" > "${UNIT_PATH}"
+  "${UNIT_TEMPLATE}")"
+if [[ ${SYSTEM} -eq 1 ]]; then
+  # System units must declare User= and target multi-user.target.
+  RENDERED="$(printf '%s\n' "${RENDERED}" \
+    | sed -e "/^\[Service\]/a User=${RUN_AS_USER}" \
+          -e 's|^WantedBy=default.target|WantedBy=multi-user.target|')"
+fi
+printf '%s\n' "${RENDERED}" > "${UNIT_PATH}"
 
-systemctl --user daemon-reload
+systemctl ${SYSTEMCTL_SCOPE} daemon-reload
 
 if [[ ${NO_ENABLE} -eq 1 ]]; then
   info "skipping enable/start (--no-enable)"
 else
   info "enabling and starting remotex-daemon.service"
-  systemctl --user enable --now remotex-daemon.service
+  systemctl ${SYSTEMCTL_SCOPE} enable --now remotex-daemon.service
 fi
 
 echo
 bold "Done."
-systemctl --user --no-pager status remotex-daemon.service || true
+systemctl ${SYSTEMCTL_SCOPE} --no-pager status remotex-daemon.service || true
 
-cat <<EOF
+if [[ ${SYSTEM} -eq 1 ]]; then
+  cat <<EOF
+
+Next steps (system service):
+  - Tail logs:     journalctl -u remotex-daemon -f
+  - Check status:  systemctl status remotex-daemon
+  - Restart:       systemctl restart remotex-daemon
+EOF
+else
+  cat <<EOF
 
 Next steps:
   - Tail logs:     journalctl --user -u remotex-daemon -f
@@ -205,3 +273,4 @@ Next steps:
   - Run on boot when you're not logged in:
       sudo loginctl enable-linger ${USER}
 EOF
+fi

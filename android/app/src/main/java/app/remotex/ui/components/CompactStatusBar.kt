@@ -72,6 +72,15 @@ fun CompactStatusBar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    host?.osUser?.takeIf { it.isNotBlank() }?.let {
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "@$it",
+                            color = Amber,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                        )
+                    }
                 }
             }
             data?.cpu?.percent?.let {

@@ -6,6 +6,7 @@ command writes this file; `run` reads it.
 """
 from __future__ import annotations
 
+import getpass
 import os
 import platform
 import socket
@@ -38,6 +39,16 @@ class Config:
     @property
     def platform_string(self) -> str:
         return f"{platform.system()} {platform.release()} / {platform.machine()}"
+
+    @property
+    def os_user(self) -> str:
+        # Reported to the relay so clients can show "host (cesar5514)"
+        # — matters when one box runs daemons under multiple Linux
+        # accounts (each with its own ~/.codex/auth.json).
+        try:
+            return getpass.getuser()
+        except Exception:  # noqa: BLE001
+            return os.environ.get("USER") or os.environ.get("USERNAME") or ""
 
     @classmethod
     def load(cls, path: Path) -> "Config":

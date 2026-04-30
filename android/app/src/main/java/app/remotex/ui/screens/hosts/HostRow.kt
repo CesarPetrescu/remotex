@@ -55,10 +55,20 @@ internal fun HostRow(
                     color = Ink,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 14.sp,
-                    modifier = Modifier.weight(1f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                host.osUser?.takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "@$it",
+                        color = Amber,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Box(Modifier.weight(1f))
                 if (host.online) {
                     Text(
                         "open →",

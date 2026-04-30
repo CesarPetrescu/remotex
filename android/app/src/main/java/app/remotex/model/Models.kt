@@ -9,6 +9,7 @@ data class Host(
     val nickname: String,
     val hostname: String? = null,
     val platform: String? = null,
+    @SerialName("os_user") val osUser: String? = null,
     val online: Boolean = false,
     @SerialName("last_seen") val lastSeen: Long? = null,
 )
