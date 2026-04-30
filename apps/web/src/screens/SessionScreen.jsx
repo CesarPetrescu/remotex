@@ -1,6 +1,8 @@
+import { useRef, useState } from 'react';
 import { EventStream } from '../components/EventStream';
 import { Composer } from '../components/Composer';
 import { ResumingBanner } from '../components/ResumingBanner';
+import { WorkspaceFilesDrawer } from '../components/WorkspaceFilesDrawer';
 import { STATUS } from '../config';
 
 function formatK(n) {
@@ -19,6 +21,7 @@ export function SessionScreen({
   onPermissionsChange,
   onAttachImage,
   onRemoveImage,
+  workspaceApi,
 }) {
   const info = state.session;
   const meta = !info
@@ -33,6 +36,24 @@ export function SessionScreen({
   const totalIn = state.tokensInput + state.tokensCached;
   const totalOut = state.tokensOutput + state.tokensReasoning;
   const haveTokens = totalIn > 0 || totalOut > 0;
+  const cwd = info?.cwd || '/';
+  const hostId = info?.hostId;
+
+  const [filesOpen, setFilesOpen] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const onUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file || !hostId) return;
+    try {
+      await workspaceApi.upload(hostId, cwd, file);
+      // Re-open the drawer so the user sees the new file land.
+      setFilesOpen(true);
+    } catch (err) {
+      alert(`Upload failed: ${err.message || err}`);
+    }
+  };
 
   return (
     <div className="screen session-screen">
@@ -44,6 +65,29 @@ export function SessionScreen({
             <span className="token-down">{formatK(totalOut)}↓</span>
           </span>
         )}
+      </div>
+      <div className="ws-toolbar">
+        <button
+          type="button"
+          className="ws-toolbar-btn"
+          onClick={() => setFilesOpen(true)}
+          disabled={!hostId}
+          title="Browse files in this chat's workspace"
+        >📁 Files</button>
+        <button
+          type="button"
+          className="ws-toolbar-btn add"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!hostId}
+          title="Add a file to the workspace (NOT image attach)"
+        >+ Add</button>
+        <span className="ws-toolbar-cwd">{cwd}</span>
+        <input
+          ref={fileInputRef}
+          type="file"
+          style={{ display: 'none' }}
+          onChange={onUpload}
+        />
       </div>
       {state.resuming && <ResumingBanner sinceMs={state.resumingSinceMs} />}
       <EventStream
@@ -69,6 +113,13 @@ export function SessionScreen({
         onStop={onStop}
         onAttachImage={onAttachImage}
         onRemoveImage={onRemoveImage}
+      />
+      <WorkspaceFilesDrawer
+        open={filesOpen}
+        initialPath={cwd}
+        hostId={hostId}
+        apiRef={workspaceApi.apiRef}
+        onClose={() => setFilesOpen(false)}
       />
     </div>
   );

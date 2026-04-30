@@ -11,6 +11,7 @@ import app.remotex.model.Host
 import app.remotex.model.HostTelemetryData
 import app.remotex.model.HostTelemetrySnapshot
 import app.remotex.model.SearchResult
+import app.remotex.model.SearchStage
 import app.remotex.model.TelemetryHistory
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
@@ -100,6 +101,10 @@ data class UiState(
     val searchQuery: String = "",
     val searchResults: List<SearchResult> = emptyList(),
     val searchLoading: Boolean = false,
+    // Live pipeline state — populated as the relay's /api/search/stream
+    // yields plan / signal / fused / rerank events. Empty when there's
+    // no active search.
+    val searchStages: List<SearchStage> = emptyList(),
     val browsePath: String = "",
     val browseEntries: List<FsEntry> = emptyList(),
     val browseLoading: Boolean = false,
@@ -411,25 +416,173 @@ class RemotexViewModel(
         _state.update { it.copy(searchQuery = query) }
     }
 
+    private var searchStreamJob: Job? = null
+
     fun searchChats() {
         val query = _state.value.searchQuery.trim()
         if (query.isEmpty()) {
-            _state.update { it.copy(searchResults = emptyList(), searchLoading = false) }
+            _state.update { it.copy(searchResults = emptyList(), searchLoading = false, searchStages = emptyList()) }
+            searchStreamJob?.cancel()
             return
         }
-        viewModelScope.launch {
-            _state.update { it.copy(searchLoading = true, error = null) }
-            try {
-                val results = client.searchChats(_state.value.userToken, query, limit = 20)
+        searchStreamJob?.cancel()
+        _state.update {
+            it.copy(
+                searchLoading = true,
+                error = null,
+                searchStages = emptyList(),
+                searchResults = emptyList(),
+            )
+        }
+        searchStreamJob = client.searchChatsStream(
+            scope = viewModelScope,
+            userToken = _state.value.userToken,
+            query = query,
+            limit = 20,
+            onEvent = { event -> handleSearchStreamEvent(event) },
+            onDone = { err ->
                 _state.update {
-                    it.copy(searchResults = results, searchLoading = false)
+                    it.copy(
+                        searchLoading = false,
+                        error = err?.message?.takeIf { e -> e.isNotBlank() && it.searchResults.isEmpty() }
+                            ?: it.error,
+                    )
                 }
-            } catch (t: Throwable) {
+            },
+        )
+    }
+
+    private fun handleSearchStreamEvent(event: JsonObject) {
+        val type = event["type"]?.jsonPrimitive?.contentOrNull ?: return
+        when (type) {
+            "plan" -> {
+                val stages = (event["stages"] as? JsonArray).orEmpty().mapNotNull { s ->
+                    val obj = s as? JsonObject ?: return@mapNotNull null
+                    SearchStage(
+                        name = obj["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
+                        status = obj["status"]?.jsonPrimitive?.contentOrNull ?: "pending",
+                    )
+                }
+                _state.update { it.copy(searchStages = stages) }
+            }
+            "signal" -> {
+                val name = event["name"]?.jsonPrimitive?.contentOrNull ?: return
+                val elapsedMs = event["elapsed_ms"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                val count = event["count"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                val results = parseSearchResults(event["results"])
                 _state.update {
-                    it.copy(searchLoading = false, error = t.message ?: "search failed")
+                    it.copy(
+                        searchStages = patchStage(it.searchStages, name, "done", elapsedMs, count),
+                        searchResults = if (results.isNotEmpty()) results else it.searchResults,
+                    )
+                }
+            }
+            "fused" -> {
+                val results = parseSearchResults(event["results"])
+                if (results.isNotEmpty()) {
+                    _state.update { it.copy(searchResults = results) }
+                }
+            }
+            "rerank_start" -> {
+                val candidates = event["candidates"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                _state.update {
+                    it.copy(searchStages = patchStage(it.searchStages, "rerank", "running", null, candidates))
+                }
+            }
+            "rerank" -> {
+                val elapsedMs = event["elapsed_ms"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                val results = parseSearchResults(event["results"])
+                _state.update {
+                    it.copy(
+                        searchStages = patchStage(it.searchStages, "rerank", "done", elapsedMs, null),
+                        searchResults = if (results.isNotEmpty()) results else it.searchResults,
+                    )
+                }
+            }
+            "rerank_error" -> {
+                val msg = event["message"]?.jsonPrimitive?.contentOrNull ?: "rerank failed"
+                _state.update {
+                    it.copy(searchStages = patchStage(it.searchStages, "rerank", "error", null, null, msg))
+                }
+            }
+            "done" -> {
+                val results = parseSearchResults(event["results"])
+                _state.update {
+                    it.copy(
+                        searchResults = if (results.isNotEmpty()) results else it.searchResults,
+                        searchLoading = false,
+                    )
                 }
             }
         }
+    }
+
+    private fun patchStage(
+        stages: List<SearchStage>,
+        name: String,
+        status: String,
+        elapsedMs: Long?,
+        count: Int?,
+        error: String? = null,
+    ): List<SearchStage> {
+        if (stages.none { it.name == name }) {
+            return stages + SearchStage(name, status, elapsedMs, count, error)
+        }
+        return stages.map { stage ->
+            if (stage.name != name) return@map stage
+            stage.copy(
+                status = status,
+                elapsedMs = elapsedMs ?: stage.elapsedMs,
+                count = count ?: stage.count,
+                error = error ?: stage.error,
+            )
+        }
+    }
+
+    private fun parseSearchResults(element: JsonElement?): List<SearchResult> {
+        val arr = element as? JsonArray ?: return emptyList()
+        if (arr.isEmpty()) return emptyList()
+        return try {
+            json.decodeFromJsonElement(
+                kotlinx.serialization.builtins.ListSerializer(SearchResult.serializer()),
+                arr,
+            )
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    // --- workspace files (in-chat panel) ---
+
+    /** List the contents of a directory on the active host. Used by the
+     *  in-chat workspace files panel; navigates within cwd. */
+    suspend fun listWorkspace(path: String): List<FsEntry> {
+        val hostId = _state.value.session?.hostId ?: _state.value.selectedHostId
+            ?: error("no host selected")
+        val token = _state.value.userToken
+        return withContext(Dispatchers.IO) {
+            client.readDirectory(token, hostId, path).entries
+        }
+    }
+
+    suspend fun deleteWorkspaceFile(path: String) {
+        val hostId = _state.value.session?.hostId ?: error("no host selected")
+        client.deleteFile(_state.value.userToken, hostId, path)
+    }
+
+    suspend fun renameWorkspaceFile(from: String, to: String) {
+        val hostId = _state.value.session?.hostId ?: error("no host selected")
+        client.renameFile(_state.value.userToken, hostId, from, to)
+    }
+
+    suspend fun readWorkspaceFile(path: String): RelayClient.WorkspaceFile {
+        val hostId = _state.value.session?.hostId ?: error("no host selected")
+        return client.readFile(_state.value.userToken, hostId, path)
+    }
+
+    suspend fun uploadWorkspaceFile(targetDir: String, fileName: String, bytes: ByteArray, mime: String) {
+        val hostId = _state.value.session?.hostId ?: error("no host selected")
+        client.uploadFile(_state.value.userToken, hostId, targetDir, fileName, bytes, mime)
     }
 
     fun openSearchResult(result: SearchResult) {

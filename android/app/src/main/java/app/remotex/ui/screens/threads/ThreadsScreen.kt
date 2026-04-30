@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -128,11 +129,16 @@ fun ThreadsScreen(
                 modifier = Modifier.padding(16.dp),
             )
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(state.threads, key = { it.id }) { t ->
-                    ThreadRow(t, onClick = { onResumeThread(t) })
+            // SelectionContainer so users can copy thread titles / cwd
+            // paths / previews. The clickable rows still respond to taps —
+            // a long-press starts selection mode.
+            SelectionContainer {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(state.threads, key = { it.id }) { t ->
+                        ThreadRow(t, onClick = { onResumeThread(t) })
+                    }
                 }
             }
         }

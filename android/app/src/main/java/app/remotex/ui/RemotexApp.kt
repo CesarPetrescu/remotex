@@ -131,6 +131,11 @@ fun RemotexApp(relayUrl: String) {
                         onAttachImage = vm::attachImage,
                         onRemoveImage = vm::removeImage,
                         onPermissionsChange = vm::setPermissions,
+                        onListWorkspace = vm::listWorkspace,
+                        onDeleteWorkspaceFile = vm::deleteWorkspaceFile,
+                        onRenameWorkspaceFile = vm::renameWorkspaceFile,
+                        onReadWorkspaceFile = vm::readWorkspaceFile,
+                        onUploadWorkspaceFile = vm::uploadWorkspaceFile,
                     )
                 }
                 state.pendingApproval?.let { appr ->

@@ -126,6 +126,18 @@ class DaemonClient:
         if ftype == "fs-mkdir-request":
             asyncio.create_task(self._handle_fs_mkdir(frame, send))
             return
+        if ftype == "fs-readfile-request":
+            asyncio.create_task(self._handle_fs_readfile(frame, send))
+            return
+        if ftype == "fs-delete-request":
+            asyncio.create_task(self._handle_fs_delete(frame, send))
+            return
+        if ftype == "fs-rename-request":
+            asyncio.create_task(self._handle_fs_rename(frame, send))
+            return
+        if ftype == "fs-write-request":
+            asyncio.create_task(self._handle_fs_write(frame, send))
+            return
         if ftype == "session-open" and sid:
             if sid in self._sessions:
                 return
@@ -215,6 +227,166 @@ class DaemonClient:
             await send({
                 "type": "fs-mkdir-response",
                 "request_id": request_id,
+                "error": str(exc),
+            })
+
+    async def _handle_fs_readfile(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        """Read a file off the daemon's local filesystem and return it
+        base64-encoded so the relay can hand it to a client. Capped at
+        50MB; bigger files come back with an error rather than being
+        truncated, so the client can decide whether to chunk or skip."""
+        import base64
+        import mimetypes
+        import os
+
+        request_id = frame.get("request_id")
+        path = frame.get("path") or ""
+        max_bytes = int(frame.get("max_bytes") or 50 * 1024 * 1024)
+        try:
+            if not path or not os.path.isfile(path):
+                raise FileNotFoundError(path or "<empty path>")
+            size = os.path.getsize(path)
+            if size > max_bytes:
+                raise ValueError(
+                    f"file is {size} bytes; max is {max_bytes}. "
+                    "Use download or chunked read."
+                )
+            with open(path, "rb") as fh:
+                data = fh.read()
+            mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+            await send({
+                "type": "fs-readfile-response",
+                "request_id": request_id,
+                "path": path,
+                "name": os.path.basename(path),
+                "mime": mime,
+                "size": size,
+                "base64": base64.b64encode(data).decode("ascii"),
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.warning("fs/readfile failed for %s: %s", path, exc)
+            await send({
+                "type": "fs-readfile-response",
+                "request_id": request_id,
+                "path": path,
+                "error": str(exc),
+            })
+
+    async def _handle_fs_delete(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        """Delete a single FILE (not a directory). Refuses recursive
+        directory removal in v1 — too easy to footgun. Symlinks are
+        unlinked, not followed."""
+        import os
+
+        request_id = frame.get("request_id")
+        path = frame.get("path") or ""
+        try:
+            if not path:
+                raise ValueError("path is required")
+            if os.path.isdir(path) and not os.path.islink(path):
+                raise IsADirectoryError(
+                    "directory deletion is disabled (use a terminal for that)"
+                )
+            os.unlink(path)
+            await send({
+                "type": "fs-delete-response",
+                "request_id": request_id,
+                "path": path,
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.warning("fs/delete failed for %s: %s", path, exc)
+            await send({
+                "type": "fs-delete-response",
+                "request_id": request_id,
+                "path": path,
+                "error": str(exc),
+            })
+
+    async def _handle_fs_rename(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        """Move/rename a file. Refuses to overwrite an existing target —
+        the client should confirm and re-issue with a different name."""
+        import os
+
+        request_id = frame.get("request_id")
+        src = frame.get("from") or ""
+        dst = frame.get("to") or ""
+        try:
+            if not src or not dst:
+                raise ValueError("from and to are required")
+            if os.path.exists(dst):
+                raise FileExistsError(f"{dst} already exists")
+            os.rename(src, dst)
+            await send({
+                "type": "fs-rename-response",
+                "request_id": request_id,
+                "from": src,
+                "to": dst,
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.warning("fs/rename failed for %s -> %s: %s", src, dst, exc)
+            await send({
+                "type": "fs-rename-response",
+                "request_id": request_id,
+                "from": src,
+                "to": dst,
+                "error": str(exc),
+            })
+
+    async def _handle_fs_write(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        """Write a file to disk from a base64 payload. Used by the
+        client's "+ Add file" upload action — distinct from image
+        attachment, which is per-turn context, not workspace files."""
+        import base64
+        import os
+
+        request_id = frame.get("request_id")
+        path = frame.get("path") or ""
+        b64 = frame.get("base64") or ""
+        try:
+            if not path:
+                raise ValueError("path is required")
+            parent = os.path.dirname(path) or "."
+            if not os.path.isdir(parent):
+                raise FileNotFoundError(f"parent directory does not exist: {parent}")
+            data = base64.b64decode(b64, validate=False)
+            # Atomic-ish write: write to .partial, fsync, rename.
+            tmp = path + ".partial"
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                try:
+                    os.fsync(fh.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp, path)
+            await send({
+                "type": "fs-write-response",
+                "request_id": request_id,
+                "path": path,
+                "size": len(data),
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.warning("fs/write failed for %s: %s", path, exc)
+            await send({
+                "type": "fs-write-response",
+                "request_id": request_id,
+                "path": path,
                 "error": str(exc),
             })
 

@@ -66,6 +66,48 @@ export class RelayClient {
     );
   }
 
+  readFile(hostId, path) {
+    const qs = new URLSearchParams({ path }).toString();
+    return this.#request(
+      `/api/hosts/${encodeURIComponent(hostId)}/fs/read?${qs}`,
+    );
+  }
+
+  deleteFile(hostId, path) {
+    return this.#request(
+      `/api/hosts/${encodeURIComponent(hostId)}/fs/delete`,
+      { method: 'POST', body: JSON.stringify({ path }) },
+    );
+  }
+
+  renameFile(hostId, from, to) {
+    return this.#request(
+      `/api/hosts/${encodeURIComponent(hostId)}/fs/rename`,
+      { method: 'POST', body: JSON.stringify({ from, to }) },
+    );
+  }
+
+  /** Multipart upload. Distinct from image-attach (per-turn context);
+   *  this writes a real file into the workspace cwd. */
+  async uploadFile(hostId, targetDir, file) {
+    const fd = new FormData();
+    fd.append('path', targetDir);
+    fd.append('file', file, file.name);
+    const res = await fetch(
+      `/api/hosts/${encodeURIComponent(hostId)}/fs/upload`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.token}` },
+        body: fd,
+      },
+    );
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+    }
+    return res.json();
+  }
+
   getHostTelemetry(hostId) {
     return this.#request(
       `/api/hosts/${encodeURIComponent(hostId)}/telemetry`,

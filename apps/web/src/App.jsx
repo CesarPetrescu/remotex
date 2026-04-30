@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useRemotex } from './hooks/useRemotex';
+import { useBackgroundCompletionAlert } from './hooks/useBackgroundCompletionAlert';
 import { SCREENS, STATUS } from './config';
 import { Toast } from './components/Toast';
 import { ApprovalDialog } from './components/ApprovalDialog';
@@ -15,6 +16,9 @@ import { shortenCwd } from './util/path';
 export default function App() {
   const r = useRemotex();
   const { state } = r;
+  // Tab-title + favicon flash for backgrounded users — only fires if the
+  // tab was hidden at any point during the pending turn.
+  useBackgroundCompletionAlert(state);
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
@@ -57,6 +61,10 @@ export default function App() {
         onModelChange={r.setModel}
         onEffortChange={r.setEffort}
         onPermissionsChange={r.setPermissions}
+        onDashboard={() => {
+          r.goToDashboard();
+          closeDrawers();
+        }}
       />
 
       <button
@@ -99,6 +107,10 @@ export default function App() {
             onPermissionsChange={r.setPermissions}
             onAttachImage={r.attachImage}
             onRemoveImage={r.removeImage}
+            workspaceApi={{
+              apiRef: r.apiRef,
+              upload: r.workspaceUploadFile,
+            }}
           />
         ) : (
           <DashboardScreen

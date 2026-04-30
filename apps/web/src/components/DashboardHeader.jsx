@@ -1,5 +1,5 @@
 import { ModelPicker, EffortPicker, PermissionsPicker } from './Pickers';
-import { STATUS } from '../config';
+import { SCREENS, STATUS } from '../config';
 
 const STATUS_LABELS = {
   [STATUS.Idle]: 'idle',
@@ -17,10 +17,12 @@ export function DashboardHeader({
   onModelChange,
   onEffortChange,
   onPermissionsChange,
+  onDashboard,
 }) {
   const label = STATUS_LABELS[state.status] || 'idle';
   const isLive =
     state.status === STATUS.Connected || state.status === STATUS.Connecting;
+  const onDashboardScreen = state.screen === SCREENS.Hosts;
   return (
     <header className="dashboard-header">
       <div className="dashboard-header-left">
@@ -34,10 +36,25 @@ export function DashboardHeader({
             <span aria-hidden="true">☰</span>
           </button>
         )}
-        <div className="brand-mark" aria-hidden="true">
-          ◈
-        </div>
-        <div className="brand">REMOTEX</div>
+        <button
+          type="button"
+          className="brand-button"
+          onClick={onDashboard}
+          title="Dashboard"
+        >
+          <span className="brand-mark" aria-hidden="true">◈</span>
+          <span className="brand">REMOTEX</span>
+        </button>
+        {!onDashboardScreen && onDashboard && (
+          <button
+            type="button"
+            className="header-dashboard-pill"
+            onClick={onDashboard}
+            title="Back to dashboard (keeps the active session running)"
+          >
+            ⌂ Dashboard
+          </button>
+        )}
         <span className={`status-pill ${isLive ? 'is-live' : ''}`}>
           <span className={`tag-dot ${isLive ? 'ok' : ''}`} />
           {label}

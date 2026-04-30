@@ -131,7 +131,15 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     if session:
                         request.app["search"].capture_session_closed(session)
                     audit("session.closed", session_id=sid, host_id=host_id)
-            elif ftype in ("threads-list-response", "fs-read-response", "fs-mkdir-response"):
+            elif ftype in (
+                "threads-list-response",
+                "fs-read-response",
+                "fs-mkdir-response",
+                "fs-readfile-response",
+                "fs-delete-response",
+                "fs-rename-response",
+                "fs-write-response",
+            ):
                 req_id = frame.get("request_id")
                 fut = hub.pending_admin.get(req_id) if req_id else None
                 if fut is not None and not fut.done():

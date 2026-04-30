@@ -1,6 +1,8 @@
 package app.remotex.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,14 +10,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -26,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
@@ -271,18 +280,47 @@ private fun BulletView(items: List<String>, color: Color, fontSize: androidx.com
 
 @Composable
 private fun CodeBlockView(text: String) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1500)
+            copied = false
+        }
+    }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RectangleShape,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                clipboard.setText(AnnotatedString(text))
+                copied = true
+            },
     ) {
-        Text(
-            text,
-            color = Ink,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            style = TextStyle(fontFamily = FontFamily.Monospace),
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-        )
+        Box {
+            Text(
+                text,
+                color = Ink,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                style = TextStyle(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .background(Color.Black.copy(alpha = if (copied) 0.55f else 0.0f)),
+            ) {
+                Text(
+                    text = if (copied) "copied" else "📋",
+                    color = if (copied) Amber else InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+            }
+        }
     }
 }

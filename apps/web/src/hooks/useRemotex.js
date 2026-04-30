@@ -610,6 +610,14 @@ export function useRemotex() {
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Hosts });
   }, [closeSession]);
 
+  // Navigate back to the dashboard view WITHOUT killing the active
+  // session. The relay-side keep-alive means the turn keeps running in
+  // the background, and a later tap on the same chat reattaches via
+  // the session-reuse path.
+  const goToDashboard = useCallback(() => {
+    dispatch({ type: 'SET_SCREEN', screen: SCREENS.Hosts });
+  }, []);
+
   const goToThreads = useCallback(() => {
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Threads });
   }, []);
@@ -782,6 +790,23 @@ export function useRemotex() {
     const target = latestInputsRef.current.selectedHostId;
     if (!target) throw new Error('no host selected');
     return apiRef.current.readDirectory(target, path);
+  }, []);
+
+  // --- workspace files (in-chat panel: read/rename/delete/upload) ---
+  const workspaceListDirectory = useCallback(async (hostId, path) => {
+    return apiRef.current.readDirectory(hostId, path);
+  }, []);
+  const workspaceReadFile = useCallback(async (hostId, path) => {
+    return apiRef.current.readFile(hostId, path);
+  }, []);
+  const workspaceDeleteFile = useCallback(async (hostId, path) => {
+    return apiRef.current.deleteFile(hostId, path);
+  }, []);
+  const workspaceRenameFile = useCallback(async (hostId, from, to) => {
+    return apiRef.current.renameFile(hostId, from, to);
+  }, []);
+  const workspaceUploadFile = useCallback(async (hostId, dir, file) => {
+    return apiRef.current.uploadFile(hostId, dir, file);
   }, []);
 
   // --- session ---
@@ -1113,6 +1138,11 @@ export function useRemotex() {
       browseUp,
       createFolder,
       listDirectory,
+      workspaceListDirectory,
+      workspaceReadFile,
+      workspaceDeleteFile,
+      workspaceRenameFile,
+      workspaceUploadFile,
       openSession,
       startSessionInCurrentPath: () =>
         openSession({ cwd: latestInputsRef.current.browsePath || null }),
@@ -1122,10 +1152,17 @@ export function useRemotex() {
       resolveApproval,
       attachImage,
       removeImage,
+      // Internal escape hatch: WorkspaceFilesDrawer needs apiRef directly
+      // so a single component can call read/rename/delete/upload without
+      // dragging four wrappers through props.
+      apiRef,
     }),
     [
       state,
       goToHosts,
+      // goToDashboard is stable (useCallback with no deps) so it never
+      // changes; including it in this list does nothing useful.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       goToThreads,
       goToSearch,
       goToSession,
@@ -1139,6 +1176,11 @@ export function useRemotex() {
       browseUp,
       createFolder,
       listDirectory,
+      workspaceListDirectory,
+      workspaceReadFile,
+      workspaceDeleteFile,
+      workspaceRenameFile,
+      workspaceUploadFile,
       openSession,
       closeSession,
       sendTurn,

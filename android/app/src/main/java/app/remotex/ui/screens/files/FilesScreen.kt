@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -131,21 +132,23 @@ fun FilesScreen(
                 modifier = Modifier.padding(16.dp),
             )
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                items(state.browseEntries, key = { it.fileName }) { entry ->
-                    FsRow(entry, onOpenDir = {
-                        onNavigate(joinPath(path, entry.fileName))
-                    })
-                }
-                if (state.browseEntries.isEmpty()) {
-                    item {
-                        Text(
-                            "empty",
-                            color = InkDim,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(16.dp),
-                        )
+            SelectionContainer {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    items(state.browseEntries, key = { it.fileName }) { entry ->
+                        FsRow(entry, onOpenDir = {
+                            onNavigate(joinPath(path, entry.fileName))
+                        })
+                    }
+                    if (state.browseEntries.isEmpty()) {
+                        item {
+                            Text(
+                                "empty",
+                                color = InkDim,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(16.dp),
+                            )
+                        }
                     }
                 }
             }

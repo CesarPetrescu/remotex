@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -73,6 +74,7 @@ fun SearchScreen(
                 modifier = Modifier.padding(10.dp).fillMaxWidth(),
             )
         }
+        SearchStagesPanel(state.searchStages)
         Button(
             onClick = onSearch,
             enabled = !state.searchLoading,
@@ -106,9 +108,11 @@ fun SearchScreen(
                 fontSize = 11.sp,
                 modifier = Modifier.padding(16.dp),
             )
-            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(state.searchResults, key = { it.id }) { result ->
-                    SearchResultRow(result, onClick = { onOpenResult(result) })
+            else -> SelectionContainer {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(state.searchResults, key = { it.id }) { result ->
+                        SearchResultRow(result, onClick = { onOpenResult(result) })
+                    }
                 }
             }
         }

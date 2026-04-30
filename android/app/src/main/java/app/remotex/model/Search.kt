@@ -24,3 +24,23 @@ data class SearchResult(
 data class SearchResponse(
     val results: List<SearchResult>,
 )
+
+/**
+ * One step in the relay's semantic-search pipeline. Mirrors the web
+ * client's searchStages so both clients render the same vertical
+ * progress list while a search is running.
+ *
+ * Status values used by the relay's stream:
+ *   pending  — declared in the initial `plan` event, not started yet
+ *   running  — work is in flight
+ *   done     — finished, has elapsedMs + count
+ *   error    — failed mid-pipeline (only used for `rerank`)
+ *   skipped  — declared in plan but not run (e.g. rerank disabled)
+ */
+data class SearchStage(
+    val name: String,
+    val status: String = "pending",
+    val elapsedMs: Long? = null,
+    val count: Int? = null,
+    val error: String? = null,
+)
