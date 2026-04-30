@@ -541,6 +541,10 @@ class StdioCodexAdapter(SessionAdapter):
             while True:
                 line = await self._proc.stdout.readline()
                 if not line:
+                    # stdout closed = codex exited. Fail every pending RPC
+                    # so callers stop blocking forever (the resume task in
+                    # particular used to sit on its 600s timeout).
+                    await self._handle_codex_exit("stdout closed")
                     return
                 try:
                     msg = json.loads(line)
@@ -561,6 +565,34 @@ class StdioCodexAdapter(SessionAdapter):
                 log.info("codex stderr: %s", line.decode(errors="replace").rstrip())
         except asyncio.CancelledError:
             pass
+
+    async def _handle_codex_exit(self, reason: str) -> None:
+        """Codex died on us. Fail pending RPCs and tell the client."""
+        rc = self._proc.returncode if self._proc else None
+        if rc is None and self._proc is not None:
+            try:
+                rc = await asyncio.wait_for(self._proc.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                rc = None
+        msg = f"codex app-server exited unexpectedly (rc={rc}, {reason})"
+        log.warning(msg)
+        # Reject anything still waiting on a JSON-RPC response.
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.set_exception(RuntimeError(msg))
+        self._pending.clear()
+        # If a resume was in flight, surface the failure as resume-failed
+        # so the client banner clears with a real error instead of waiting
+        # the full 600s _request timeout.
+        if self._resume_task and not self._resume_task.done():
+            self._resume_error = msg
+            await self._queue.put(SessionEvent("thread-status", {
+                "status": "resume-failed",
+                "error": msg,
+            }))
+        # Mark the session as broken so any subsequent turn-start gets
+        # rejected immediately rather than hanging.
+        self._ready = False
 
     async def _dispatch(self, msg: dict) -> None:
         # Response to one of our requests?

@@ -33,9 +33,12 @@ fun SessionScreen(
             modifier = Modifier.weight(1f, fill = true),
         )
         ComposerBar(
-            // Block sends while we're still resuming — daemon would
-            // reject anyway, this just makes the disabled state clear.
-            connected = state.status == Status.Connected && !state.resuming,
+            // Allow typing during resume — the daemon waits up to 20s
+            // for resume to finish before rejecting a turn-start, so
+            // best case the send succeeds, worst case we get a clean
+            // "still resuming" error. Either way, blocking the input
+            // while resume is in flight makes the app feel hung.
+            connected = state.status == Status.Connected,
             pending = state.pending,
             model = state.model,
             effort = state.effort,
