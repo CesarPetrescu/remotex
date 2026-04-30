@@ -23,6 +23,29 @@ from .rollout import (
 log = logging.getLogger("daemon.adapters.stdio")
 
 
+async def _read_line_unbounded(stream: asyncio.StreamReader) -> bytes:
+    """Like StreamReader.readline() but with no 64KB ceiling.
+
+    Codex's `thread/resume` reply inlines the full conversation as ONE
+    JSON-RPC frame on a single line. For multi-MB rollouts that line
+    blows past the asyncio stream's default LIMIT_BUFFER (~64KB) and
+    the built-in readline() raises ValueError, killing the read task
+    and stranding any pending RPC. `readuntil` raises LimitOverrunError
+    instead of consuming the buffer, so we drain what's there with
+    readexactly(e.consumed) and keep going until we find the newline.
+    """
+    parts: list[bytes] = []
+    while True:
+        try:
+            tail = await stream.readuntil(b"\n")
+            return b"".join(parts) + tail
+        except asyncio.LimitOverrunError as exc:
+            chunk = await stream.readexactly(exc.consumed)
+            parts.append(chunk)
+        except asyncio.IncompleteReadError as exc:
+            return b"".join(parts) + exc.partial
+
+
 class StdioCodexAdapter(SessionAdapter):
     """Bridges `codex app-server` stdio JSON-RPC onto relay SessionEvents.
 
@@ -539,7 +562,15 @@ class StdioCodexAdapter(SessionAdapter):
         assert self._proc and self._proc.stdout
         try:
             while True:
-                line = await self._proc.stdout.readline()
+                try:
+                    line = await _read_line_unbounded(self._proc.stdout)
+                except Exception as exc:  # noqa: BLE001
+                    # Anything other than CancelledError here means the
+                    # subprocess pipe is in a bad state (rare, e.g. broken
+                    # encoding from codex). Treat it like a process exit
+                    # so we don't sit silently on pending RPCs.
+                    await self._handle_codex_exit(f"read error: {exc}")
+                    return
                 if not line:
                     # stdout closed = codex exited. Fail every pending RPC
                     # so callers stop blocking forever (the resume task in
@@ -549,7 +580,7 @@ class StdioCodexAdapter(SessionAdapter):
                 try:
                     msg = json.loads(line)
                 except json.JSONDecodeError:
-                    log.debug("malformed frame from codex: %r", line)
+                    log.debug("malformed frame from codex: %r", line[:200])
                     continue
                 await self._dispatch(msg)
         except asyncio.CancelledError:
