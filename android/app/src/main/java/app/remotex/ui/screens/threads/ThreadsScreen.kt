@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.model.ThreadInfo
 import app.remotex.ui.UiState
+import app.remotex.ui.components.CompactStatusBar
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.InkDim
 
@@ -42,20 +43,22 @@ fun ThreadsScreen(
     onNewSession: () -> Unit,
     onResumeThread: (ThreadInfo) -> Unit,
 ) {
-    val hostNickname = state.hosts.firstOrNull { it.id == state.selectedHostId }?.nickname
-        ?: state.selectedHostId ?: "host"
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            "sessions on $hostNickname".uppercase(),
-            color = InkDim,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-        )
+    val selectedHost = state.hosts.firstOrNull { it.id == state.selectedHostId }
+    val telemetry = state.selectedHostId?.let { state.hostTelemetry[it]?.data }
+    Column(Modifier.fillMaxSize()) {
+        CompactStatusBar(host = selectedHost, data = telemetry)
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                "sessions on ${selectedHost?.nickname ?: state.selectedHostId ?: "host"}".uppercase(),
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
         Surface(
             color = MaterialTheme.colorScheme.surface,
             shape = RectangleShape,
@@ -132,6 +135,7 @@ fun ThreadsScreen(
                     ThreadRow(t, onClick = { onResumeThread(t) })
                 }
             }
+        }
         }
     }
 }

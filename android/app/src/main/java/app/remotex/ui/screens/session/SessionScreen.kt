@@ -23,6 +23,9 @@ fun SessionScreen(
 ) {
     Column(Modifier.fillMaxSize()) {
         MetaBar(state)
+        if (state.resuming) {
+            ResumingBanner(sinceMs = state.resumingSinceMs)
+        }
         EventList(
             events = state.events,
             pending = state.pending,
@@ -30,7 +33,9 @@ fun SessionScreen(
             modifier = Modifier.weight(1f, fill = true),
         )
         ComposerBar(
-            connected = state.status == Status.Connected,
+            // Block sends while we're still resuming — daemon would
+            // reject anyway, this just makes the disabled state clear.
+            connected = state.status == Status.Connected && !state.resuming,
             pending = state.pending,
             model = state.model,
             effort = state.effort,

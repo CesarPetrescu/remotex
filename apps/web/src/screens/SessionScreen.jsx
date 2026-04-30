@@ -1,5 +1,6 @@
 import { EventStream } from '../components/EventStream';
 import { Composer } from '../components/Composer';
+import { ResumingBanner } from '../components/ResumingBanner';
 import { STATUS } from '../config';
 
 export function SessionScreen({
@@ -26,6 +27,7 @@ export function SessionScreen({
   return (
     <div className="screen session-screen">
       <div className="meta">{meta}</div>
+      {state.resuming && <ResumingBanner sinceMs={state.resumingSinceMs} />}
       <EventStream
         events={state.events}
         pending={state.pending}
@@ -34,7 +36,7 @@ export function SessionScreen({
         }
       />
       <Composer
-        connected={state.status === STATUS.Connected}
+        connected={state.status === STATUS.Connected && !state.resuming}
         pending={state.pending}
         model={state.model}
         effort={state.effort}

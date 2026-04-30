@@ -72,10 +72,15 @@ class TelemetryCollector:
             memory = self._mem_proc()
             network = self._net_proc(now)
 
+        gpus = self._gpus()
         return {
             "cpu": cpu,
             "memory": memory,
-            "gpu": self._gpu(),
+            # New shape: list of all GPUs (empty if none). Keep `gpu` as
+            # the first item so older clients that read data.gpu keep
+            # working until they migrate to `gpus`.
+            "gpus": gpus,
+            "gpu": gpus[0] if gpus else None,
             "network": network,
             "uptime_s": uptime_s,
             "load_avg": load_avg,
@@ -201,17 +206,18 @@ class TelemetryCollector:
 
     # --- GPU via nvidia-smi ---
 
-    def _gpu(self) -> dict[str, Any] | None:
+    def _gpus(self) -> list[dict[str, Any]]:
+        """Return one entry per GPU. Empty list if nvidia-smi missing/fails."""
         # Cache the "no nvidia-smi" answer so we don't PATH-lookup every 3s.
         # Re-probe once every 5 minutes in case the user installs drivers.
         now = time.time()
         if self._gpu_available is False and (now - self._gpu_probe_at) < 300:
-            return None
+            return []
         binary = shutil.which("nvidia-smi")
         self._gpu_probe_at = now
         if not binary:
             self._gpu_available = False
-            return None
+            return []
         try:
             out = subprocess.check_output(
                 [
@@ -225,28 +231,31 @@ class TelemetryCollector:
         except (OSError, subprocess.SubprocessError) as exc:
             log.debug("nvidia-smi failed: %s", exc)
             self._gpu_available = False
-            return None
+            return []
         self._gpu_available = True
-        line = (out.splitlines() or [""])[0].strip()
-        if not line:
-            return None
-        parts = [p.strip() for p in line.split(",")]
+        gpus: list[dict[str, Any]] = []
+        for raw in out.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split(",")]
 
-        def _f(i: int) -> float | None:
-            if i >= len(parts) or not parts[i]:
-                return None
-            try:
-                return float(parts[i])
-            except ValueError:
-                return None
+            def _f(i: int) -> float | None:
+                if i >= len(parts) or not parts[i]:
+                    return None
+                try:
+                    return float(parts[i])
+                except ValueError:
+                    return None
 
-        return {
-            "name": parts[0] if parts and parts[0] else None,
-            "percent": _f(1),
-            "mem_used_mb": _f(2),
-            "mem_total_mb": _f(3),
-            "temp_c": _f(4),
-        }
+            gpus.append({
+                "name": parts[0] if parts and parts[0] else None,
+                "percent": _f(1),
+                "mem_used_mb": _f(2),
+                "mem_total_mb": _f(3),
+                "temp_c": _f(4),
+            })
+        return gpus
 
 
 async def telemetry_loop(

@@ -2713,3 +2713,28 @@ main.screen-host {
 .btn-primary:hover:not(:disabled) { background: var(--amber); border-color: var(--amber); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-sm { padding: 4px 10px; font-size: 11px; }
+
+.resuming-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(94, 225, 255, 0.06);
+  border-top: 1px solid rgba(94, 225, 255, 0.45);
+  border-bottom: 1px solid rgba(94, 225, 255, 0.18);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.resuming-banner .resuming-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--amber);
+  animation: resuming-pulse 1.6s ease-in-out infinite;
+}
+.resuming-banner .resuming-text { flex: 1; }
+.resuming-banner .resuming-elapsed { color: var(--ink-dim); }
+@keyframes resuming-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

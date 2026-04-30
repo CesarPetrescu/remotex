@@ -103,6 +103,11 @@ data class UiState(
     val pendingApproval: ApprovalPrompt? = null,
     val slashFeedback: String? = null,
     val planMode: Boolean = false,   // true after /plan, cleared on /default
+    // True between thread-status:resuming and thread-status:resumed/resume-failed.
+    // Codex can take a minute+ to re-hydrate large rollouts; the banner makes it
+    // obvious the app isn't hung.
+    val resuming: Boolean = false,
+    val resumingSinceMs: Long = 0L,
     val hostTelemetry: Map<String, HostTelemetrySnapshot> = emptyMap(),
     // Picker list. Falls back to the embedded MODEL_OPTIONS list below
     // until GET /api/models replaces it on first load.
@@ -469,6 +474,8 @@ class RemotexViewModel(
                 pendingApproval = null,
                 slashFeedback = null,
                 pendingImages = emptyList(),
+                resuming = false,
+                resumingSinceMs = 0L,
             )
         }
         viewModelScope.launch {
@@ -688,6 +695,8 @@ class RemotexViewModel(
                 planMode = false,
                 pendingApproval = null,
                 slashFeedback = null,
+                resuming = false,
+                resumingSinceMs = 0L,
             )
         }
     }
@@ -839,12 +848,22 @@ class RemotexViewModel(
 
             "thread-status" -> {
                 when (data.string("status")) {
+                    "resuming" -> {
+                        _state.update {
+                            it.copy(
+                                resuming = true,
+                                resumingSinceMs = System.currentTimeMillis(),
+                            )
+                        }
+                    }
                     "resumed" -> {
                         reconnectAttempt = 0
                         _state.update {
                             it.copy(
                                 status = Status.Connected,
                                 error = null,
+                                resuming = false,
+                                resumingSinceMs = 0L,
                                 session = it.session?.copy(
                                     model = data.string("model") ?: it.session.model,
                                     cwd = data.string("cwd") ?: it.session.cwd,
@@ -857,6 +876,8 @@ class RemotexViewModel(
                             it.copy(
                                 status = Status.Error,
                                 pending = false,
+                                resuming = false,
+                                resumingSinceMs = 0L,
                                 error = data.string("error") ?: "Saved chat could not be resumed.",
                             )
                         }

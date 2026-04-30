@@ -19,6 +19,9 @@ data class HostTelemetryResponse(
 data class HostTelemetryData(
     val cpu: CpuTelemetry? = null,
     val memory: MemoryTelemetry? = null,
+    // New: full list of attached GPUs (empty when nvidia-smi absent).
+    // `gpu` is the first item, kept for older relays/web clients.
+    val gpus: List<GpuTelemetry> = emptyList(),
     val gpu: GpuTelemetry? = null,
     val network: NetworkTelemetry? = null,
     @SerialName("uptime_s") val uptimeS: Long? = null,

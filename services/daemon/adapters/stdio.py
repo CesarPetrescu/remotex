@@ -299,10 +299,26 @@ class StdioCodexAdapter(SessionAdapter):
 
     async def _finish_resume(self, model_hint: str) -> None:
         assert self._resume_thread_id
+        # Tell the client we've started talking to codex so the UI can
+        # show a "resuming…" indicator. Without this, the user just
+        # sees the transcript with no signal that more is happening
+        # in the background.
+        await self._queue.put(SessionEvent("thread-status", {
+            "status": "resuming",
+            "thread_id": self._resume_thread_id,
+        }))
         try:
+            # Codex re-hydrates the entire saved JSONL rollout on
+            # thread/resume, which can take well over a minute on long
+            # multi-turn threads. The local transcript is already
+            # visible to the user (see the comment in start()), so this
+            # task only needs to finish before the user sends a NEW
+            # turn — which is gated by a separate 20s wait in handle().
+            # 10 minutes is the upper bound for "codex is genuinely
+            # working" vs "codex is wedged."
             resp = await self._request("thread/resume", {
                 "threadId": self._resume_thread_id,
-            }, timeout=20.0)
+            }, timeout=600.0)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001

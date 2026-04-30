@@ -55,6 +55,10 @@ const initialState = {
   pendingApproval: null,
   slashFeedback: null,
   planMode: false,
+  // True between thread-status:resuming and thread-status:resumed/resume-failed.
+  // Codex can take a minute+ to re-hydrate big rollouts; surfaced as a banner.
+  resuming: false,
+  resumingSinceMs: 0,
   error: null,
   // hostTelemetry[hostId] = {
   //   current: { cpu:{percent,cores,temp_c}, memory:{used_bytes,total_bytes,percent},
@@ -174,8 +178,14 @@ function reducer(state, action) {
         pendingImages: [],
         pending: false,
         planMode: false,
+        resuming: false,
+        resumingSinceMs: 0,
         status: action.status ?? STATUS.Idle,
       };
+    case 'RESUMING_START':
+      return { ...state, resuming: true, resumingSinceMs: action.sinceMs };
+    case 'RESUMING_END':
+      return { ...state, resuming: false, resumingSinceMs: 0 };
     case 'SESSION_ATTACHED':
       return { ...state, session: action.session, status: STATUS.Connecting };
     case 'SESSION_INFO':
@@ -440,7 +450,10 @@ export function useRemotex() {
         return;
       }
       case 'thread-status':
-        if (data.status === 'resumed') {
+        if (data.status === 'resuming') {
+          dispatch({ type: 'RESUMING_START', sinceMs: Date.now() });
+        } else if (data.status === 'resumed') {
+          dispatch({ type: 'RESUMING_END' });
           dispatch({ type: 'SESSION_STATUS', status: STATUS.Connected });
           dispatch({
             type: 'SESSION_INFO',
@@ -448,6 +461,7 @@ export function useRemotex() {
           });
           dispatch({ type: 'SET_ERROR', error: null });
         } else if (data.status === 'resume-failed') {
+          dispatch({ type: 'RESUMING_END' });
           dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });
           dispatch({
             type: 'SET_ERROR',

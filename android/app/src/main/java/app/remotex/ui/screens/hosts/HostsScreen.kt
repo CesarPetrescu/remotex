@@ -27,7 +27,6 @@ import app.remotex.model.Host
 import app.remotex.ui.UiState
 import app.remotex.ui.components.SectionLabel
 import app.remotex.ui.components.TokenField
-import app.remotex.ui.screens.hosts.telemetry.TelemetryPanel
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
 
@@ -40,13 +39,11 @@ fun HostsScreen(
     @Suppress("UNUSED_PARAMETER") onModelChange: (String) -> Unit,
     @Suppress("UNUSED_PARAMETER") onEffortChange: (String) -> Unit,
 ) {
-    val selectedHost = state.hosts.firstOrNull { it.id == state.selectedHostId }
-    val telemetry = state.selectedHostId?.let { state.hostTelemetry[it] }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item { TokenField(state.userToken, onTokenChange) }
         item {
@@ -66,8 +63,7 @@ fun HostsScreen(
                 }
             }
         }
-        item { TelemetryPanel(telemetry, selectedHost) }
-        item { SectionLabel("Hosts") }
+        item { SectionLabel("Hosts (${state.hosts.size})") }
         if (state.hosts.isEmpty()) {
             item {
                 Text(
@@ -80,7 +76,11 @@ fun HostsScreen(
             }
         } else {
             items(state.hosts, key = { it.id }) { h ->
-                HostRow(h) { onHostTap(h) }
+                HostRow(
+                    host = h,
+                    data = state.hostTelemetry[h.id]?.data,
+                    onClick = { onHostTap(h) },
+                )
             }
         }
     }
