@@ -57,6 +57,14 @@ services:
       # or your own reverse proxy for anything public. Override the host
       # port with RELAY_HOST_PORT=… if :8080 is already taken.
       - "${RELAY_HOST_BIND:-127.0.0.1}:${RELAY_HOST_PORT:-8080}:8080"
+    volumes:
+      # Legacy: pre-Postgres installs stored inventory in
+      # /data/relay.db (SQLite). The relay's startup migrator imports
+      # it once into Postgres and renames the file to .migrated so
+      # subsequent boots skip the import. Safe to omit on fresh
+      # installs; required to avoid silent data loss when upgrading
+      # an old box.
+      - relay-data:/data
     networks:
       - remotex
     logging:
@@ -86,6 +94,7 @@ services:
 
 volumes:
   search-data:
+  relay-data:
   caddy-data:
   caddy-config:
 

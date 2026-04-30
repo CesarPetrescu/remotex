@@ -11,7 +11,9 @@ copy from ``relay-data/relay.db`` into this Postgres schema.
 from __future__ import annotations
 
 import logging
+import os
 import secrets
+import sqlite3
 import time
 import uuid
 from typing import Any
@@ -85,12 +87,124 @@ class Store:
         )
         async with self._pool.acquire() as conn:
             await conn.execute(SCHEMA)
+        await self._migrate_legacy_sqlite()
         await self._seed_demo()
 
     async def stop(self) -> None:
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
+
+    async def _migrate_legacy_sqlite(self) -> None:
+        """One-shot import of pre-Postgres SQLite inventory.
+
+        Pre-743d89c installs kept hosts/users/bridge_keys in
+        ``/data/relay.db`` (SQLite). After the Postgres migration the
+        old DB was orphaned: no compose volume mount, no auto-import,
+        so a fresh container would happily seed demo data on top of
+        whatever real data the operator already had. This makes the
+        rebuild lossless: if a SQLite file is present and Postgres
+        has no real hosts yet, copy users + hosts + bridge keys +
+        sessions across (skipping anything already in Postgres) and
+        rename the file so we don't re-run on subsequent boots.
+        """
+        sqlite_path = os.environ.get("RELAY_LEGACY_SQLITE", "/data/relay.db")
+        if not os.path.exists(sqlite_path):
+            return
+
+        async with self._pool.acquire() as conn:
+            # "Real" = any host that isn't owned by a still-default demo
+            # bridge key. If the operator has anything here already we
+            # treat Postgres as authoritative and leave the SQLite file
+            # alone for them to handle.
+            non_demo_hosts = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM inventory_hosts
+                 WHERE id NOT IN (
+                     SELECT host_id FROM inventory_bridge_keys WHERE token = $1
+                 )
+                """,
+                DEMO_BRIDGE_TOKEN,
+            )
+        if non_demo_hosts and non_demo_hosts > 0:
+            log.info(
+                "legacy sqlite at %s ignored: postgres already has %d real host(s)",
+                sqlite_path, non_demo_hosts,
+            )
+            return
+
+        try:
+            db = sqlite3.connect(sqlite_path)
+            db.row_factory = sqlite3.Row
+            users = [dict(r) for r in db.execute(
+                "SELECT token, email, created_at FROM users"
+            )]
+            hosts = [dict(r) for r in db.execute(
+                "SELECT id, owner_token, nickname, hostname, platform, "
+                "       created_at FROM hosts"
+            )]
+            keys = [dict(r) for r in db.execute(
+                "SELECT token, host_id, created_at, revoked_at FROM bridge_keys"
+            )]
+            try:
+                sessions = [dict(r) for r in db.execute(
+                    "SELECT id, host_id, owner_token, opened_at, closed_at "
+                    "  FROM sessions"
+                )]
+            except sqlite3.OperationalError:
+                sessions = []
+        except sqlite3.DatabaseError as exc:
+            log.warning("legacy sqlite at %s unreadable: %s", sqlite_path, exc)
+            return
+        finally:
+            try:
+                db.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        if not users and not hosts and not keys:
+            return
+
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for u in users:
+                    await conn.execute(
+                        "INSERT INTO inventory_users(token, email, created_at) "
+                        "VALUES ($1,$2,$3) ON CONFLICT (token) DO NOTHING",
+                        u["token"], u["email"], u["created_at"],
+                    )
+                for h in hosts:
+                    await conn.execute(
+                        "INSERT INTO inventory_hosts("
+                        "  id, owner_token, nickname, hostname, platform, created_at"
+                        ") VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+                        h["id"], h["owner_token"], h["nickname"],
+                        h["hostname"], h["platform"], h["created_at"],
+                    )
+                for k in keys:
+                    await conn.execute(
+                        "INSERT INTO inventory_bridge_keys("
+                        "  token, host_id, created_at, revoked_at"
+                        ") VALUES ($1,$2,$3,$4) ON CONFLICT (token) DO NOTHING",
+                        k["token"], k["host_id"], k["created_at"], k["revoked_at"],
+                    )
+                for s in sessions:
+                    await conn.execute(
+                        "INSERT INTO inventory_sessions("
+                        "  id, host_id, owner_token, opened_at, closed_at"
+                        ") VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
+                        s["id"], s["host_id"], s["owner_token"],
+                        s["opened_at"], s["closed_at"],
+                    )
+
+        log.warning(
+            "migrated legacy sqlite at %s: %d user(s) + %d host(s) + %d bridge key(s) + %d session(s)",
+            sqlite_path, len(users), len(hosts), len(keys), len(sessions),
+        )
+        try:
+            os.rename(sqlite_path, sqlite_path + ".migrated")
+        except OSError as exc:
+            log.warning("could not rename %s: %s", sqlite_path, exc)
 
     async def _seed_demo(self) -> None:
         async with self._pool.acquire() as conn:
