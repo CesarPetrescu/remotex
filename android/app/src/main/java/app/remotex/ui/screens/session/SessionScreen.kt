@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -110,18 +109,17 @@ fun SessionScreen(
             onOpenFiles = { filesPanelOpen = true },
             onUpload = { uploadLauncher.launch(arrayOf("*/*")) },
         )
-        // Wrap the event list in a SelectionContainer so users can drag-
-        // select across multiple events (question + answer + tool output)
-        // and copy in one go. Composer stays outside — input fields handle
-        // their own selection.
-        SelectionContainer(modifier = Modifier.weight(1f, fill = true)) {
-            EventList(
-                events = state.events,
-                pending = state.pending,
-                connected = state.status == Status.Connected,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        // SelectionContainer wrapped around a weight(1f) LazyColumn breaks
+        // vertical sizing (the LazyColumn ends up with unbounded max
+        // height and pushes the composer off-screen). Each event row
+        // wraps its own text in SelectionContainer instead — drag-
+        // select still works inside a single event.
+        EventList(
+            events = state.events,
+            pending = state.pending,
+            connected = state.status == Status.Connected,
+            modifier = Modifier.weight(1f, fill = true),
+        )
         ComposerBar(
             // Allow typing during resume — the daemon waits up to 20s
             // for resume to finish before rejecting a turn-start, so
