@@ -1009,7 +1009,6 @@ export function useRemotex() {
     const onPop = () => applyRouteRef.current?.(parseUrl(window.location));
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1023,6 +1022,9 @@ export function useRemotex() {
       window.history.replaceState({ remotex: true }, '', next);
     }
     lastScreenRef.current = state.screen;
+    // Surgical deps: re-fire only when a URL-bearing slice of state changes.
+    // Listing the whole state would push/replace history on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     state.screen,
     state.selectedHostId,

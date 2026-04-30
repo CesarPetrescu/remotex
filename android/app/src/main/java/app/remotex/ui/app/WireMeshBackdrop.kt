@@ -4,41 +4,57 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ok
 
 @Composable
-fun WireMeshBackdrop(
-    modifier: Modifier = Modifier,
-    lineAlpha: Float = 0.22f,
-    diagAlpha: Float = 0.16f,
-) {
+fun WireMeshBackdrop(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier) {
-        val grid = 40.dp.toPx()
-        val diagStep = grid * 3f
-        val baseLine = Amber.copy(alpha = lineAlpha)
-        val diagLine = Ok.copy(alpha = diagAlpha)
+        val w = size.width
+        val h = size.height
+        val maxDim = maxOf(w, h)
 
-        var y = 0f
-        while (y <= size.height) {
-            drawLine(baseLine, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
-            y += grid
-        }
-        var x = 0f
-        while (x <= size.width) {
-            drawLine(baseLine.copy(alpha = lineAlpha * 0.78f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
-            x += grid
-        }
-        var offset = -size.height
-        while (offset <= size.width) {
-            drawLine(
-                diagLine,
-                Offset(offset, size.height),
-                Offset(offset + size.height, 0f),
-                strokeWidth = 1f,
-            )
-            offset += diagStep
-        }
+        drawBackdropOrb(
+            centerX = w * 0.12f,
+            centerY = -h * 0.10f,
+            radius = maxDim * 0.55f,
+            color = Amber,
+            alpha = 0.10f,
+        )
+        drawBackdropOrb(
+            centerX = w * 0.95f,
+            centerY = h * 1.10f,
+            radius = maxDim * 0.55f,
+            color = Ok,
+            alpha = 0.08f,
+        )
+        drawBackdropOrb(
+            centerX = w * 0.50f,
+            centerY = h * 0.50f,
+            radius = maxDim * 0.40f,
+            color = AccentDeep,
+            alpha = 0.04f,
+        )
     }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBackdropOrb(
+    centerX: Float,
+    centerY: Float,
+    radius: Float,
+    color: androidx.compose.ui.graphics.Color,
+    alpha: Float,
+) {
+    drawRect(
+        brush = Brush.radialGradient(
+            colors = listOf(color.copy(alpha = alpha), color.copy(alpha = 0f)),
+            center = Offset(centerX, centerY),
+            radius = radius,
+        ),
+        topLeft = Offset.Zero,
+        size = Size(size.width, size.height),
+    )
 }

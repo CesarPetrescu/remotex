@@ -141,7 +141,7 @@ export class RelayClient {
       }
       const tail = buffer.trim();
       if (tail) {
-        try { onEvent?.(JSON.parse(tail)); } catch (err) { /* ignore */ }
+        try { onEvent?.(JSON.parse(tail)); } catch { /* ignore */ }
       }
     })();
     return { promise, abort: () => controller?.abort() };
