@@ -17,6 +17,11 @@ import app.remotex.model.UiEvent
 import app.remotex.net.RelayClient
 import app.remotex.net.SessionSocket
 import app.remotex.net.SocketEvent
+import app.remotex.service.RemotexEvents
+import app.remotex.service.SessionForegroundService
+import app.remotex.service.SessionNotifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -209,7 +214,98 @@ class RemotexViewModel(
                 // Keep fallback list; not fatal.
             }
         }
+        observePendingForNotifications()
+        observeNotificationActions()
     }
+
+    /**
+     * Watches `state.pending` for transitions: rising edge starts the
+     * foreground service (so the OS keeps the WS alive while backgrounded
+     * and the user sees a persistent "running" notification); falling
+     * edge stops it. On the falling edge, if the app is *not* in the
+     * foreground, also post a one-shot "agent done" notification.
+     */
+    private fun observePendingForNotifications() {
+        viewModelScope.launch {
+            var prevPending = false
+            _state.collect { s ->
+                val nowPending = s.pending
+                if (nowPending && !prevPending) {
+                    val (title, hostNick) = currentChatLabel(s)
+                    SessionForegroundService.start(
+                        ctx = getApplication(),
+                        chatTitle = title,
+                        hostNickname = hostNick,
+                        hostId = s.session?.hostId,
+                        threadId = s.session?.let { extractThreadId(it.sessionId, s) },
+                    )
+                } else if (!nowPending && prevPending) {
+                    SessionForegroundService.stop(getApplication())
+                    if (!isAppInForeground()) {
+                        val (title, hostNick) = currentChatLabel(s)
+                        SessionNotifier.postDoneNotification(
+                            ctx = getApplication(),
+                            chatTitle = title,
+                            hostNickname = hostNick,
+                            hostId = s.session?.hostId,
+                            threadId = s.session?.let { extractThreadId(it.sessionId, s) },
+                            tokensIn = s.tokensInput + s.tokensCached,
+                            tokensOut = s.tokensOutput + s.tokensReasoning,
+                        )
+                    }
+                }
+                prevPending = nowPending
+            }
+        }
+    }
+
+    private fun observeNotificationActions() {
+        viewModelScope.launch {
+            RemotexEvents.cancelTurn.collect { interruptTurn() }
+        }
+        viewModelScope.launch {
+            RemotexEvents.openSession.collect { (hostId, threadId) ->
+                _state.update { it.copy(selectedHostId = hostId) }
+                openSession(resumeThreadId = threadId, hostId = hostId)
+            }
+        }
+    }
+
+    private fun isAppInForeground(): Boolean = try {
+        ProcessLifecycleOwner.get().lifecycle.currentState
+            .isAtLeast(Lifecycle.State.RESUMED)
+    } catch (_: Throwable) {
+        true  // safer to skip the notification than to spam if lifecycle isn't ready
+    }
+
+    /** Returns (chatTitle, hostNickname) for notification copy. */
+    private fun currentChatLabel(s: UiState): Pair<String, String> {
+        val hostNick = s.hosts.firstOrNull { it.id == s.session?.hostId }?.nickname
+            ?: s.session?.hostId?.take(12) ?: "host"
+        // Match thread by best-known id; otherwise show the session prefix.
+        val threadId = s.session?.let { extractThreadId(it.sessionId, s) }
+        val chatTitle = threadId?.let { tid ->
+            s.threads.firstOrNull { it.id == tid }?.let { thread ->
+                thread.title?.takeIf { it.isNotBlank() } ?: thread.preview.take(40)
+            }
+        } ?: "current chat"
+        return chatTitle to hostNick
+    }
+
+    /**
+     * The current SessionInfo doesn't carry the codex thread id directly,
+     * so we infer it from the threads list (most-recently opened thread
+     * for this host). If we have no match, return null and notification
+     * deep-links fall back to "open the app at last screen".
+     */
+    private fun extractThreadId(sessionId: String, s: UiState): String? {
+        // openSession stashes the resume_thread_id into our local
+        // resumingTarget; we don't currently track it on SessionInfo,
+        // so fall back to whatever thread we last resumed.
+        return _lastResumeThreadId
+    }
+
+    private var _lastResumeThreadId: String? = null
 
     fun setModel(model: String) {
         _state.update {
@@ -464,6 +560,9 @@ class RemotexViewModel(
         val target = hostId ?: _state.value.selectedHostId ?: return
         closeSession()
         userClosed = false
+        // Track for the foreground service / done notification — they
+        // need the thread id to look up the title and deep-link back.
+        _lastResumeThreadId = resumeThreadId
         _state.update {
             it.copy(
                 screen = Screen.Session,
