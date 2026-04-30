@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -86,7 +87,15 @@ fun SessionScreen(
             }
         }
     }
-    Column(Modifier.fillMaxSize()) {
+    // imePadding() lifts the bottom of the column above the soft keyboard
+    // so the composer stays visible while the user is typing.
+    // enableEdgeToEdge() at the activity level + a transparent Scaffold
+    // means the composer otherwise sits underneath the IME / nav bar.
+    Column(
+        Modifier
+            .fillMaxSize()
+            .imePadding(),
+    ) {
         MetaBar(state)
         if (state.resuming) {
             ResumingBanner(sinceMs = state.resumingSinceMs)
