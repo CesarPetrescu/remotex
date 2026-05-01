@@ -688,6 +688,11 @@ class RemotexViewModel(
                 error = null,
             )
         }
+        // A2: switch the telemetry poll to the newly-selected host. Without
+        // this, the poll stayed on whatever host refresh() auto-selected
+        // and the threads screen showed "no telemetry yet" forever for any
+        // other host the user tapped into.
+        startTelemetryPoll(host.id)
         refreshThreads()
     }
 
