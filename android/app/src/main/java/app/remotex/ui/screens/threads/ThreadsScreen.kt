@@ -18,11 +18,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +39,7 @@ import app.remotex.ui.components.CompactStatusBar
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.InkDim
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThreadsScreen(
     state: UiState,
@@ -48,6 +51,13 @@ fun ThreadsScreen(
     val telemetry = state.selectedHostId?.let { state.hostTelemetry[it]?.data }
     Column(Modifier.fillMaxSize()) {
         CompactStatusBar(host = selectedHost, data = telemetry)
+        // A3: pull-to-refresh wraps the threads body. The status bar
+        // sits above so the indicator doesn't have to climb past it.
+        PullToRefreshBox(
+            isRefreshing = state.threadsLoading,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize(),
+        ) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -167,6 +177,7 @@ fun ThreadsScreen(
                     }
                 }
             }
+        }
         }
         }
     }

@@ -13,9 +13,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,6 +32,7 @@ import app.remotex.ui.components.TokenField
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HostsScreen(
     state: UiState,
@@ -39,6 +42,13 @@ fun HostsScreen(
     @Suppress("UNUSED_PARAMETER") onModelChange: (String) -> Unit,
     @Suppress("UNUSED_PARAMETER") onEffortChange: (String) -> Unit,
 ) {
+    // A3: pull-to-refresh — wraps the LazyColumn so dragging from the
+    // top fires the same onRefresh as the explicit Load hosts button.
+    PullToRefreshBox(
+        isRefreshing = state.loading,
+        onRefresh = onRefresh,
+        modifier = Modifier.fillMaxSize(),
+    ) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -83,5 +93,6 @@ fun HostsScreen(
                 )
             }
         }
+    }
     }
 }
