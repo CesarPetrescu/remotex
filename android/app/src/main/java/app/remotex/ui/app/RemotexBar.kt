@@ -37,7 +37,7 @@ fun RemotexBar(state: UiState, onBack: () -> Unit, onSearch: () -> Unit) {
                     fontSize = 14.sp,
                 )
                 Spacer(Modifier.width(10.dp))
-                StatusBadge(state.status)
+                StatusBadge(state)
             }
         },
         navigationIcon = {
