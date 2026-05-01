@@ -112,6 +112,15 @@ export function Composer({
           onStop={onStop}
         />
       </div>
+      {/* W7: keyboard hint — only relevant when there's something to
+          send. Shows up under the input row in dim mono so it doesn't
+          fight for attention. */}
+      {enabled && text.length > 0 && (
+        <div className="composer-hint">
+          <span><kbd>↵</kbd> send</span>
+          <span><kbd>⇧</kbd>+<kbd>↵</kbd> newline</span>
+        </div>
+      )}
     </div>
   );
 }
