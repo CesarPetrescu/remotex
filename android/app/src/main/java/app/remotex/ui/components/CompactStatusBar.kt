@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,10 +35,12 @@ import app.remotex.ui.theme.Ok
 import app.remotex.ui.theme.Warn
 
 /**
- * One-line live host status used at the top of the threads/session
- * screens. Renders only the chips we actually have data for — no big
- * panel, no charts. CPU/RAM/uptime always; one GPU chip per attached
- * GPU (zero chips if none, N chips if many).
+ * Live host status card. Shown at the top of the threads/session
+ * screens. Two rows:
+ *   1. identity — hostname + os_user + online dot, sized for legibility
+ *   2. metric chips — CPU / RAM / GPU(s) / uptime / temp
+ * Hidden chips never render (zero-GPU box has no GPU section), so the
+ * card always shows exactly the data we have.
  */
 @Composable
 fun CompactStatusBar(
@@ -46,96 +49,133 @@ fun CompactStatusBar(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
         border = BorderStroke(1.dp, Line),
         shape = RectangleShape,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        LazyRow(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(7.dp)
-                            .background(if (host?.online == true) Ok else InkDim)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        host?.nickname ?: "no host",
-                        color = Ink,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    host?.osUser?.takeIf { it.isNotBlank() }?.let {
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            "@$it",
-                            color = Amber,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 10.sp,
-                        )
-                    }
-                }
-            }
-            data?.cpu?.percent?.let {
-                item { StatusChip(label = "CPU", value = pct(it), accent = Amber) }
-            }
-            data?.memory?.percent?.let {
-                item { StatusChip(label = "RAM", value = pct(it), accent = Color(0xFF60A5FA)) }
-            }
-            data?.gpus?.takeIf { it.isNotEmpty() }?.forEachIndexed { idx, g ->
-                item { GpuChip(idx = idx, total = data.gpus.size, gpu = g) }
-            }
-            data?.uptimeS?.takeIf { it > 0L }?.let {
-                item { StatusChip(label = "UP", value = uptimeShort(it), accent = InkDim) }
-            }
-            data?.cpu?.tempC?.let {
-                item { StatusChip(label = "TEMP", value = "${it.toInt()}°", accent = Warn) }
-            }
+            IdentityRow(host = host, uptimeS = data?.uptimeS)
+            MetricsRow(data = data)
         }
     }
 }
 
 @Composable
-private fun StatusChip(label: String, value: String, accent: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(5.dp).background(accent))
-        Spacer(Modifier.width(4.dp))
+private fun IdentityRow(host: Host?, uptimeS: Long?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            Modifier
+                .size(10.dp)
+                .background(if (host?.online == true) Ok else InkDim),
+        )
         Text(
-            label,
-            color = InkDim,
+            host?.nickname ?: "no host",
+            color = Ink,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        host?.osUser?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                "@$it",
+                color = Amber,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+            )
+        }
+        Spacer(Modifier.width(0.dp))
+        Box(Modifier.weight(1f))
+        Text(
+            text = if (host?.online == true) "ONLINE" else "OFFLINE",
+            color = if (host?.online == true) Ok else InkDim,
             fontFamily = FontFamily.Monospace,
             fontSize = 9.sp,
         )
-        Spacer(Modifier.width(4.dp))
-        Text(
-            value,
-            color = Ink,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-        )
+        uptimeS?.takeIf { it > 0L }?.let {
+            Text(
+                "· up ${uptimeShort(it)}",
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
+        }
     }
 }
 
 @Composable
-private fun GpuChip(idx: Int, total: Int, gpu: GpuTelemetry) {
+private fun MetricsRow(data: HostTelemetryData?) {
+    if (data == null) {
+        Text(
+            text = "no telemetry yet",
+            color = InkDim,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+        )
+        return
+    }
+    LazyRow(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        data.cpu?.percent?.let {
+            item { MetricCell("CPU", pct(it), Amber, sub = data.cpu.cores?.let { c -> "${c}c" }) }
+        }
+        data.memory?.percent?.let {
+            item {
+                val sub = if (data.memory.totalBytes != null) {
+                    val totGb = data.memory.totalBytes / 1024.0 / 1024.0 / 1024.0
+                    "${"%.0f".format(totGb)}GB"
+                } else null
+                MetricCell("RAM", pct(it), Color(0xFF60A5FA), sub = sub)
+            }
+        }
+        data.gpus.takeIf { it.isNotEmpty() }?.forEachIndexed { idx, g ->
+            item { GpuCell(idx = idx, total = data.gpus.size, gpu = g) }
+        }
+        data.cpu?.tempC?.let {
+            item { MetricCell("TEMP", "${it.toInt()}°", Warn, sub = null) }
+        }
+    }
+}
+
+@Composable
+private fun MetricCell(label: String, value: String, accent: Color, sub: String?) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(5.dp).background(accent))
+            Spacer(Modifier.width(4.dp))
+            Text(label, color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+        }
+        Spacer(Modifier.size(2.dp))
+        Text(value, color = Ink, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
+        if (sub != null) {
+            Text(sub, color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+        }
+    }
+}
+
+@Composable
+private fun GpuCell(idx: Int, total: Int, gpu: GpuTelemetry) {
     val short = gpuShortName(gpu.name) ?: "GPU"
-    // When there are multiple GPUs, prefix with index so users can
-    // tell them apart. Single-GPU box just shows the short name.
-    val label = if (total > 1) "${short}#${idx + 1}" else short
+    val label = (if (total > 1) "${short}#${idx + 1}" else short).uppercase()
     val value = gpu.percent?.let { pct(it) }
         ?: gpu.memTotalMb?.let { tot ->
             val used = gpu.memUsedMb ?: 0.0
-            "${(used / tot * 100).toInt()}% mem"
+            "${(used / tot * 100).toInt()}%"
         }
         ?: "—"
-    StatusChip(label = label.uppercase(), value = value, accent = Ok)
+    val sub = gpu.memTotalMb?.let { "${"%.0f".format(it / 1024.0)}GB" }
+    MetricCell(label = label, value = value, accent = Ok, sub = sub)
 }
 
 private fun pct(v: Double): String =
@@ -150,12 +190,9 @@ private fun uptimeShort(s: Long): String {
     }
 }
 
-/** Trim "NVIDIA GeForce RTX 4060 Laptop GPU" → "4060". */
 private fun gpuShortName(name: String?): String? {
     if (name.isNullOrBlank()) return null
     val tokens = name.split(' ').filter { it.isNotBlank() }
-    // Prefer the model number token (RTX 4060, A100, etc.). Fall back to the last
-    // meaningful token if the heuristic finds nothing.
     val model = tokens.firstOrNull { it.length in 3..6 && it.any(Char::isDigit) }
     return model ?: tokens.lastOrNull()
 }
