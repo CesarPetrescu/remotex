@@ -12,6 +12,15 @@ function formatK(n) {
   return (n / 1000000).toFixed(1) + 'M';
 }
 
+function shortenCwdLeft(cwd, max = 36) {
+  if (!cwd) return '';
+  if (cwd.length <= max) return cwd;
+  // A5/W4 mirror: keep the leaf folder visible.
+  const tail = cwd.slice(-(max - 1));
+  const slash = tail.indexOf('/');
+  return '…' + (slash > 0 ? tail.slice(slash) : tail);
+}
+
 export function SessionScreen({
   state,
   onSend,
@@ -24,31 +33,33 @@ export function SessionScreen({
   workspaceApi,
 }) {
   const info = state.session;
-  const meta = !info
-    ? 'no session'
-    : [
-        `session ${info.sessionId?.slice(0, 12) ?? '—'}… on ${info.hostId?.slice(0, 12) ?? '—'}…`,
-        info.model,
-        info.cwd,
-      ]
-        .filter(Boolean)
-        .join(' · ');
+  const hostId = info?.hostId;
+  const cwd = info?.cwd || '/';
   const totalIn = state.tokensInput + state.tokensCached;
   const totalOut = state.tokensOutput + state.tokensReasoning;
   const haveTokens = totalIn > 0 || totalOut > 0;
-  const cwd = info?.cwd || '/';
-  const hostId = info?.hostId;
+  // W4: derive a real chat title from the threads list when we have one,
+  // so the meta block shows something humans can scan instead of a
+  // session UUID prefix.
+  const threadId = info?.threadId || info?.thread_id;
+  const thread = threadId ? state.threads.find((t) => t.id === threadId) : null;
+  const chatTitle = thread?.title && !thread.title_is_generic
+    ? thread.title
+    : (thread?.preview || (info?.sessionId ? `session ${info.sessionId.slice(0, 12)}…` : 'no session'));
+  const host = state.hosts.find((h) => h.id === hostId);
+  const hostLabel = host
+    ? `${host.nickname}${host.os_user ? ' @' + host.os_user : ''}`
+    : (hostId ? hostId.slice(0, 12) + '…' : '—');
 
   const [filesOpen, setFilesOpen] = useState(false);
   const fileInputRef = useRef(null);
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0];
-    e.target.value = ''; // allow re-selecting the same file later
+    e.target.value = '';
     if (!file || !hostId) return;
     try {
       await workspaceApi.upload(hostId, cwd, file);
-      // Re-open the drawer so the user sees the new file land.
       setFilesOpen(true);
     } catch (err) {
       alert(`Upload failed: ${err.message || err}`);
@@ -57,37 +68,50 @@ export function SessionScreen({
 
   return (
     <div className="screen session-screen">
-      <div className="meta">
-        <span className="meta-text">{meta}</span>
-        {haveTokens && (
-          <span className="token-chip" title={`input ${state.tokensInput} (+${state.tokensCached} cached) · output ${state.tokensOutput} (+${state.tokensReasoning} reasoning)`}>
-            🪙 <span className="token-up">{formatK(totalIn)}↑</span>{' '}
-            <span className="token-down">{formatK(totalOut)}↓</span>
-          </span>
-        )}
-      </div>
-      <div className="ws-toolbar">
-        <button
-          type="button"
-          className="ws-toolbar-btn"
-          onClick={() => setFilesOpen(true)}
-          disabled={!hostId}
-          title="Browse files in this chat's workspace"
-        >📁 Files</button>
-        <button
-          type="button"
-          className="ws-toolbar-btn add"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={!hostId}
-          title="Add a file to the workspace (NOT image attach)"
-        >+ Add</button>
-        <span className="ws-toolbar-cwd">{cwd}</span>
-        <input
-          ref={fileInputRef}
-          type="file"
-          style={{ display: 'none' }}
-          onChange={onUpload}
-        />
+      {/* W4: two-line meta — title up top, host/model/cwd below.
+          W6: workspace + add buttons live INSIDE the meta block as
+          icon-only controls, so they're discoverable without claiming
+          a whole row of vertical space between meta and chat. */}
+      <div className="session-meta">
+        <div className="session-meta-row1">
+          <span className="session-meta-title" title={chatTitle}>{chatTitle}</span>
+          {haveTokens && (
+            <span
+              className="token-chip"
+              title={`input ${state.tokensInput} (+${state.tokensCached} cached) · output ${state.tokensOutput} (+${state.tokensReasoning} reasoning)`}
+            >
+              🪙 <span className="token-up">{formatK(totalIn)}↑</span>{' '}
+              <span className="token-down">{formatK(totalOut)}↓</span>
+            </span>
+          )}
+          <button
+            type="button"
+            className="meta-icon-btn"
+            onClick={() => setFilesOpen(true)}
+            disabled={!hostId}
+            title="Workspace files (rename / delete / download)"
+          >📁</button>
+          <button
+            type="button"
+            className="meta-icon-btn add"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!hostId}
+            title="Upload a file into the workspace cwd"
+          >＋</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={onUpload}
+          />
+        </div>
+        <div className="session-meta-row2">
+          <span className="session-meta-host">{hostLabel}</span>
+          {info?.model && <span className="session-meta-sep">·</span>}
+          {info?.model && <span className="session-meta-model">{info.model}</span>}
+          <span className="session-meta-sep">·</span>
+          <span className="session-meta-cwd" title={cwd}>{shortenCwdLeft(cwd)}</span>
+        </div>
       </div>
       {state.resuming && <ResumingBanner sinceMs={state.resumingSinceMs} />}
       <EventStream

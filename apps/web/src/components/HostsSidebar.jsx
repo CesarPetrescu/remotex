@@ -1,5 +1,11 @@
 import { relativeAge } from '../util/time';
 import { shortenCwd } from '../util/path';
+import { SCREENS } from '../config';
+
+const SCREEN_LABELS = {
+  [SCREENS.Files]: 'FILES',
+  [SCREENS.Search]: 'SEARCH',
+};
 
 /**
  * Left sidebar: hosts at the top, sessions below, user identity at the
@@ -19,6 +25,10 @@ export function HostsSidebar({
   onOpenSettings,
 }) {
   const hostUserChip = osUserChipFor(selectedHost);
+  // W2: surface "you are here" for screens that aren't covered by the
+  // hosts/sessions highlights — Files and Search live outside that
+  // hierarchy and were invisible to anyone scanning the sidebar.
+  const screenLabel = SCREEN_LABELS[state.screen];
   return (
     <aside className="hosts-sidebar" aria-label="Hosts and sessions">
       {onClose && (
@@ -32,6 +42,16 @@ export function HostsSidebar({
       )}
 
       <div className="sidebar-scroll">
+        {screenLabel && (
+          <div
+            className="sidebar-screen-pill"
+            title={`Currently viewing the ${screenLabel.toLowerCase()} screen`}
+            aria-label={`Currently on ${screenLabel}`}
+          >
+            <span className="arrow">▶</span>
+            <span className="label">{screenLabel}</span>
+          </div>
+        )}
         <SidebarSection
           label="HOSTS"
           right={state.hosts.length > 0 ? `${state.hosts.length}` : null}

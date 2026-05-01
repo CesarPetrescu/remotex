@@ -3105,3 +3105,98 @@ main.screen-host {
 
 /* hide the legacy circular avatar / pill that the redesign drops */
 .user-avatar, .user-card { display: none !important; }
+
+/* ── W4 + W6: two-line session meta with inline workspace icons ── */
+.session-meta {
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+}
+.session-meta-row1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.session-meta-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-meta-row2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.session-meta-host { color: var(--ink); }
+.session-meta-host::before { content: '◇ '; color: var(--ink-dim); }
+.session-meta-model { color: var(--amber); }
+.session-meta-cwd {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  direction: rtl;
+}
+.session-meta-sep { color: var(--line); }
+
+.meta-icon-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 13px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.meta-icon-btn:hover:not(:disabled) {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+.meta-icon-btn.add { color: var(--accent); }
+.meta-icon-btn.add:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.meta-icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── W2: "you are here" pill for non-Hosts/non-Session screens ── */
+.sidebar-screen-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 10px;
+  padding: 6px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-screen-pill:hover { background: rgba(58, 160, 232, 0.08); }
+.sidebar-screen-pill .arrow { color: var(--accent); }
+.sidebar-screen-pill .label { letter-spacing: 1.4px; }
+
+/* hide the legacy bottom-toolbar styles now that meta-icons replaced them */
+.ws-toolbar { display: none !important; }
