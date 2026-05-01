@@ -65,6 +65,7 @@ export function DashboardHeader({
             title="Telemetry"
           >
             <span aria-hidden="true">◔</span>
+            <span className="header-telemetry-label">Telemetry</span>
           </button>
         )}
       </div>

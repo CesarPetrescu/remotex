@@ -3243,3 +3243,37 @@ main.screen-host {
 .md-inline-code, .md-code, .md-code code {
   font-family: var(--mono);
 }
+
+/* ── W1: telemetry toggle gets a label below ~900px so the icon
+       isn't an unmarked dot for new users ── */
+.header-telemetry-label {
+  display: none;
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+}
+.header-telemetry-toggle:hover .header-telemetry-label { color: var(--amber); }
+@media (max-width: 900px) {
+  .header-telemetry-label { display: inline; }
+}
+
+/* ── W5: search "show more" pager ── */
+.search-show-more {
+  margin-top: 12px;
+  padding: 10px 14px;
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.search-show-more:hover {
+  border-color: var(--accent);
+  background: rgba(58, 160, 232, 0.06);
+}

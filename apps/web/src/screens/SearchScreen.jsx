@@ -1,6 +1,9 @@
+import { useEffect, useState } from 'react';
 import { relativeAge } from '../util/time';
 import { shortenCwd } from '../util/path';
 import { MarkdownText } from '../util/markdown';
+
+const SEARCH_PAGE_SIZE = 50;
 
 const MODES = [
   {
@@ -42,6 +45,18 @@ const STAGE_LABELS = {
 };
 
 export function SearchScreen({ state, onQueryChange, onSearch, onOpenResult, onModeChange, onRerankChange }) {
+  // W5: cap rendered results at SEARCH_PAGE_SIZE; "show more" extends.
+  // Keeps the DOM small (and scroll snappy) for very common 100+ result
+  // queries without adding a virtualization library.
+  const [visibleCount, setVisibleCount] = useState(SEARCH_PAGE_SIZE);
+  // Reset the cap whenever the query changes (each new search starts at
+  // the page-size top slice).
+  useEffect(() => {
+    setVisibleCount(SEARCH_PAGE_SIZE);
+  }, [state.searchQuery]);
+  const totalResults = state.searchResults.length;
+  const visibleResults = state.searchResults.slice(0, visibleCount);
+  const hiddenResults = totalResults - visibleResults.length;
   const config = state.searchConfig;
   const mode = state.searchMode || 'hybrid';
   const rerank = state.searchRerank || 'auto';
@@ -135,7 +150,7 @@ export function SearchScreen({ state, onQueryChange, onSearch, onOpenResult, onM
         <div className="empty">enter a query to find prior chats</div>
       ) : (
         <div className="search-results">
-          {state.searchResults.map((result, idx) => (
+          {visibleResults.map((result, idx) => (
             <button
               type="button"
               className="search-result"
@@ -165,6 +180,15 @@ export function SearchScreen({ state, onQueryChange, onSearch, onOpenResult, onM
               </div>
             </button>
           ))}
+          {hiddenResults > 0 && (
+            <button
+              type="button"
+              className="search-show-more"
+              onClick={() => setVisibleCount((n) => n + SEARCH_PAGE_SIZE)}
+            >
+              Show {Math.min(SEARCH_PAGE_SIZE, hiddenResults)} more · {hiddenResults} hidden
+            </button>
+          )}
         </div>
       )}
     </div>
