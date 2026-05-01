@@ -164,38 +164,35 @@ private fun WorkspaceToolbar(
     onOpenFiles: () -> Unit,
     onUpload: () -> Unit,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-        border = BorderStroke(1.dp, Line),
-        shape = RectangleShape,
-        modifier = Modifier.fillMaxWidth(),
+    // A7: match the new sidebar-action style — flat bg, thin border that
+    // brightens on press, no padding on the wrapper. The surfaceVariant
+    // surface earlier read as "card", which made the buttons feel like
+    // decoration rather than controls.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            ToolbarButton("📁 Files", InkDim, onClick = onOpenFiles)
-            ToolbarButton("+ Add", AccentDeep, onClick = onUpload)
-            Spacer(Modifier.width(4.dp))
-            Text(
-                cwd,
-                color = InkDim,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        ToolbarButton("📁 Files", InkDim, onClick = onOpenFiles)
+        ToolbarButton("+ Add", AccentDeep, onClick = onUpload)
+        Text(
+            cwd,
+            color = InkDim,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
 @Composable
 private fun ToolbarButton(label: String, accent: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.5f)),
+        color = androidx.compose.ui.graphics.Color.Transparent,
+        border = BorderStroke(1.dp, Line),
         shape = RectangleShape,
-        modifier = Modifier.width(if (label.startsWith("+")) 80.dp else 90.dp),
         onClick = onClick,
     ) {
         Text(
@@ -203,7 +200,7 @@ private fun ToolbarButton(label: String, accent: androidx.compose.ui.graphics.Co
             color = accent,
             fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         )
     }
 }

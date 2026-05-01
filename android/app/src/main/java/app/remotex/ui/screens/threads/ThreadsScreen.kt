@@ -60,38 +60,64 @@ fun ThreadsScreen(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
             )
+        // A1: primary action — amber-filled tile (was just amber-bordered),
+        // collapses to a one-liner once the user has more than a handful
+        // of saved threads so the list dominates instead of the button.
+        val compact = state.threads.size > 5
         Surface(
-            color = MaterialTheme.colorScheme.surface,
+            color = Amber,
             shape = RectangleShape,
-            border = BorderStroke(1.dp, Amber),
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onNewSession),
         ) {
-            Row(
-                Modifier.padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier.size(28.dp).background(Amber),
-                    contentAlignment = Alignment.Center,
+            if (compact) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("+", color = Color.Black, fontFamily = FontFamily.Monospace, fontSize = 16.sp)
-                }
-                Spacer(Modifier.width(10.dp))
-                Column {
+                    Spacer(Modifier.width(10.dp))
                     Text(
-                        "New session",
-                        color = Amber,
+                        "New session on ${selectedHost?.nickname ?: "host"}",
+                        color = Color.Black,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 14.sp,
+                        modifier = Modifier.weight(1f),
                     )
                     Text(
-                        "start a fresh codex thread",
-                        color = InkDim,
+                        "→",
+                        color = Color.Black,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
+                        fontSize = 16.sp,
                     )
+                }
+            } else {
+                Row(
+                    Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "+",
+                        color = Color.Black,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 22.sp,
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column {
+                        Text(
+                            "New session",
+                            color = Color.Black,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 16.sp,
+                        )
+                        Text(
+                            "start a fresh codex thread",
+                            color = Color.Black.copy(alpha = 0.65f),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                        )
+                    }
                 }
             }
         }

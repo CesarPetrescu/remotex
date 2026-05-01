@@ -68,6 +68,7 @@ fun CompactStatusBar(
 
 @Composable
 private fun IdentityRow(host: Host?, uptimeS: Long?) {
+    val online = host?.online == true
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -75,7 +76,7 @@ private fun IdentityRow(host: Host?, uptimeS: Long?) {
         Box(
             Modifier
                 .size(10.dp)
-                .background(if (host?.online == true) Ok else InkDim),
+                .background(if (online) Ok else InkDim),
         )
         Text(
             host?.nickname ?: "no host",
@@ -93,20 +94,28 @@ private fun IdentityRow(host: Host?, uptimeS: Long?) {
                 fontSize = 12.sp,
             )
         }
-        Spacer(Modifier.width(0.dp))
         Box(Modifier.weight(1f))
-        Text(
-            text = if (host?.online == true) "ONLINE" else "OFFLINE",
-            color = if (host?.online == true) Ok else InkDim,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.sp,
-        )
+        // A6: bumped to 11sp + colored chip border so it's actually
+        // legible from arm's length instead of an afterthought.
+        Surface(
+            color = (if (online) Ok else InkDim).copy(alpha = 0.10f),
+            border = BorderStroke(1.dp, (if (online) Ok else InkDim).copy(alpha = 0.55f)),
+            shape = RectangleShape,
+        ) {
+            Text(
+                text = if (online) "ONLINE" else "OFFLINE",
+                color = if (online) Ok else InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+            )
+        }
         uptimeS?.takeIf { it > 0L }?.let {
             Text(
-                "· up ${uptimeShort(it)}",
+                "up ${uptimeShort(it)}",
                 color = InkDim,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
+                fontSize = 11.sp,
             )
         }
     }

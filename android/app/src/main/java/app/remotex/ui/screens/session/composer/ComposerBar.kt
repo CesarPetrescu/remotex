@@ -118,25 +118,32 @@ internal fun ComposerBar(
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                CompactModelPicker(
-                    selected = model,
-                    options = modelOptions,
-                    onSelect = onModelChange,
-                    modifier = Modifier.weight(1f),
-                )
-                CompactEffortPicker(
-                    model = model,
-                    selected = effort,
-                    options = modelOptions,
-                    onSelect = onEffortChange,
-                    modifier = Modifier.weight(1f),
-                )
-                CompactPermissionsPicker(
-                    selected = permissions,
-                    onSelect = onPermissionsChange,
-                    modifier = Modifier.weight(1f),
-                )
+            // A8: horizontal scroll instead of weighted Row so the chips
+            // never wrap to a second line on narrow phones. Each chip
+            // sizes to its content; users swipe sideways if all three
+            // don't fit, which is way better than a 2-row composer.
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                item {
+                    CompactModelPicker(
+                        selected = model,
+                        options = modelOptions,
+                        onSelect = onModelChange,
+                    )
+                }
+                item {
+                    CompactEffortPicker(
+                        model = model,
+                        selected = effort,
+                        options = modelOptions,
+                        onSelect = onEffortChange,
+                    )
+                }
+                item {
+                    CompactPermissionsPicker(
+                        selected = permissions,
+                        onSelect = onPermissionsChange,
+                    )
+                }
             }
             if (planMode) {
                 Text(
