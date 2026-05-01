@@ -139,7 +139,17 @@ function ActiveSessionCard({ state, selectedHost, telemetry, onOpenSession, onEn
         <button
           type="button"
           className="btn-surface"
-          onClick={onEndSession}
+          onClick={() => {
+            // W3: confirm before killing an in-flight turn — costly to re-do.
+            if (state.pending) {
+              const ok = window.confirm(
+                'A turn is currently running. End the session anyway?\n' +
+                'Use Cancel to keep it running in the background.',
+              );
+              if (!ok) return;
+            }
+            onEndSession();
+          }}
           disabled={!hasSession}
         >
           End session

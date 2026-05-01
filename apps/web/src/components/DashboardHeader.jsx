@@ -18,7 +18,10 @@ export function DashboardHeader({
   const label = STATUS_LABELS[state.status] || 'idle';
   const isLive =
     state.status === STATUS.Connected || state.status === STATUS.Connecting;
-  const onDashboardScreen = state.screen === SCREENS.Hosts;
+  // W11: only blink the brand cursor while we're handshaking. Solid amber
+  // otherwise — the constant blink at the corner of the eye is annoying.
+  const cursorBlinking =
+    state.status === STATUS.Connecting || state.status === STATUS.Opening;
   return (
     <header className="dashboard-header">
       <div className="dashboard-header-left">
@@ -32,25 +35,20 @@ export function DashboardHeader({
             <span aria-hidden="true">☰</span>
           </button>
         )}
+        {/* W8: brand IS the home button. The redundant ⌂ Dashboard pill
+            we shipped earlier was confusing — three home affordances. */}
         <button
           type="button"
           className="brand-button"
           onClick={onDashboard}
           title="Dashboard"
         >
-          <span className="brand-cursor" aria-hidden="true">▍</span>
+          <span
+            className={`brand-cursor${cursorBlinking ? ' blinking' : ''}`}
+            aria-hidden="true"
+          >▍</span>
           <span className="brand">REMOTEX</span>
         </button>
-        {!onDashboardScreen && onDashboard && (
-          <button
-            type="button"
-            className="header-dashboard-pill"
-            onClick={onDashboard}
-            title="Back to dashboard (keeps the active session running)"
-          >
-            ⌂ Dashboard
-          </button>
-        )}
         <span className={`status-pill ${isLive ? 'is-live' : ''}`}>
           <span className={`tag-dot ${isLive ? 'ok' : ''}`} />
           {label}
