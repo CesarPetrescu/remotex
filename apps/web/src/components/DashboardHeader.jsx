@@ -1,4 +1,3 @@
-import { ModelPicker, EffortPicker, PermissionsPicker } from './Pickers';
 import { SCREENS, STATUS } from '../config';
 
 const STATUS_LABELS = {
@@ -14,9 +13,6 @@ export function DashboardHeader({
   state,
   onMenuClick,
   onToggleTelemetry,
-  onModelChange,
-  onEffortChange,
-  onPermissionsChange,
   onDashboard,
 }) {
   const label = STATUS_LABELS[state.status] || 'idle';
@@ -62,20 +58,6 @@ export function DashboardHeader({
       </div>
 
       <div className="dashboard-header-right">
-        <HeaderPicker label="Model">
-          <ModelPicker value={state.model} models={state.modelOptions} onChange={onModelChange} />
-        </HeaderPicker>
-        <HeaderPicker label="Effort">
-          <EffortPicker
-            model={state.model}
-            value={state.effort}
-            models={state.modelOptions}
-            onChange={onEffortChange}
-          />
-        </HeaderPicker>
-        <HeaderPicker label="Perms">
-          <PermissionsPicker value={state.permissions} onChange={onPermissionsChange} />
-        </HeaderPicker>
         {onToggleTelemetry && (
           <button
             type="button"
@@ -89,14 +71,5 @@ export function DashboardHeader({
         )}
       </div>
     </header>
-  );
-}
-
-function HeaderPicker({ label, children }) {
-  return (
-    <div className="header-picker">
-      <span className="header-picker-label">{label}</span>
-      {children}
-    </div>
   );
 }

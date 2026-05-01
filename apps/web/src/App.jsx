@@ -58,9 +58,6 @@ export default function App() {
         state={state}
         onMenuClick={() => setLeftOpen((v) => !v)}
         onToggleTelemetry={() => setRightOpen((v) => !v)}
-        onModelChange={r.setModel}
-        onEffortChange={r.setEffort}
-        onPermissionsChange={r.setPermissions}
         onDashboard={() => {
           r.goToDashboard();
           closeDrawers();
