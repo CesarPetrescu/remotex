@@ -3228,16 +3228,16 @@ main.screen-host {
 
 /* ── W9: sans-serif for prose, mono for code/identifiers ── */
 .md-p,
-.md-h1, .md-h2, .md-h3, .md-h4,
-.md-li {
+.md-h,
+.md-list li {
   font-family: var(--sans);
   line-height: 1.45;
 }
-.md-h1 { font-size: 18px; font-weight: 700; }
-.md-h2 { font-size: 16px; font-weight: 700; }
-.md-h3 { font-size: 14px; font-weight: 600; }
-.md-h4 { font-size: 13px; font-weight: 600; }
-.md-p, .md-li { font-size: 14px; }
+.md-h.md-h1 { font-size: 18px; font-weight: 700; }
+.md-h.md-h2 { font-size: 16px; font-weight: 700; }
+.md-h.md-h3 { font-size: 14px; font-weight: 600; }
+.md-h.md-h4 { font-size: 13px; font-weight: 600; }
+.md-p, .md-list li { font-size: 14px; }
 /* Inline code stays mono so identifiers in prose don't reflow on
    font-metric differences. */
 .md-inline-code, .md-code, .md-code code {
