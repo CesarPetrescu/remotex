@@ -1,6 +1,12 @@
 import { relativeAge } from '../util/time';
 import { shortenCwd } from '../util/path';
 
+/**
+ * Left sidebar: hosts at the top, sessions below, user identity at the
+ * bottom. Sharp corners + monospace + left-edge accent stripes — the
+ * boxed/rounded look from the previous version felt bolted-on against
+ * the rest of the terminal-native chrome.
+ */
 export function HostsSidebar({
   state,
   selectedHost,
@@ -12,146 +18,158 @@ export function HostsSidebar({
   onAddHost,
   onOpenSettings,
 }) {
+  const hostUserChip = osUserChipFor(selectedHost);
   return (
     <aside className="hosts-sidebar" aria-label="Hosts and sessions">
-      <div className="sidebar-head">
-        <div>
-          <div className="brand">REMOTEX</div>
-          <div className="sidebar-subtitle">workspace · codex</div>
-        </div>
-        {onClose && (
-          <button type="button" className="sidebar-close" onClick={onClose} aria-label="Close">
-            ×
-          </button>
-        )}
-      </div>
+      {onClose && (
+        <button
+          type="button"
+          className="sidebar-close-floating"
+          onClick={onClose}
+          aria-label="Close sidebar"
+          title="Close"
+        >×</button>
+      )}
 
       <div className="sidebar-scroll">
-        <section className="sidebar-section">
-          <div className="sidebar-section-head">
-            <span>Hosts</span>
+        <SidebarSection
+          label="HOSTS"
+          right={state.hosts.length > 0 ? `${state.hosts.length}` : null}
+          action={(onAddHost || onRefreshHosts) && (
             <button
               type="button"
-              className="icon-button"
+              className="sidebar-action"
               onClick={onAddHost || onRefreshHosts}
               title={onAddHost ? 'Add host' : 'Refresh'}
             >
-              <span aria-hidden="true">+</span>
-              <span className="icon-button-label">{onAddHost ? 'Add host' : 'Refresh'}</span>
+              {onAddHost ? '+ add' : '↻'}
             </button>
-          </div>
-          {state.hosts.length === 0 ? (
-            <div className="sidebar-empty">
-              {state.hostsLoading ? 'loading hosts…' : 'no hosts registered'}
-            </div>
-          ) : (
-            <div className="host-list">
-              {state.hosts.map((host) => (
-                <HostCard
-                  key={host.id}
-                  host={host}
-                  active={host.id === state.selectedHostId}
-                  onClick={() => onSelectHost(host)}
-                />
-              ))}
-            </div>
           )}
-        </section>
+        >
+          {state.hosts.length === 0 ? (
+            <SidebarEmpty>{state.hostsLoading ? 'loading hosts…' : 'no hosts registered'}</SidebarEmpty>
+          ) : (
+            state.hosts.map((host) => (
+              <HostRow
+                key={host.id}
+                host={host}
+                active={host.id === state.selectedHostId}
+                onClick={() => onSelectHost(host)}
+              />
+            ))
+          )}
+        </SidebarSection>
 
-        <section className="sidebar-section">
-          <div className="sidebar-section-head">
-            <span>Sessions</span>
-            {selectedHost?.online && (
-              <span className="sidebar-hint">{state.threads.length}</span>
-            )}
-          </div>
-
+        <SidebarSection
+          label="SESSIONS"
+          right={selectedHost?.online ? `${state.threads.length}` : null}
+        >
           <button
             type="button"
-            className="session-new"
+            className="sidebar-new-session"
             onClick={onNewSession}
             disabled={!selectedHost?.online}
           >
-            <span className="plus-badge">+</span>
-            <span className="session-new-body">
-              <span className="session-new-title">New session</span>
-              <span className="session-new-sub">Start a fresh codex thread</span>
+            <span className="sidebar-new-session-marker">+</span>
+            <span>
+              <span className="sidebar-new-session-title">new session</span>
+              <span className="sidebar-new-session-sub">
+                {selectedHost?.online ? `start a fresh codex thread on ${selectedHost.nickname}` : 'select an online host first'}
+              </span>
             </span>
           </button>
 
           {state.threadsLoading && state.threads.length === 0 ? (
-            <div className="sidebar-empty">loading sessions…</div>
+            <SidebarEmpty>loading sessions…</SidebarEmpty>
           ) : state.threads.length === 0 ? (
-            <div className="sidebar-empty">
+            <SidebarEmpty>
               {selectedHost?.online ? 'no previous sessions' : 'select an online host'}
-            </div>
+            </SidebarEmpty>
           ) : (
-            <div className="session-list">
-              {state.threads.map((t) => (
-                <SessionRow key={t.id} thread={t} onClick={() => onResumeThread(t)} />
-              ))}
-            </div>
+            state.threads.map((t) => (
+              <SessionRow
+                key={t.id}
+                thread={t}
+                active={state.session?.threadId === t.id || state.session?.thread_id === t.id}
+                onClick={() => onResumeThread(t)}
+              />
+            ))
           )}
-        </section>
+        </SidebarSection>
       </div>
 
       <div className="sidebar-foot">
-        <div className="user-card">
-          <div className="user-avatar" aria-hidden="true">
-            {initials(state.userToken)}
-          </div>
-          <div className="user-body">
-            <div className="user-name">{displayName(state.userToken)}</div>
-            <div className="user-token">{state.userToken}</div>
-          </div>
-          {onOpenSettings && (
-            <button
-              type="button"
-              className="icon-button gear"
-              onClick={onOpenSettings}
-              aria-label="Settings"
-            >
-              <span aria-hidden="true">⚙</span>
-            </button>
-          )}
-        </div>
+        <span className="sidebar-foot-token">{state.userToken}</span>
+        {hostUserChip && <span className="sidebar-foot-host">{hostUserChip}</span>}
+        {onOpenSettings && (
+          <button
+            type="button"
+            className="sidebar-action"
+            onClick={onOpenSettings}
+            aria-label="Settings"
+            title="Settings"
+          >⚙</button>
+        )}
       </div>
     </aside>
   );
 }
 
-function HostCard({ host, active, onClick }) {
+function SidebarSection({ label, right, action, children }) {
+  return (
+    <section className="sidebar-section">
+      <div className="sidebar-section-head">
+        <span className="sidebar-section-label">{label}</span>
+        {right && <span className="sidebar-section-right">{right}</span>}
+        {action}
+      </div>
+      <div className="sidebar-section-body">{children}</div>
+    </section>
+  );
+}
+
+function SidebarEmpty({ children }) {
+  return <div className="sidebar-empty">{children}</div>;
+}
+
+function HostRow({ host, active, onClick }) {
   return (
     <button
       type="button"
-      className={`host-card ${host.online ? 'online' : 'offline'} ${active ? 'active' : ''}`}
+      className={`sidebar-host ${host.online ? 'online' : 'offline'} ${active ? 'active' : ''}`}
       onClick={onClick}
       disabled={!host.online}
     >
-      <span className="host-card-row">
-        <span className={`dot ${host.online ? 'ok' : ''}`} />
-        <span className="host-card-nick">{host.nickname}</span>
-        <span className="host-card-status">{host.online ? 'online' : 'offline'}</span>
-      </span>
-      <span className="host-card-sub">
-        {host.hostname || host.id?.slice(0, 16) || '—'}
+      <span className={`sidebar-host-stripe ${active ? 'active' : ''}`} />
+      <span className="sidebar-host-body">
+        <span className="sidebar-host-row1">
+          <span className={`sidebar-host-dot ${host.online ? 'on' : 'off'}`} />
+          <span className="sidebar-host-nick">{host.nickname}</span>
+          {host.os_user && <span className="sidebar-host-user">@{host.os_user}</span>}
+        </span>
+        <span className="sidebar-host-row2">
+          {host.hostname || (host.id ? host.id.slice(0, 14) + '…' : '—')}
+          <span className="sidebar-host-state">{host.online ? 'online' : 'offline'}</span>
+        </span>
       </span>
     </button>
   );
 }
 
-function SessionRow({ thread, onClick }) {
+function SessionRow({ thread, active, onClick }) {
   const hasSpecificTitle = thread.title && thread.title_is_generic === false;
-  const title = hasSpecificTitle ? thread.title : thread.preview || '(no preview)';
+  const title = hasSpecificTitle ? thread.title : (thread.preview || '(no preview)');
   const age = relativeAge(thread.updated_at ?? thread.created_at);
   return (
-    <button type="button" className="session-row" onClick={onClick}>
-      <span className="session-row-icon" aria-hidden="true">
-        ◎
-      </span>
-      <span className="session-row-body">
-        <span className="session-row-title">{title}</span>
-        <span className="session-row-meta">
+    <button
+      type="button"
+      className={`sidebar-session ${active ? 'active' : ''}`}
+      onClick={onClick}
+    >
+      <span className={`sidebar-session-stripe ${active ? 'active' : ''}`} />
+      <span className="sidebar-session-body">
+        <span className="sidebar-session-title">{title}</span>
+        <span className="sidebar-session-meta">
           <span>{age}</span>
           {thread.cwd && <span>· {shortenCwd(thread.cwd)}</span>}
         </span>
@@ -160,22 +178,8 @@ function SessionRow({ thread, onClick }) {
   );
 }
 
-function initials(token) {
-  if (!token) return '··';
-  const cleaned = token.replace(/^demo-/, '').replace(/-token$/, '');
-  const parts = cleaned.split(/[-_ ]/).filter(Boolean);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return cleaned.slice(0, 2).toUpperCase() || '··';
-}
-
-function displayName(token) {
-  if (!token) return 'anonymous';
-  const cleaned = token.replace(/^demo-/, '').replace(/-token$/, '');
-  return cleaned
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-    .join(' ') || token;
+function osUserChipFor(host) {
+  if (!host) return null;
+  if (host.os_user) return `${host.nickname} @${host.os_user}`;
+  return host.nickname;
 }

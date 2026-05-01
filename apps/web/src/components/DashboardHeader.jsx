@@ -42,7 +42,7 @@ export function DashboardHeader({
           onClick={onDashboard}
           title="Dashboard"
         >
-          <span className="brand-mark" aria-hidden="true">◈</span>
+          <span className="brand-cursor" aria-hidden="true">▍</span>
           <span className="brand">REMOTEX</span>
         </button>
         {!onDashboardScreen && onDashboard && (
