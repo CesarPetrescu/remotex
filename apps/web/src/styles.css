@@ -3277,3 +3277,164 @@ main.screen-host {
   border-color: var(--accent);
   background: rgba(58, 160, 232, 0.06);
 }
+
+
+/* --- Orchestrator plan tree + launcher --- */
+
+.plan-tree {
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.plan-tree.empty .plan-tree-hint {
+  color: var(--ink-dim);
+  font-style: italic;
+}
+.plan-tree-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.plan-tree-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plan-step {
+  border-left: 2px solid var(--line);
+  padding: 4px 8px;
+  border-radius: 0 4px 4px 0;
+  background: rgba(255, 255, 255, 0.015);
+}
+.plan-step-pending { border-left-color: var(--ink-dim); }
+.plan-step-running { border-left-color: var(--accent); background: rgba(58, 160, 232, 0.06); }
+.plan-step-completed { border-left-color: var(--ok); }
+.plan-step-failed { border-left-color: var(--warn); }
+.plan-step-cancelled { border-left-color: var(--ink-dim); opacity: 0.65; }
+.plan-step-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.plan-step-id {
+  color: var(--ink-dim);
+  font-size: 10px;
+}
+.plan-step-title {
+  flex: 1;
+  color: var(--ink);
+}
+.plan-step-status {
+  font-size: 10px;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.plan-step-running .plan-step-status { color: var(--accent); }
+.plan-step-completed .plan-step-status { color: var(--ok); }
+.plan-step-failed .plan-step-status { color: var(--warn); }
+.plan-step-deps {
+  color: var(--ink-dim);
+  font-size: 10px;
+  margin-top: 2px;
+}
+.plan-step-summary {
+  margin-top: 4px;
+  color: var(--ink-dim);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+.plan-tree-finished {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.plan-tree-finished.ok { background: rgba(106, 224, 194, 0.08); color: var(--ok); }
+.plan-tree-finished.err { background: rgba(255, 112, 112, 0.08); color: var(--warn); }
+
+.orch-launcher-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 80;
+}
+.orch-launcher {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px 18px 14px;
+  width: min(560px, 92vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family: var(--sans);
+}
+.orch-launcher-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.orch-launcher-hint {
+  font-size: 12px;
+  color: var(--ink-dim);
+  line-height: 1.5;
+}
+.orch-launcher-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  flex: 1;
+}
+.orch-launcher-field textarea,
+.orch-launcher-field input,
+.orch-launcher-field select {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  resize: vertical;
+}
+.orch-launcher-field textarea:focus,
+.orch-launcher-field input:focus,
+.orch-launcher-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.orch-launcher-row {
+  display: flex;
+  gap: 10px;
+}
+.orch-launcher-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.orch-launcher-buttons button[type="submit"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #04101e;
+}
+.orch-launcher-buttons button[type="submit"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

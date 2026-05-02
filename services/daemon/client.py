@@ -148,6 +148,12 @@ class DaemonClient:
                 # to the daemon's config default.
                 default_cwd=frame.get("cwd") or self.config.default_cwd,
                 resume_thread_id=frame.get("resume_thread_id") or None,
+                kind=(frame.get("kind") or "codex"),
+                task=frame.get("task"),
+                approval_policy=frame.get("approval_policy"),
+                permissions=frame.get("permissions"),
+                model=frame.get("model"),
+                effort=frame.get("effort"),
             )
             runner = _SessionRunner(sid, adapter, send, on_exit=lambda: self._sessions.pop(sid, None))
             self._sessions[sid] = runner

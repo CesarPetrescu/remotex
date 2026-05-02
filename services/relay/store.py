@@ -54,6 +54,23 @@ CREATE TABLE IF NOT EXISTS inventory_sessions (
   opened_at    BIGINT NOT NULL,
   closed_at    BIGINT
 );
+ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'codex';
+ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS parent_session_id TEXT;
+CREATE INDEX IF NOT EXISTS inventory_sessions_parent_idx
+  ON inventory_sessions(parent_session_id) WHERE parent_session_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS inventory_orchestrator_steps (
+  orchestrator_session_id  TEXT NOT NULL REFERENCES inventory_sessions(id) ON DELETE CASCADE,
+  step_id                  TEXT NOT NULL,
+  title                    TEXT NOT NULL,
+  prompt                   TEXT NOT NULL,
+  deps_json                TEXT NOT NULL DEFAULT '[]',
+  status                   TEXT NOT NULL DEFAULT 'pending',
+  child_session_id         TEXT,
+  summary                  TEXT,
+  started_at               BIGINT,
+  completed_at             BIGINT,
+  PRIMARY KEY (orchestrator_session_id, step_id)
+);
 CREATE INDEX IF NOT EXISTS inventory_hosts_owner_idx ON inventory_hosts(owner_token, created_at DESC);
 """
 
@@ -316,12 +333,20 @@ class Store:
 
     # --- sessions ---
 
-    async def open_session(self, host_id: str, owner_token: str) -> str:
+    async def open_session(
+        self,
+        host_id: str,
+        owner_token: str,
+        *,
+        kind: str = "codex",
+        parent_session_id: str | None = None,
+    ) -> str:
         sid = _new_id("sess")
         async with self._pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO inventory_sessions(id, host_id, owner_token, opened_at) VALUES ($1,$2,$3,$4)",
-                sid, host_id, owner_token, _now(),
+                "INSERT INTO inventory_sessions(id, host_id, owner_token, opened_at, kind, parent_session_id)"
+                " VALUES ($1,$2,$3,$4,$5,$6)",
+                sid, host_id, owner_token, _now(), kind, parent_session_id,
             )
         return sid
 
@@ -335,7 +360,104 @@ class Store:
     async def session_info(self, session_id: str) -> dict | None:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, host_id, owner_token, opened_at, closed_at FROM inventory_sessions WHERE id = $1",
+                "SELECT id, host_id, owner_token, opened_at, closed_at, kind, parent_session_id"
+                " FROM inventory_sessions WHERE id = $1",
                 session_id,
             )
         return dict(row) if row else None
+
+    # --- orchestrator steps ---
+
+    async def replace_orchestrator_steps(
+        self,
+        orchestrator_session_id: str,
+        steps: list[dict],
+    ) -> None:
+        """Atomically replace the plan for an orchestrator session.
+
+        ``steps`` items: ``{step_id, title, prompt, deps: [step_id]}``.
+        Existing rows are dropped first so re-planning is supported."""
+        import json
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "DELETE FROM inventory_orchestrator_steps WHERE orchestrator_session_id = $1",
+                    orchestrator_session_id,
+                )
+                for s in steps:
+                    await conn.execute(
+                        "INSERT INTO inventory_orchestrator_steps("
+                        "  orchestrator_session_id, step_id, title, prompt, deps_json, status"
+                        ") VALUES ($1,$2,$3,$4,$5,'pending')",
+                        orchestrator_session_id,
+                        str(s.get("step_id") or s.get("id") or ""),
+                        str(s.get("title") or ""),
+                        str(s.get("prompt") or ""),
+                        json.dumps(list(s.get("deps") or [])),
+                    )
+
+    async def update_orchestrator_step(
+        self,
+        orchestrator_session_id: str,
+        step_id: str,
+        *,
+        status: str | None = None,
+        child_session_id: str | None = None,
+        summary: str | None = None,
+        started: bool = False,
+        completed: bool = False,
+    ) -> None:
+        sets = []
+        params: list = [orchestrator_session_id, step_id]
+        i = 3
+        if status is not None:
+            sets.append(f"status = ${i}")
+            params.append(status)
+            i += 1
+        if child_session_id is not None:
+            sets.append(f"child_session_id = ${i}")
+            params.append(child_session_id)
+            i += 1
+        if summary is not None:
+            sets.append(f"summary = ${i}")
+            params.append(summary)
+            i += 1
+        if started:
+            sets.append(f"started_at = ${i}")
+            params.append(_now())
+            i += 1
+        if completed:
+            sets.append(f"completed_at = ${i}")
+            params.append(_now())
+            i += 1
+        if not sets:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE inventory_orchestrator_steps SET {', '.join(sets)}"
+                " WHERE orchestrator_session_id = $1 AND step_id = $2",
+                *params,
+            )
+
+    async def list_orchestrator_steps(
+        self, orchestrator_session_id: str,
+    ) -> list[dict]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT step_id, title, prompt, deps_json, status,"
+                "       child_session_id, summary, started_at, completed_at"
+                "  FROM inventory_orchestrator_steps"
+                " WHERE orchestrator_session_id = $1"
+                " ORDER BY step_id",
+                orchestrator_session_id,
+            )
+        import json
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["deps"] = json.loads(d.pop("deps_json") or "[]")
+            except Exception:  # noqa: BLE001
+                d["deps"] = []
+            out.append(d)
+        return out

@@ -114,14 +114,38 @@ export class RelayClient {
     );
   }
 
-  openSession(hostId, { threadId = null, cwd = null } = {}) {
+  openSession(hostId, {
+    threadId = null,
+    cwd = null,
+    kind = 'codex',
+    task = null,
+    approvalPolicy = null,
+    permissions = null,
+    model = null,
+    effort = null,
+  } = {}) {
     const body = { host_id: hostId };
     if (threadId) body.thread_id = threadId;
     if (cwd) body.cwd = cwd;
+    if (kind && kind !== 'codex') body.kind = kind;
+    if (task) body.task = task;
+    if (approvalPolicy) body.approval_policy = approvalPolicy;
+    if (permissions) body.permissions = permissions;
+    if (model) body.model = model;
+    if (effort) body.effort = effort;
     return this.#request('/api/sessions', {
       method: 'POST',
       body: JSON.stringify(body),
     }).then((r) => r.session_id);
+  }
+
+  // GET /api/sessions/{id}/plan — orchestrator only. Returns the
+  // current step list with statuses. The session also pushes
+  // orchestrator-* events live, this REST endpoint is for resync.
+  getOrchestratorPlan(sessionId) {
+    return this.#request(
+      `/api/sessions/${encodeURIComponent(sessionId)}/plan`,
+    );
   }
 
   searchConfig() {

@@ -11,6 +11,7 @@ import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
 import { TelemetrySidebar } from './components/TelemetrySidebar';
 import { FolderPickerModal } from './components/FolderPickerModal';
+import { OrchestratorLauncher } from './components/OrchestratorLauncher';
 import { shortenCwd } from './util/path';
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [orchLauncherOpen, setOrchLauncherOpen] = useState(false);
 
   const selectedHost = state.hosts.find((h) => h.id === state.selectedHostId);
   const telemetry = state.selectedHostId
@@ -138,6 +140,7 @@ export default function App() {
             onStartInCwd={() => openSession({ cwd: state.browsePath || null })}
             onRefreshThreads={() => r.refreshThreads()}
             onOpenManageHosts={() => setLeftOpen(true)}
+            onOpenOrchestrator={() => setOrchLauncherOpen(true)}
           />
         )}
 
@@ -182,6 +185,25 @@ export default function App() {
       <ApprovalDialog prompt={state.pendingApproval} onDecision={r.resolveApproval} />
       <Toast message={state.error} tone="error" onDismiss={r.clearError} />
       <Toast message={state.slashFeedback} tone="info" onDismiss={r.clearFeedback} />
+
+      <OrchestratorLauncher
+        open={orchLauncherOpen}
+        defaults={{
+          model: state.model,
+          effort: state.effort,
+          permissions: state.permissions,
+        }}
+        models={state.modelOptions}
+        onCancel={() => setOrchLauncherOpen(false)}
+        onLaunch={(opts) => {
+          setOrchLauncherOpen(false);
+          r.openOrchestratorSession({
+            ...opts,
+            cwd: state.browsePath || null,
+          });
+          closeDrawers();
+        }}
+      />
     </div>
   );
 }

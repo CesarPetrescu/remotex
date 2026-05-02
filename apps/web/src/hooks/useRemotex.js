@@ -78,6 +78,12 @@ const initialState = {
   // on first paint and replaces this fallback. See services/relay/models.py
   // for the canonical source of truth.
   modelOptions: FALLBACK_MODEL_OPTIONS,
+  // Orchestrator session shape: {
+  //   active: bool,            // true when the active session is kind=orchestrator
+  //   steps: [{ step_id, title, deps, status, summary, child_session_id, ... }],
+  //   finished: { ok, summary?, error? } | null,
+  // }
+  orchestrator: { active: false, steps: [], finished: null },
 };
 
 const TELEMETRY_HISTORY_MAX = 60;
@@ -191,6 +197,47 @@ function reducer(state, action) {
         tokensCached: 0,
         tokensReasoning: 0,
         status: action.status ?? STATUS.Idle,
+        orchestrator: { active: false, steps: [], finished: null },
+      };
+    case 'ORCHESTRATOR_BEGIN':
+      return {
+        ...state,
+        orchestrator: { active: true, steps: [], finished: null },
+      };
+    case 'ORCHESTRATOR_PLAN':
+      return {
+        ...state,
+        orchestrator: {
+          ...state.orchestrator,
+          active: true,
+          steps: action.steps || [],
+        },
+      };
+    case 'ORCHESTRATOR_STEP_STATUS': {
+      const incoming = action.step;
+      if (!incoming?.step_id) return state;
+      const existing = state.orchestrator.steps;
+      const idx = existing.findIndex((s) => s.step_id === incoming.step_id);
+      let nextSteps;
+      if (idx >= 0) {
+        nextSteps = existing.slice();
+        nextSteps[idx] = { ...existing[idx], ...incoming };
+      } else {
+        nextSteps = [...existing, incoming];
+      }
+      return {
+        ...state,
+        orchestrator: { ...state.orchestrator, active: true, steps: nextSteps },
+      };
+    }
+    case 'ORCHESTRATOR_FINISHED':
+      return {
+        ...state,
+        orchestrator: {
+          ...state.orchestrator,
+          active: true,
+          finished: action.payload,
+        },
       };
     case 'TOKEN_USAGE':
       return {
@@ -529,6 +576,28 @@ export function useRemotex() {
       case 'history-begin':
       case 'history-end':
         return;
+      case 'orchestrator-plan':
+        dispatch({ type: 'ORCHESTRATOR_PLAN', steps: data.steps || [] });
+        return;
+      case 'orchestrator-step-status':
+        dispatch({ type: 'ORCHESTRATOR_STEP_STATUS', step: data });
+        return;
+      case 'orchestrator-step-event':
+        // Lightweight progress signal — no-op in state for now; the
+        // brain's own agent_message stream already tells the user what's
+        // happening at a higher level. Reserved for future drill-in UI.
+        return;
+      case 'orchestrator-finished':
+        dispatch({
+          type: 'ORCHESTRATOR_FINISHED',
+          payload: {
+            ok: data.ok !== false,
+            summary: data.summary || null,
+            error: data.error || null,
+          },
+        });
+        dispatch({ type: 'PENDING', pending: false });
+        return;
       default:
         return;
     }
@@ -853,6 +922,56 @@ export function useRemotex() {
     [attachSocket, closeSession],
   );
 
+  // Orchestrator entrypoint. The relay opens a kind=orchestrator
+  // session, the daemon spawns the brain Codex with the orchestration
+  // system prompt, and child Codex sessions are spawned per planned
+  // step. The user supplies a free-text task plus the policies that
+  // every child inherits — model, effort, sandbox/approval permissions.
+  const openOrchestratorSession = useCallback(
+    async ({
+      task,
+      cwd = null,
+      hostId: hostOverride = null,
+      model = null,
+      effort = null,
+      permissions = null,
+      approvalPolicy = null,
+    }) => {
+      const hostId = hostOverride || latestInputsRef.current.selectedHostId;
+      if (!hostId) return;
+      const cleaned = (task || '').trim();
+      if (!cleaned) {
+        dispatch({ type: 'SET_ERROR', error: 'orchestrator: task is required' });
+        return;
+      }
+      closeSession();
+      userClosedRef.current = false;
+      dispatch({ type: 'SESSION_RESET', status: STATUS.Opening });
+      dispatch({ type: 'ORCHESTRATOR_BEGIN' });
+      dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
+      try {
+        const sid = await apiRef.current.openSession(hostId, {
+          cwd,
+          kind: 'orchestrator',
+          task: cleaned,
+          model: model || latestInputsRef.current.model,
+          effort: effort || latestInputsRef.current.effort,
+          permissions: permissions || latestInputsRef.current.permissions,
+          approvalPolicy,
+        });
+        dispatch({
+          type: 'SESSION_ATTACHED',
+          session: { sessionId: sid, hostId, cwd: cwd || null, kind: 'orchestrator' },
+        });
+        attachSocket(sid);
+      } catch (t) {
+        dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });
+        dispatch({ type: 'SET_ERROR', error: t.message });
+      }
+    },
+    [attachSocket, closeSession],
+  );
+
   const searchAbortRef = useRef(null);
   const searchChats = useCallback(async (query, { mode = 'hybrid', rerank = 'auto' } = {}) => {
     const cleaned = (query || '').trim();
@@ -1161,6 +1280,7 @@ export function useRemotex() {
       workspaceRenameFile,
       workspaceUploadFile,
       openSession,
+      openOrchestratorSession,
       startSessionInCurrentPath: () =>
         openSession({ cwd: latestInputsRef.current.browsePath || null }),
       closeSession,
@@ -1199,6 +1319,7 @@ export function useRemotex() {
       workspaceRenameFile,
       workspaceUploadFile,
       openSession,
+      openOrchestratorSession,
       closeSession,
       sendTurn,
       interruptTurn,

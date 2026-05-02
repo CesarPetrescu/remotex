@@ -23,6 +23,7 @@ export function DashboardScreen({
   onOpenSession,
   onEndSession,
   onNewSession,
+  onOpenOrchestrator,
   onOpenSearch,
   onSearchChange,
   onRunSearch,
@@ -51,6 +52,7 @@ export function DashboardScreen({
         <QuickActionsPanel
           canStart={!!selectedHost?.online}
           onNewSession={onNewSession}
+          onOpenOrchestrator={onOpenOrchestrator}
           onBrowseFiles={onBrowseFiles}
           onRefreshThreads={onRefreshThreads}
           onOpenManageHosts={onOpenManageHosts}
@@ -232,6 +234,7 @@ function SemanticSearchPanel({ query, onChange, onSubmit, onOpenSearch }) {
 function QuickActionsPanel({
   canStart,
   onNewSession,
+  onOpenOrchestrator,
   onBrowseFiles,
   onRefreshThreads,
   onOpenManageHosts,
@@ -249,6 +252,13 @@ function QuickActionsPanel({
           subtitle="Start a fresh codex thread"
           onClick={onNewSession}
           disabled={!canStart}
+        />
+        <ActionTile
+          icon="⌘"
+          title="Orchestrate"
+          subtitle="Long task → DAG of subtasks"
+          onClick={onOpenOrchestrator}
+          disabled={!canStart || !onOpenOrchestrator}
         />
         <ActionTile
           icon="▤"
