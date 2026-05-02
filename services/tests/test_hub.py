@@ -1,7 +1,7 @@
 """Hub attach/detach and session-frame caching."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -11,6 +11,8 @@ from relay.hub import Hub
 def _ws_mock():
     ws = MagicMock()
     ws.closed = False
+    ws.send_json = AsyncMock()
+    ws.close = AsyncMock()
     return ws
 
 
@@ -67,3 +69,80 @@ async def test_update_session_resume_modifies_cached_frame():
     frame = await hub.session_open_frame("sess_1")
     assert frame["resume_thread_id"] == "thr_42"
     assert frame["cwd"] == "/work"
+
+
+@pytest.mark.asyncio
+async def test_multiple_clients_attach_to_same_session_without_replacement():
+    hub = Hub()
+    web = _ws_mock()
+    android = _ws_mock()
+
+    assert await hub.attach_client("sess_1", "host_x", "web", web) == 1
+    assert await hub.attach_client("sess_1", "host_x", "android", android) == 2
+
+    web.close.assert_not_awaited()
+    android.close.assert_not_awaited()
+    assert set(hub.clients_for_host("host_x")) == {web, android}
+
+    assert await hub.detach_client("sess_1", "web", web) is False
+    assert hub.client_for("sess_1") is android
+    assert await hub.detach_client("sess_1", "android", android) is True
+    assert hub.client_for("sess_1") is None
+
+
+@pytest.mark.asyncio
+async def test_same_client_id_replaces_stale_socket_only():
+    hub = Hub()
+    old = _ws_mock()
+    new = _ws_mock()
+
+    await hub.attach_client("sess_1", "host_x", "web", old)
+    assert await hub.attach_client("sess_1", "host_x", "web", new) == 1
+
+    old.close.assert_awaited_once()
+    new.close.assert_not_awaited()
+    assert hub.client_for("sess_1") is new
+
+
+@pytest.mark.asyncio
+async def test_broadcast_records_sequence_and_replays_to_late_client():
+    hub = Hub()
+    web = _ws_mock()
+    android = _ws_mock()
+    await hub.attach_client("sess_1", "host_x", "web", web)
+    await hub.attach_client("sess_1", "host_x", "android", android)
+
+    delivered = await hub.broadcast_to_session(
+        "sess_1",
+        {"type": "session-event", "event": {"kind": "turn-started", "data": {}}},
+    )
+
+    assert delivered is True
+    sent = web.send_json.await_args.args[0]
+    assert sent["seq"] == 1
+    assert sent["session_id"] == "sess_1"
+    android.send_json.assert_awaited_once()
+
+    replay = await hub.replay_since("sess_1", 0)
+    assert len(replay) == 1
+    assert replay[0]["seq"] == 1
+    assert await hub.replay_since("sess_1", 1) == []
+
+
+@pytest.mark.asyncio
+async def test_turn_slot_is_single_writer_until_completed():
+    hub = Hub()
+
+    assert await hub.try_begin_turn("sess_1") is True
+    assert await hub.try_begin_turn("sess_1") is False
+    hub.mark_turn_completed("sess_1")
+    assert await hub.try_begin_turn("sess_1") is True
+
+
+@pytest.mark.asyncio
+async def test_approval_resolution_is_first_writer_wins():
+    hub = Hub()
+
+    await hub.note_approval_request("sess_1", "appr_1")
+    assert await hub.resolve_approval("sess_1", "appr_1") is True
+    assert await hub.resolve_approval("sess_1", "appr_1") is False

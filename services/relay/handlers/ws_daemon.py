@@ -1,7 +1,7 @@
 """Daemon-side websocket: hello → welcome → frame loop → cleanup.
 
 Frames the daemon sends:
-- ``session-event`` / ``session-closed`` → forwarded to the bound client.
+- ``session-event`` / ``session-closed`` → broadcast to attached clients.
 - ``threads-list-response`` / ``fs-*-response`` → resolves a pending REST future.
 - ``host-telemetry`` → cached + fanned out to attached clients.
 - ``ping`` → ``pong``.
@@ -93,9 +93,6 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             ftype = frame.get("type")
             sid = frame.get("session_id")
             if ftype in {"session-event", "session-closed"} and sid:
-                # Bounded send: close slow client rather than letting the
-                # daemon's event loop stall behind it.
-                await hub.forward_to_client(sid, frame)
                 session = await store.session_info(sid)
                 # Track turn lifecycle + per-session activity so the
                 # client-grace loop knows whether a session is idle or
@@ -107,8 +104,18 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     kind = event.get("kind")
                     if kind == "turn-started":
                         hub.mark_turn_started(sid)
-                    elif kind in ("turn-completed", "session-closed"):
+                    elif kind == "turn-completed":
                         hub.mark_turn_completed(sid)
+                    elif kind == "approval-request":
+                        data = event.get("data") or {}
+                        approval_id = data.get("approval_id")
+                        if approval_id:
+                            await hub.note_approval_request(sid, approval_id)
+                elif ftype == "session-closed":
+                    hub.mark_turn_completed(sid)
+                # Bounded fanout: close slow clients rather than letting
+                # the daemon's event loop stall behind one consumer.
+                await hub.broadcast_to_session(sid, frame)
                 if session and ftype == "session-event" and _search_should_capture(frame):
                     request.app["search"].capture_session_event(session, frame)
                     event = frame.get("event") or {}

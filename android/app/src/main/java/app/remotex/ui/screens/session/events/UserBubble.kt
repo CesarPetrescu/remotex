@@ -34,6 +34,13 @@ import app.remotex.ui.theme.Ink
 @Composable
 internal fun UserBubble(event: UiEvent.User) {
     val userAccent = Color(0xFF8FB4FF)
+    val body = event.text.ifBlank {
+        if (event.imageCount > 0) {
+            "${event.imageCount} image${if (event.imageCount == 1) "" else "s"}"
+        } else {
+            ""
+        }
+    }
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
@@ -76,7 +83,7 @@ internal fun UserBubble(event: UiEvent.User) {
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        event.text,
+                        body,
                         color = Ink,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,

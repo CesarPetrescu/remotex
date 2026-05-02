@@ -212,6 +212,9 @@ function reducer(state, action) {
       return { ...state, status: action.status };
 
     case 'APPEND_EVENT':
+      if (action.event?.id && state.events.some((e) => e.id === action.event.id)) {
+        return state;
+      }
       return { ...state, events: [...state.events, action.event] };
     case 'APPEND_DELTA':
       return {
@@ -361,8 +364,17 @@ export function useRemotex() {
       dispatch({ type: 'SET_ERROR', error: null });
       dispatch({
         type: 'SESSION_INFO',
-        info: { sessionId: frame.session_id, hostId: frame.host_id },
+        info: {
+          sessionId: frame.session_id,
+          hostId: frame.host_id,
+          clientId: frame.client_id,
+          peerCount: frame.peer_count,
+        },
       });
+      return;
+    }
+    if (frame.type === 'approval-resolved') {
+      dispatch({ type: 'APPROVAL_CLEAR' });
       return;
     }
     if (frame.type === 'session-closed') {
@@ -414,6 +426,9 @@ export function useRemotex() {
       case 'item-started': {
         const ev = buildItemEvent(data);
         if (ev) dispatch({ type: 'APPEND_EVENT', event: ev });
+        if (data.item_type === 'user_message' && !data.replayed) {
+          dispatch({ type: 'PENDING', pending: true });
+        }
         return;
       }
       case 'item-delta':
@@ -451,6 +466,8 @@ export function useRemotex() {
       case 'slash-ack': {
         const cmd = data.command || '?';
         const ok = data.ok === true;
+        if (ok && cmd === 'plan') dispatch({ type: 'SET_PLAN', on: true });
+        if (ok && cmd === 'default') dispatch({ type: 'SET_PLAN', on: false });
         const text = data.message
           ? `/${cmd} — ${data.message}`
           : !ok
@@ -507,6 +524,8 @@ export function useRemotex() {
         return;
       }
       case 'turn-started':
+        dispatch({ type: 'PENDING', pending: true });
+        return;
       case 'history-begin':
       case 'history-end':
         return;
@@ -966,32 +985,29 @@ export function useRemotex() {
       if (pendingImages.length === 0) {
         const slash = parseSlash(input);
         if (slash) {
-          sock.sendSlash(slash.cmd, slash.args);
+          if (!sock.sendSlash(slash.cmd, slash.args)) {
+            dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+            return;
+          }
           if (slash.cmd === 'plan') dispatch({ type: 'SET_PLAN', on: true });
           if (slash.cmd === 'default') dispatch({ type: 'SET_PLAN', on: false });
           return;
         }
       }
 
-      const userId = `u-${Math.random().toString(36).slice(2, 10)}`;
-      dispatch({
-        type: 'APPEND_EVENT',
-        event: {
-          id: userId,
-          role: 'user',
-          text: input,
-          imageUrls: pendingImages.map((a) => a.dataUrl),
-        },
-      });
-      dispatch({ type: 'CLEAR_IMAGES' });
-      dispatch({ type: 'PENDING', pending: true });
-      sock.sendTurn({
+      const sent = sock.sendTurn({
         input,
         model,
         effort,
         permissions,
         images: pendingImages.map((a) => ({ mime: a.mime, data: a.base64 })),
       });
+      if (!sent) {
+        dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+        return;
+      }
+      dispatch({ type: 'CLEAR_IMAGES' });
+      dispatch({ type: 'PENDING', pending: true });
     },
     [],
   );
@@ -1003,8 +1019,9 @@ export function useRemotex() {
   const resolveApproval = useCallback((decision) => {
     const pending = latestInputsRef.current.pendingApproval;
     if (!pending) return;
-    socketRef.current?.sendApproval(pending.approvalId, decision);
-    dispatch({ type: 'APPROVAL_CLEAR' });
+    if (socketRef.current?.sendApproval(pending.approvalId, decision)) {
+      dispatch({ type: 'APPROVAL_CLEAR' });
+    }
   }, []);
 
   const attachImage = useCallback(async (file) => {
@@ -1212,7 +1229,7 @@ function buildItemEvent(data) {
         completed: replayed,
       };
     case 'user_message':
-      return { id, role: 'user', text: data.text || '' };
+      return { id, role: 'user', text: data.text || '', imageCount: data.image_count || 0 };
     default:
       return { id, role: 'system', label: data.item_type || 'item', detail: '' };
   }

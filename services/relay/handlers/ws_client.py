@@ -2,10 +2,10 @@
 
 Closing semantics:
 - Client sends ``session-close``: the relay closes the backend session
-  immediately.
+  for every attached client.
 - Client disconnects without ``session-close``: the relay holds the
-  backend session open for ``CLIENT_RECONNECT_GRACE_SECONDS`` so the
-  client can reconnect.
+  backend session open for ``CLIENT_RECONNECT_GRACE_SECONDS`` if no
+  other clients remain attached.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+import uuid
 
 from aiohttp import WSMsgType, web
 
@@ -43,6 +44,10 @@ SESSION_STALL_CEILING_SECONDS = float(
 async def _close_backend_session(app: web.Application, host_id: str, session_id: str) -> None:
     hub: Hub = app["hub"]
     store: Store = app["store"]
+    await hub.broadcast_to_session(
+        session_id,
+        {"type": "session-closed", "session_id": session_id},
+    )
     daemon_ws = hub.daemon_for(host_id)
     if daemon_ws is not None and not daemon_ws.closed:
         try:
@@ -92,8 +97,8 @@ async def _schedule_backend_close(
             while True:
                 await asyncio.sleep(poll_interval)
                 if hub.client_for(session_id) is not None:
-                    # Client reattached — let detach_client schedule a
-                    # fresh watchdog if it leaves again.
+                    # At least one client is attached — let the final
+                    # detach schedule a fresh watchdog if everyone leaves.
                     return
                 last = hub.session_activity.get(session_id, time.monotonic())
                 silent_for = time.monotonic() - last
@@ -138,6 +143,7 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
 
     session_id: str | None = None
     host_id: str | None = None
+    client_id: str | None = None
     explicit_close = False
     try:
         hello = await asyncio.wait_for(ws.receive(), timeout=10)
@@ -157,6 +163,12 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             await ws.send_json({"type": "error", "error": "session_id required"})
             await ws.close(code=1008, message=b"no session")
             return ws
+        client_id = (data.get("client_id") or "").strip() or f"client_{uuid.uuid4().hex[:12]}"
+        client_name = (data.get("client_name") or "client").strip()[:64] or "client"
+        try:
+            last_seq = int(data.get("last_seq") or 0)
+        except (TypeError, ValueError):
+            last_seq = 0
         host_id = hub.host_for_session(session_id)
         if host_id is None:
             session = await store.session_info(session_id)
@@ -165,9 +177,30 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                 await ws.close(code=1008, message=b"bad session")
                 return ws
             host_id = session["host_id"]
-        await hub.attach_client(session_id, host_id, ws)
-        await ws.send_json({"type": "attached", "session_id": session_id, "host_id": host_id})
-        audit("session.attached", session_id=session_id, host_id=host_id, user=user["token"])
+        peer_count = await hub.attach_client(
+            session_id,
+            host_id,
+            client_id,
+            ws,
+            name=client_name,
+        )
+        await ws.send_json({
+            "type": "attached",
+            "session_id": session_id,
+            "host_id": host_id,
+            "client_id": client_id,
+            "peer_count": peer_count,
+        })
+        for frame in await hub.replay_since(session_id, last_seq):
+            await ws.send_json(frame)
+        audit(
+            "session.attached",
+            session_id=session_id,
+            host_id=host_id,
+            user=user["token"],
+            client_id=client_id,
+            peer_count=peer_count,
+        )
         # Now that the client is attached, ask the daemon to start the session.
         daemon_ws = hub.daemon_for(host_id)
         if daemon_ws is None or daemon_ws.closed:
@@ -175,16 +208,15 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             await ws.close(code=4503, message=b"host offline")
             return ws
         override_map: dict = request.app.setdefault("session_open_overrides", {})
-        open_frame = await hub.session_open_frame(session_id)
-        if open_frame is None:
-            overrides = override_map.pop(session_id, {}) or {}
-            open_frame = {"type": "session-open", "session_id": session_id}
-            if overrides.get("thread_id"):
-                open_frame["resume_thread_id"] = overrides["thread_id"]
-            if overrides.get("cwd"):
-                open_frame["cwd"] = overrides["cwd"]
-            await hub.remember_session_open(session_id, host_id, open_frame)
-        await daemon_ws.send_json(open_frame)
+        overrides = override_map.get(session_id, {}) or {}
+        open_frame, created_open = await hub.ensure_session_open_frame(
+            session_id,
+            host_id,
+            overrides,
+        )
+        if created_open:
+            override_map.pop(session_id, None)
+            await daemon_ws.send_json(open_frame)
 
         async for msg in ws:
             if msg.type != WSMsgType.TEXT:
@@ -207,25 +239,99 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                 await ws.close(code=1000, message=b"session closed")
                 break
             if frame.get("type") == "turn-start":
+                if not await hub.try_begin_turn(session_id):
+                    await ws.send_json({
+                        "type": "error",
+                        "error": "a turn is already running in this chat",
+                    })
+                    continue
+                frame["client_id"] = client_id
+                frame["client_message_id"] = (
+                    frame.get("client_message_id")
+                    or f"msg_{uuid.uuid4().hex[:12]}"
+                )
+                input_text = frame.get("input") or ""
+                images = frame.get("images")
+                await hub.broadcast_to_session(session_id, {
+                    "type": "session-event",
+                    "session_id": session_id,
+                    "event": {
+                        "kind": "item-started",
+                        "data": {
+                            "item_id": frame["client_message_id"],
+                            "item_type": "user_message",
+                            "text": input_text,
+                            "image_count": len(images) if isinstance(images, list) else 0,
+                            "source_client_id": client_id,
+                        },
+                    },
+                })
                 session = await store.session_info(session_id)
                 if session:
                     request.app["search"].capture_client_turn(session, frame)
-                audit("turn.started", session_id=session_id, host_id=host_id)
+                audit(
+                    "turn.started",
+                    session_id=session_id,
+                    host_id=host_id,
+                    client_id=client_id,
+                )
+            if frame.get("type") == "approval-response":
+                approval_id = frame.get("approval_id")
+                if not approval_id or not await hub.resolve_approval(session_id, approval_id):
+                    await ws.send_json({
+                        "type": "error",
+                        "error": "approval already resolved",
+                    })
+                    continue
+                frame["client_id"] = client_id
             daemon_ws = hub.daemon_for(host_id)
             if daemon_ws is None or daemon_ws.closed:
+                if frame.get("type") == "turn-start":
+                    hub.mark_turn_completed(session_id)
+                    await hub.broadcast_to_session(session_id, {
+                        "type": "session-event",
+                        "session_id": session_id,
+                        "event": {
+                            "kind": "turn-completed",
+                            "data": {"error": "host offline"},
+                        },
+                    })
                 await ws.send_json({"type": "error", "error": "host offline"})
                 continue
-            await daemon_ws.send_json(frame)
+            try:
+                await daemon_ws.send_json(frame)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("client frame forward failed", extra={"error": str(exc)})
+                if frame.get("type") == "turn-start":
+                    hub.mark_turn_completed(session_id)
+                    await hub.broadcast_to_session(session_id, {
+                        "type": "session-event",
+                        "session_id": session_id,
+                        "event": {
+                            "kind": "turn-completed",
+                            "data": {"error": "host offline"},
+                        },
+                    })
+                await ws.send_json({"type": "error", "error": "host offline"})
+                continue
+            if frame.get("type") == "approval-response":
+                await hub.broadcast_to_session(session_id, {
+                    "type": "approval-resolved",
+                    "session_id": session_id,
+                    "approval_id": frame.get("approval_id"),
+                    "decision": frame.get("decision"),
+                    "client_id": client_id,
+                })
     except asyncio.TimeoutError:
         await ws.close(code=4408, message=b"hello timeout")
     except Exception as exc:  # noqa: BLE001
         log.exception("client ws error", extra={"error": str(exc)})
     finally:
-        if session_id:
-            detached = await hub.detach_client(session_id, ws)
-            if detached and host_id:
+        if session_id and client_id:
+            last_client_left = await hub.detach_client(session_id, client_id, ws)
+            if host_id:
                 if explicit_close:
                     await _close_backend_session(request.app, host_id, session_id)
-                else:
+                elif last_client_left:
                     await _schedule_backend_close(request.app, host_id, session_id)
     return ws

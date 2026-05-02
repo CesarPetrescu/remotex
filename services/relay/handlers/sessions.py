@@ -51,6 +51,11 @@ async def open_session(request: web.Request) -> web.Response:
         overrides["cwd"] = cwd
     if overrides:
         request.app.setdefault("session_open_overrides", {})[sid] = overrides
+    if resume_thread_id:
+        # Reserve the (host, thread) mapping immediately. Otherwise two
+        # clients opening the same saved chat at the same time can both
+        # miss the index before the daemon emits session-started.
+        await hub.remember_session_thread(sid, host_id, resume_thread_id)
     return web.json_response({
         "session_id": sid,
         "host_id": host_id,

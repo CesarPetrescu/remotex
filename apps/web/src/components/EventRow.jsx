@@ -9,11 +9,16 @@ export function EventRow({ event, pending, grouped }) {
   const isStreaming = pending && !event.completed;
 
   if (event.role === 'user') {
+    const body = event.text || (
+      event.imageCount > 0
+        ? `${event.imageCount} image${event.imageCount === 1 ? '' : 's'}`
+        : ''
+    );
     return (
       <div className="item item-user">
         <div className="user-bubble">
           <div className="item-label">USER</div>
-          <div className="item-body">{event.text}</div>
+          <div className="item-body">{body}</div>
           {event.imageUrls?.length > 0 && (
             <div className="item-images">
               {event.imageUrls.map((url, i) => (

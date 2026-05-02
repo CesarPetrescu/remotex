@@ -14,6 +14,7 @@ sealed class UiEvent {
     data class User(
         override val id: String,
         val text: String,
+        val imageCount: Int = 0,
         /** URIs the user attached from their gallery; rendered as thumbnails. */
         val imageUris: List<String> = emptyList(),
     ) : UiEvent()

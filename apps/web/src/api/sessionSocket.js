@@ -6,6 +6,39 @@
 
 const HEARTBEAT_INTERVAL_MS = 20000;
 const HEARTBEAT_STALE_MS = 70000;
+const CLIENT_ID_KEY = 'remotex.webClientId';
+const LAST_SEQ_PREFIX = 'remotex.lastSeq.';
+
+function loadClientId() {
+  try {
+    const existing = sessionStorage.getItem(CLIENT_ID_KEY);
+    if (existing) return existing;
+    const id = `web-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+    sessionStorage.setItem(CLIENT_ID_KEY, id);
+    return id;
+  } catch {
+    return `web-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+  }
+}
+
+function loadLastSeq(sessionId) {
+  try {
+    const raw = sessionStorage.getItem(`${LAST_SEQ_PREFIX}${sessionId}`);
+    const parsed = Number.parseInt(raw || '0', 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function storeLastSeq(sessionId, seq) {
+  if (!Number.isFinite(seq)) return;
+  try {
+    sessionStorage.setItem(`${LAST_SEQ_PREFIX}${sessionId}`, String(seq));
+  } catch {
+    // ignore
+  }
+}
 
 export class SessionSocket {
   constructor({ userToken, sessionId, onFrame, onStatus }) {
@@ -13,6 +46,7 @@ export class SessionSocket {
     const url = `${proto}//${location.host}/ws/client`;
     this.ws = new WebSocket(url);
     this.sessionId = sessionId;
+    this.clientId = loadClientId();
     this.onFrame = onFrame || (() => {});
     this.onStatus = onStatus || (() => {});
     this.lastMessageAt = Date.now();
@@ -21,7 +55,14 @@ export class SessionSocket {
 
     this.ws.addEventListener('open', () => {
       this.onStatus('connecting');
-      this.send({ type: 'hello', token: userToken, session_id: sessionId });
+      this.send({
+        type: 'hello',
+        token: userToken,
+        session_id: sessionId,
+        client_id: this.clientId,
+        client_name: 'web',
+        last_seq: loadLastSeq(sessionId),
+      });
       this.startHeartbeat();
     });
     this.ws.addEventListener('message', (ev) => {
@@ -33,6 +74,9 @@ export class SessionSocket {
         return;
       }
       if (frame.type === 'pong') return;
+      if (Number.isFinite(frame.seq)) {
+        storeLastSeq(this.sessionId, frame.seq);
+      }
       this.onFrame(frame);
     });
     this.ws.addEventListener('close', () => {
@@ -72,26 +116,30 @@ export class SessionSocket {
   }
 
   sendTurn({ input, model, effort, permissions, images }) {
-    const frame = { type: 'turn-start', input };
+    const frame = {
+      type: 'turn-start',
+      input,
+      client_message_id: `msg-${Math.random().toString(36).slice(2, 12)}`,
+    };
     if (model) frame.model = model;
     if (effort && effort !== 'none') frame.effort = effort;
     if (permissions) frame.permissions = permissions;
     if (images?.length) frame.images = images;
-    this.send(frame);
+    return this.send(frame);
   }
 
   sendInterrupt() {
-    this.send({ type: 'turn-interrupt' });
+    return this.send({ type: 'turn-interrupt' });
   }
 
   sendSlash(cmd, args) {
     const frame = { type: 'slash-command', command: cmd };
     if (args) frame.args = args;
-    this.send(frame);
+    return this.send(frame);
   }
 
   sendApproval(approvalId, decision) {
-    this.send({ type: 'approval-response', approval_id: approvalId, decision });
+    return this.send({ type: 'approval-response', approval_id: approvalId, decision });
   }
 
   close({ endSession = false } = {}) {

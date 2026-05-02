@@ -1,20 +1,25 @@
 """In-memory routing hub for daemon and client websockets.
 
-The Hub owns three transient maps: which daemon socket serves which
-host, which client socket serves which session, and the cached
-``session-open`` frame for each session (used to replay state to a
-reattaching client and to push state to a freshly-connected daemon).
+The Hub owns transient routing state: which daemon socket serves which
+host, which client sockets are attached to each session, and the cached
+``session-open`` frame for each session (used to push state to a freshly
+connected daemon).
 
-``forward_to_client`` and ``forward_to_daemon`` are non-blocking,
-bounded send wrappers — they enforce backpressure by closing a socket
-that can't drain its outbound queue fast enough (rather than letting
-the relay's event loop wedge behind a slow consumer).
+Session events are sequenced and kept in a small replay buffer so a
+second client, or a reconnecting client, can catch up without replacing
+the existing viewer. Bounded send wrappers enforce backpressure by
+closing only the slow socket, rather than letting the relay's event loop
+wedge behind one consumer.
 """
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
+import os
 import time
+from collections import deque
+from dataclasses import dataclass
 
 from aiohttp import web
 
@@ -24,6 +29,15 @@ log = logging.getLogger("relay.hub")
 # the socket is closed with code 1013 (try-again-later) and the
 # offending side is expected to reconnect.
 _SEND_TIMEOUT_SECONDS = 5.0
+_SESSION_REPLAY_LIMIT = int(os.getenv("RELAY_SESSION_REPLAY_LIMIT", "1000"))
+
+
+@dataclass
+class ClientConnection:
+    client_id: str
+    ws: web.WebSocketResponse
+    name: str
+    connected_at: float
 
 
 async def _bounded_send(ws: web.WebSocketResponse, frame: dict, *, role: str) -> bool:
@@ -51,10 +65,12 @@ class Hub:
 
     def __init__(self) -> None:
         self.daemons: dict[str, web.WebSocketResponse] = {}
-        self.client_sessions: dict[str, web.WebSocketResponse] = {}
+        self.session_clients: dict[str, dict[str, ClientConnection]] = {}
         self.session_host: dict[str, str] = {}
         self.session_open_frames: dict[str, dict] = {}
         self.client_close_tasks: dict[str, asyncio.Task] = {}
+        self.session_seq: dict[str, int] = {}
+        self.session_replay: dict[str, deque[dict]] = {}
         self._lock = asyncio.Lock()
         # request_id → Future awaiting the daemon's response frame
         self.pending_admin: dict[str, asyncio.Future] = {}
@@ -75,6 +91,9 @@ class Hub:
         # session_id → (host_id, thread_id) reverse so forget_session can
         # clean up the index efficiently.
         self.session_thread: dict[str, tuple[str, str]] = {}
+        # approval_id → session_id while an approval is still answerable.
+        # First response wins; later responses are ignored by ws_client.
+        self.pending_approvals: dict[str, str] = {}
 
     async def attach_daemon(self, host_id: str, ws: web.WebSocketResponse) -> web.WebSocketResponse | None:
         async with self._lock:
@@ -89,35 +108,84 @@ class Hub:
             self.daemons.pop(host_id, None)
             return True
 
-    async def attach_client(self, session_id: str, host_id: str, ws: web.WebSocketResponse) -> None:
-        old: web.WebSocketResponse | None = None
+    async def attach_client(
+        self,
+        session_id: str,
+        host_id: str,
+        client_id: str,
+        ws: web.WebSocketResponse,
+        *,
+        name: str = "client",
+    ) -> int:
+        old: ClientConnection | None = None
         close_task: asyncio.Task | None = None
         async with self._lock:
-            old = self.client_sessions.get(session_id)
+            clients = self.session_clients.setdefault(session_id, {})
+            old = clients.get(client_id)
+            clients[client_id] = ClientConnection(
+                client_id=client_id,
+                ws=ws,
+                name=name,
+                connected_at=time.time(),
+            )
             close_task = self.client_close_tasks.pop(session_id, None)
-            self.client_sessions[session_id] = ws
             self.session_host[session_id] = host_id
+            peer_count = sum(1 for conn in clients.values() if not conn.ws.closed)
         if close_task:
             close_task.cancel()
-        if old is not None and old is not ws and not old.closed:
-            await old.close(code=4000, message=b"replaced")
+        if old is not None and old.ws is not ws and not old.ws.closed:
+            await old.ws.close(code=4000, message=b"replaced")
+        return peer_count
 
     async def detach_client(
         self,
         session_id: str,
+        client_id: str | None = None,
         ws: web.WebSocketResponse | None = None,
     ) -> bool:
+        """Detach one client. Returns True when no live clients remain."""
         async with self._lock:
-            if ws is not None and self.client_sessions.get(session_id) is not ws:
+            clients = self.session_clients.get(session_id)
+            if not clients:
+                return True
+            remove_id: str | None = None
+            if client_id and client_id in clients:
+                conn = clients[client_id]
+                if ws is not None and conn.ws is not ws:
+                    return False
+                remove_id = client_id
+            elif ws is not None:
+                for cid, conn in clients.items():
+                    if conn.ws is ws:
+                        remove_id = cid
+                        break
+            elif client_id is None:
+                clients.clear()
+                self.session_clients.pop(session_id, None)
+                return True
+            if remove_id is None:
                 return False
-            self.client_sessions.pop(session_id, None)
-            return True
+            clients.pop(remove_id, None)
+            if not clients:
+                self.session_clients.pop(session_id, None)
+                return True
+            return not any(not conn.ws.closed for conn in clients.values())
 
     def daemon_for(self, host_id: str) -> web.WebSocketResponse | None:
         return self.daemons.get(host_id)
 
     def client_for(self, session_id: str) -> web.WebSocketResponse | None:
-        return self.client_sessions.get(session_id)
+        for conn in self.session_clients.get(session_id, {}).values():
+            if not conn.ws.closed:
+                return conn.ws
+        return None
+
+    def client_count(self, session_id: str) -> int:
+        return sum(
+            1
+            for conn in self.session_clients.get(session_id, {}).values()
+            if not conn.ws.closed
+        )
 
     def host_for_session(self, session_id: str) -> str | None:
         return self.session_host.get(session_id)
@@ -125,15 +193,42 @@ class Hub:
     def clients_for_host(self, host_id: str) -> list[web.WebSocketResponse]:
         """All client sockets currently attached to a session on this host."""
         return [
-            ws
-            for sid, ws in self.client_sessions.items()
-            if self.session_host.get(sid) == host_id and not ws.closed
+            conn.ws
+            for sid, clients in self.session_clients.items()
+            for conn in clients.values()
+            if self.session_host.get(sid) == host_id and not conn.ws.closed
         ]
 
     async def remember_session_open(self, session_id: str, host_id: str, frame: dict) -> None:
         async with self._lock:
             self.session_host[session_id] = host_id
             self.session_open_frames[session_id] = dict(frame)
+
+    async def ensure_session_open_frame(
+        self,
+        session_id: str,
+        host_id: str,
+        overrides: dict | None = None,
+    ) -> tuple[dict, bool]:
+        """Return the cached session-open frame, creating it atomically.
+
+        The boolean is True only for the first caller; ws_client uses it
+        to avoid sending duplicate session-open frames when multiple
+        clients attach to the same newly-reserved session at once.
+        """
+        async with self._lock:
+            frame = self.session_open_frames.get(session_id)
+            if frame is not None:
+                return dict(frame), False
+            frame = {"type": "session-open", "session_id": session_id}
+            overrides = overrides or {}
+            if overrides.get("thread_id"):
+                frame["resume_thread_id"] = overrides["thread_id"]
+            if overrides.get("cwd"):
+                frame["cwd"] = overrides["cwd"]
+            self.session_host[session_id] = host_id
+            self.session_open_frames[session_id] = dict(frame)
+            return dict(frame), True
 
     async def update_session_resume(
         self,
@@ -171,14 +266,54 @@ class Hub:
         if old and old is not task:
             old.cancel()
 
-    async def forward_to_client(self, session_id: str, frame: dict) -> bool:
-        """Send a frame to the client bound to ``session_id``. Returns
-        False if the client is gone or the send timed out (the socket is
-        closed in that case)."""
-        ws = self.client_sessions.get(session_id)
-        if ws is None or ws.closed:
+    async def record_session_frame(self, session_id: str, frame: dict) -> dict:
+        """Attach a session-local sequence number and store replay state."""
+        async with self._lock:
+            seq = self.session_seq.get(session_id, 0) + 1
+            self.session_seq[session_id] = seq
+            out = copy.deepcopy(frame)
+            out.setdefault("session_id", session_id)
+            out["seq"] = seq
+            replay = self.session_replay.setdefault(
+                session_id,
+                deque(maxlen=_SESSION_REPLAY_LIMIT),
+            )
+            replay.append(copy.deepcopy(out))
+            return out
+
+    async def replay_since(self, session_id: str, last_seq: int) -> list[dict]:
+        async with self._lock:
+            return [
+                copy.deepcopy(frame)
+                for frame in self.session_replay.get(session_id, ())
+                if int(frame.get("seq") or 0) > last_seq
+            ]
+
+    def session_seq_value(self, session_id: str) -> int:
+        return self.session_seq.get(session_id, 0)
+
+    async def broadcast_to_session(
+        self,
+        session_id: str,
+        frame: dict,
+        *,
+        record: bool = True,
+    ) -> bool:
+        """Send a frame to every live client attached to ``session_id``."""
+        out = await self.record_session_frame(session_id, frame) if record else frame
+        async with self._lock:
+            clients = [
+                conn.ws
+                for conn in self.session_clients.get(session_id, {}).values()
+                if not conn.ws.closed
+            ]
+        if not clients:
             return False
-        return await _bounded_send(ws, frame, role="client")
+        results = await asyncio.gather(
+            *(_bounded_send(ws, out, role="client") for ws in clients),
+            return_exceptions=False,
+        )
+        return any(results)
 
     async def forward_to_daemon(self, host_id: str, frame: dict) -> bool:
         ws = self.daemons.get(host_id)
@@ -189,12 +324,17 @@ class Hub:
     async def forget_session(self, session_id: str) -> None:
         current = asyncio.current_task()
         async with self._lock:
-            self.client_sessions.pop(session_id, None)
+            self.session_clients.pop(session_id, None)
             self.session_host.pop(session_id, None)
             self.session_open_frames.pop(session_id, None)
             close_task = self.client_close_tasks.pop(session_id, None)
+            self.session_seq.pop(session_id, None)
+            self.session_replay.pop(session_id, None)
             self.turn_in_flight.pop(session_id, None)
             self.session_activity.pop(session_id, None)
+            for approval_id, sid in list(self.pending_approvals.items()):
+                if sid == session_id:
+                    self.pending_approvals.pop(approval_id, None)
             key = self.session_thread.pop(session_id, None)
             if key is not None:
                 # Only drop the index entry if it still points at us;
@@ -218,6 +358,27 @@ class Hub:
         self.turn_in_flight[session_id] = False
         self.bump_activity(session_id)
 
+    async def try_begin_turn(self, session_id: str) -> bool:
+        """Reserve the single active turn slot for a session."""
+        async with self._lock:
+            if self.turn_in_flight.get(session_id, False):
+                return False
+            self.turn_in_flight[session_id] = True
+            self.session_activity[session_id] = time.monotonic()
+            return True
+
+    async def note_approval_request(self, session_id: str, approval_id: str) -> None:
+        async with self._lock:
+            self.pending_approvals[approval_id] = session_id
+
+    async def resolve_approval(self, session_id: str, approval_id: str) -> bool:
+        """Claim an approval. Returns False if another client got there first."""
+        async with self._lock:
+            if self.pending_approvals.get(approval_id) != session_id:
+                return False
+            self.pending_approvals.pop(approval_id, None)
+            return True
+
     async def remember_session_thread(
         self,
         session_id: str,
@@ -229,6 +390,7 @@ class Hub:
         find the existing in-flight session instead of starting a new one."""
         async with self._lock:
             key = (host_id, thread_id)
+            self.session_host[session_id] = host_id
             self.session_thread[session_id] = key
             self.thread_session_index[key] = session_id
 

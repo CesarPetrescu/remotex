@@ -27,6 +27,9 @@ class SessionSocket(
     baseUrl: String,
     userToken: String,
     sessionId: String,
+    clientId: String,
+    lastSeq: Long = 0L,
+    clientName: String = "android",
     http: OkHttpClient = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
@@ -49,7 +52,7 @@ class SessionSocket(
         socket = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 webSocket.send(
-                    """{"type":"hello","token":"$userToken","session_id":"$sessionId"}"""
+                    """{"type":"hello","token":"$userToken","session_id":"$sessionId","client_id":"$clientId","client_name":"$clientName","last_seq":$lastSeq}"""
                 )
             }
             override fun onMessage(webSocket: WebSocket, text: String) {

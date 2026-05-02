@@ -192,6 +192,8 @@ class RemotexViewModel(
     private var userClosed: Boolean = false
     private var telemetryJob: Job? = null
     private var telemetryHostId: String? = null
+    private val clientId: String = "android-${UUID.randomUUID().toString().take(12)}"
+    private val lastSeqBySession: MutableMap<String, Long> = mutableMapOf()
 
     fun setToken(token: String) {
         _state.update { it.copy(userToken = token) }
@@ -339,8 +341,9 @@ class RemotexViewModel(
                 put("decision", decision)
             },
         )
-        sock.sendJson(frame)
-        _state.update { it.copy(pendingApproval = null) }
+        if (sock.sendJson(frame)) {
+            _state.update { it.copy(pendingApproval = null) }
+        }
     }
 
     fun dismissSlashFeedback() {
@@ -772,7 +775,13 @@ class RemotexViewModel(
     private fun attachSocket(sid: String) {
         socket?.close()
         socketJob?.cancel()
-        val sock = SessionSocket(relayUrl, _state.value.userToken, sid)
+        val sock = SessionSocket(
+            relayUrl,
+            _state.value.userToken,
+            sid,
+            clientId = clientId,
+            lastSeq = lastSeqBySession[sid] ?: 0L,
+        )
         socket = sock
         socketJob = viewModelScope.launch {
             sock.events.collect { ev ->
@@ -865,24 +874,16 @@ class RemotexViewModel(
                         if (args.isNotEmpty()) put("args", args)
                     },
                 )
-                sock.sendJson(frame)
+                if (!sock.sendJson(frame)) {
+                    _state.update { it.copy(error = "socket is not connected") }
+                    return
+                }
                 if (cmd == "plan") _state.update { it.copy(planMode = true) }
                 if (cmd == "default") _state.update { it.copy(planMode = false) }
                 return
             }
         }
-        val userId = "u-${UUID.randomUUID().toString().take(8)}"
-        _state.update {
-            it.copy(
-                events = it.events + UiEvent.User(
-                    id = userId,
-                    text = input,
-                    imageUris = attachments.map { a -> a.uri },
-                ),
-                pending = true,
-                pendingImages = emptyList(),
-            )
-        }
+        val clientMessageId = "msg-${UUID.randomUUID().toString().take(8)}"
         val model = _state.value.model.trim()
         val effort = _state.value.effort.trim()
         val perms = _state.value.permissions.wire
@@ -891,6 +892,7 @@ class RemotexViewModel(
             buildJsonObject {
                 put("type", "turn-start")
                 put("input", input)
+                put("client_message_id", clientMessageId)
                 if (model.isNotEmpty()) put("model", model)
                 if (effort.isNotEmpty() && effort != "none") put("effort", effort)
                 put("permissions", perms)
@@ -906,7 +908,16 @@ class RemotexViewModel(
                 }
             },
         )
-        sock.sendJson(frame)
+        if (!sock.sendJson(frame)) {
+            _state.update { it.copy(error = "socket is not connected") }
+            return
+        }
+        _state.update {
+            it.copy(
+                pending = true,
+                pendingImages = emptyList(),
+            )
+        }
     }
 
     /** Called from the UI when the user picks an image. Handles reading +
@@ -976,10 +987,25 @@ class RemotexViewModel(
         } catch (_: Throwable) {
             return
         }
+        val seq = msg["seq"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+        val sid = msg.string("session_id") ?: _state.value.session?.sessionId
+        if (seq != null && sid != null && seq > (lastSeqBySession[sid] ?: 0L)) {
+            lastSeqBySession[sid] = seq
+        }
         when (msg.string("type")) {
             "attached" -> {
                 reconnectAttempt = 0
                 _state.update { it.copy(status = Status.Connecting, error = null) }
+            }
+            "approval-resolved" -> {
+                val approvalId = msg.string("approval_id")
+                _state.update {
+                    if (approvalId == null || it.pendingApproval?.approvalId == approvalId) {
+                        it.copy(pendingApproval = null)
+                    } else {
+                        it
+                    }
+                }
             }
             "pong" -> Unit
             "session-closed" -> _state.update {
@@ -1004,6 +1030,12 @@ class RemotexViewModel(
             "error" -> _state.update {
                 it.copy(error = msg.string("error") ?: "relay error")
             }
+        }
+    }
+
+    private fun appendEventOnce(event: UiEvent) {
+        _state.update { s ->
+            if (s.events.any { it.id == event.id }) s else s.copy(events = s.events + event)
         }
     }
 
@@ -1035,7 +1067,7 @@ class RemotexViewModel(
             }
 
             "turn-started" -> {
-                // Our own User bubble was added client-side in sendTurn, nothing to add here.
+                _state.update { it.copy(pending = true) }
             }
 
             "item-started" -> {
@@ -1066,10 +1098,15 @@ class RemotexViewModel(
                     "user_message" -> UiEvent.User(
                         id = itemId,
                         text = data.string("text") ?: "",
+                        imageCount = data["image_count"]?.jsonPrimitive?.contentOrNull
+                            ?.toIntOrNull() ?: 0,
                     )
                     else -> UiEvent.System(id = itemId, label = itemType, detail = "")
                 }
-                _state.update { it.copy(events = it.events + next) }
+                appendEventOnce(next)
+                if (itemType == "user_message" && !replayed) {
+                    _state.update { it.copy(pending = true) }
+                }
             }
 
             "item-delta" -> {
@@ -1194,6 +1231,8 @@ class RemotexViewModel(
                 val cmd = data.string("command") ?: "?"
                 val ok = (data["ok"] as? JsonPrimitive)?.contentOrNull == "true"
                     || data["ok"]?.toString() == "true"
+                if (ok && cmd == "plan") _state.update { it.copy(planMode = true) }
+                if (ok && cmd == "default") _state.update { it.copy(planMode = false) }
                 val msg = data.string("message")
                 val err = data.string("error")
                 val text = when {
