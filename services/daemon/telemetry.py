@@ -240,7 +240,10 @@ class TelemetryCollector:
                 continue
             parts = [p.strip() for p in line.split(",")]
 
-            def _f(i: int) -> float | None:
+            # Default-arg captures `parts` per-iteration so a future caller
+            # reusing _f outside the loop wouldn't see the wrong row's
+            # values (ruff B023 — also makes the intent explicit).
+            def _f(i: int, parts: list[str] = parts) -> float | None:
                 if i >= len(parts) or not parts[i]:
                     return None
                 try:
