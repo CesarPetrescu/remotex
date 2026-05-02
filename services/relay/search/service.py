@@ -472,7 +472,7 @@ class SearchService:
 
         reordered: list[dict[str, Any]] = []
         top_idxs = sorted(scored.keys(), key=lambda i: scored[i], reverse=True)
-        for new_rank, idx in enumerate(top_idxs):
+        for _new_rank, idx in enumerate(top_idxs):
             if idx < 0 or idx >= len(pool):
                 continue
             hit = dict(pool[idx])

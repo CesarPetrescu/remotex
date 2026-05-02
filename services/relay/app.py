@@ -71,6 +71,7 @@ def make_app(database_url: str | None, static_root: Path) -> web.Application:
     app.router.add_post("/api/hosts/{host_id}/fs/upload", fs_h.upload_host_file)
     app.router.add_get("/api/hosts/{host_id}/telemetry", hosts_h.get_host_telemetry)
     app.router.add_post("/api/sessions", sessions_h.open_session)
+    app.router.add_get("/api/sessions/{session_id}/plan", sessions_h.get_session_plan)
     app.router.add_get("/api/search/config", search_h.search_config)
     app.router.add_get("/api/search", search_h.search_chats)
     app.router.add_get("/api/search/stream", search_h.search_chats_stream)

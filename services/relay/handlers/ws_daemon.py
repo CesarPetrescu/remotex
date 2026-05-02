@@ -30,12 +30,54 @@ _SEARCH_EVENT_KINDS = {
     "history-end",
 }
 
+_ORCH_EVENT_KINDS = {
+    "orchestrator-plan",
+    "orchestrator-step-status",
+    "orchestrator-step-event",
+    "orchestrator-finished",
+}
+
 
 def _search_should_capture(frame: dict) -> bool:
     event = frame.get("event")
     if not isinstance(event, dict):
         return False
     return event.get("kind") in _SEARCH_EVENT_KINDS
+
+
+async def _persist_orchestrator_event(store, sid: str, event: dict) -> None:
+    """Mirror orchestrator events into the inventory_orchestrator_steps
+    table so a late-attaching client can recover the plan via
+    GET /api/sessions/{id}/plan."""
+    kind = event.get("kind")
+    data = event.get("data") or {}
+    if kind == "orchestrator-plan":
+        steps = data.get("steps") or []
+        try:
+            await store.replace_orchestrator_steps(sid, steps)
+        except Exception:  # noqa: BLE001
+            log.exception("persist orchestrator plan failed",
+                          extra={"session_id": sid})
+    elif kind == "orchestrator-step-status":
+        step_id = data.get("step_id")
+        if not step_id:
+            return
+        status = data.get("status")
+        started = bool(data.get("started_at")) and status == "running"
+        completed = status in ("completed", "failed", "cancelled")
+        try:
+            await store.update_orchestrator_step(
+                sid,
+                str(step_id),
+                status=status,
+                child_session_id=data.get("child_session_id"),
+                summary=data.get("summary"),
+                started=started,
+                completed=completed,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("persist orchestrator step failed",
+                          extra={"session_id": sid, "step_id": step_id})
 
 
 async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
@@ -116,6 +158,10 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 # Bounded fanout: close slow clients rather than letting
                 # the daemon's event loop stall behind one consumer.
                 await hub.broadcast_to_session(sid, frame)
+                if session and ftype == "session-event":
+                    event = frame.get("event") or {}
+                    if event.get("kind") in _ORCH_EVENT_KINDS:
+                        await _persist_orchestrator_event(store, sid, event)
                 if session and ftype == "session-event" and _search_should_capture(frame):
                     request.app["search"].capture_session_event(session, frame)
                     event = frame.get("event") or {}
