@@ -77,6 +77,27 @@ data class ApprovalPrompt(
     val decisions: List<String>,
 )
 
+/** Codex's request_user_input prompt — shown as a modal dialog so the
+ *  user can answer multi-question option/notes pickers. Mirrors
+ *  codex-rs/protocol/src/request_user_input.rs. */
+data class UserInputQuestionOption(
+    val label: String,
+    val description: String = "",
+)
+data class UserInputQuestion(
+    val id: String,
+    val header: String = "",
+    val question: String = "",
+    val isOther: Boolean = false,
+    val isSecret: Boolean = false,
+    val options: List<UserInputQuestionOption> = emptyList(),
+)
+data class UserInputPrompt(
+    val callId: String,
+    val turnId: String? = null,
+    val questions: List<UserInputQuestion>,
+)
+
 enum class PermissionsMode(val wire: String, val label: String, val hint: String) {
     Default("default", "Default", "ask for internet + outside writes"),
     Full("full", "Full Access", "no prompts — use with caution"),
@@ -111,6 +132,9 @@ data class UiState(
     val pendingImages: List<PendingImage> = emptyList(),
     val permissions: PermissionsMode = PermissionsMode.Default,
     val pendingApproval: ApprovalPrompt? = null,
+    /** Codex asked a multi-choice question (plan mode, ambiguous tools).
+     *  Cleared when [resolveUserInput]/[cancelUserInput] is called. */
+    val pendingUserInput: UserInputPrompt? = null,
     val slashFeedback: String? = null,
     val planMode: Boolean = false,   // true after /plan, cleared on /default
     // True between thread-status:resuming and thread-status:resumed/resume-failed.
@@ -344,6 +368,38 @@ class RemotexViewModel(
         if (sock.sendJson(frame)) {
             _state.update { it.copy(pendingApproval = null) }
         }
+    }
+
+    /** answers: questionId → list of answer strings. First entry is the
+     *  selected option label (when options exist), second is freeform
+     *  notes. Daemon normalises either flat-array or {answers:[]} on
+     *  receive. */
+    fun resolveUserInput(answers: Map<String, List<String>>) {
+        val pending = _state.value.pendingUserInput ?: return
+        val sock = socket ?: return
+        val frame = Json.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject {
+                put("type", "user-input-response")
+                put("call_id", pending.callId)
+                put("answers", buildJsonObject {
+                    answers.forEach { (qid, ans) ->
+                        put(qid, buildJsonArray {
+                            ans.forEach { add(JsonPrimitive(it)) }
+                        })
+                    }
+                })
+            },
+        )
+        if (sock.sendJson(frame)) {
+            _state.update { it.copy(pendingUserInput = null) }
+        }
+    }
+
+    fun cancelUserInput() {
+        // Empty answers → daemon sends {answers:{}} → codex marks every
+        // question "skipped".
+        resolveUserInput(emptyMap())
     }
 
     fun dismissSlashFeedback() {
@@ -738,6 +794,7 @@ class RemotexViewModel(
                 // in plan mode yet.
                 planMode = false,
                 pendingApproval = null,
+                pendingUserInput = null,
                 slashFeedback = null,
                 pendingImages = emptyList(),
                 resuming = false,
@@ -972,6 +1029,7 @@ class RemotexViewModel(
                 pending = false,
                 planMode = false,
                 pendingApproval = null,
+                pendingUserInput = null,
                 slashFeedback = null,
                 resuming = false,
                 resumingSinceMs = 0L,
@@ -1224,6 +1282,35 @@ class RemotexViewModel(
                             decisions = decisions,
                         )
                     )
+                }
+            }
+
+            "user-input-request" -> {
+                val callId = data.string("call_id") ?: return
+                val questionsArr = data["questions"] as? JsonArray ?: return
+                val questions = questionsArr.mapNotNull { qe ->
+                    val qo = qe as? JsonObject ?: return@mapNotNull null
+                    val qid = qo.string("id") ?: return@mapNotNull null
+                    val opts = (qo["options"] as? JsonArray).orEmpty().mapNotNull { oe ->
+                        val oo = oe as? JsonObject ?: return@mapNotNull null
+                        val label = oo.string("label") ?: return@mapNotNull null
+                        UserInputQuestionOption(label, oo.string("description").orEmpty())
+                    }
+                    UserInputQuestion(
+                        id = qid,
+                        header = qo.string("header").orEmpty(),
+                        question = qo.string("question").orEmpty(),
+                        isOther = qo["isOther"]?.jsonPrimitive?.contentOrNull == "true",
+                        isSecret = qo["isSecret"]?.jsonPrimitive?.contentOrNull == "true",
+                        options = opts,
+                    )
+                }
+                _state.update {
+                    it.copy(pendingUserInput = UserInputPrompt(
+                        callId = callId,
+                        turnId = data.string("turn_id"),
+                        questions = questions,
+                    ))
                 }
             }
 

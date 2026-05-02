@@ -3438,3 +3438,82 @@ main.screen-host {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ── codex request_user_input modal ── */
+.ui-input-scrim {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.ui-input-dialog {
+  display: flex; flex-direction: column; gap: 12px;
+  width: min(560px, 92vw);
+  max-height: 85vh;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  font-family: var(--mono);
+  color: var(--ink);
+  overflow-y: auto;
+}
+.ui-input-head { display: flex; align-items: center; }
+.ui-input-eyebrow {
+  flex: 1;
+  font-size: 10px; letter-spacing: 1.6px; color: var(--accent);
+}
+.ui-input-page { font-size: 10px; color: var(--ink-dim); }
+.ui-input-q-header { color: var(--amber); font-size: 13px; }
+.ui-input-q-body {
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.ui-input-options { display: flex; flex-direction: column; gap: 4px; }
+.ui-input-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 2px 8px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.ui-input-option.selected {
+  border-color: var(--amber);
+  background: rgba(94, 225, 255, 0.06);
+}
+.ui-input-option input { grid-row: 1 / 3; align-self: start; margin-top: 4px; accent-color: var(--amber); }
+.ui-input-option-label { color: var(--ink); font-size: 13px; }
+.ui-input-option-desc { color: var(--ink-dim); font-size: 11px; line-height: 1.4; font-family: var(--sans); }
+.ui-input-notes {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+.ui-input-notes:focus { outline: none; border-color: var(--amber); }
+.ui-input-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.ui-input-actions button {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.ui-input-skip { color: var(--ink-dim); margin-right: auto; }
+.ui-input-skip:hover { color: var(--warn); border-color: var(--warn); }
+.ui-input-prev:hover { color: var(--accent); border-color: var(--accent); }
+.ui-input-next {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--bg);
+  font-weight: 600;
+}

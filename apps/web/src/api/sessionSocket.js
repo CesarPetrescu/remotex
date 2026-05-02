@@ -142,6 +142,13 @@ export class SessionSocket {
     return this.send({ type: 'approval-response', approval_id: approvalId, decision });
   }
 
+  // Reply to codex's request_user_input prompt. `answers` is shaped
+  //   { <question_id>: ["selected label", "freeform notes"] }
+  // The daemon normalizes either flat-array or {answers:[]} on receive.
+  sendUserInput(callId, answers) {
+    return this.send({ type: 'user-input-response', call_id: callId, answers });
+  }
+
   close({ endSession = false } = {}) {
     this.closedByCaller = true;
     try {

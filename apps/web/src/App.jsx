@@ -4,6 +4,7 @@ import { useBackgroundCompletionAlert } from './hooks/useBackgroundCompletionAle
 import { SCREENS, STATUS } from './config';
 import { Toast } from './components/Toast';
 import { ApprovalDialog } from './components/ApprovalDialog';
+import { UserInputDialog } from './components/UserInputDialog';
 import { SessionScreen } from './screens/SessionScreen';
 import { SearchScreen } from './screens/SearchScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
@@ -183,6 +184,11 @@ export default function App() {
       />
 
       <ApprovalDialog prompt={state.pendingApproval} onDecision={r.resolveApproval} />
+      <UserInputDialog
+        prompt={state.pendingUserInput}
+        onSubmit={r.resolveUserInput}
+        onCancel={r.cancelUserInput}
+      />
       <Toast message={state.error} tone="error" onDismiss={r.clearError} />
       <Toast message={state.slashFeedback} tone="info" onDismiss={r.clearFeedback} />
 

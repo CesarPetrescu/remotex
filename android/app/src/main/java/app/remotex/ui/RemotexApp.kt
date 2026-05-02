@@ -35,6 +35,7 @@ import app.remotex.ui.screens.hosts.HostsScreen
 import app.remotex.ui.screens.search.SearchScreen
 import app.remotex.ui.screens.session.ApprovalDialog
 import app.remotex.ui.screens.session.SessionScreen
+import app.remotex.ui.screens.session.UserInputDialog
 import app.remotex.ui.screens.threads.ThreadsScreen
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Line
@@ -140,6 +141,13 @@ fun RemotexApp(relayUrl: String) {
                 }
                 state.pendingApproval?.let { appr ->
                     ApprovalDialog(prompt = appr, onDecision = { vm.resolveApproval(it) })
+                }
+                state.pendingUserInput?.let { ui ->
+                    UserInputDialog(
+                        prompt = ui,
+                        onSubmit = { vm.resolveUserInput(it) },
+                        onCancel = { vm.cancelUserInput() },
+                    )
                 }
                 state.slashFeedback?.let { msg ->
                     LaunchedEffect(msg) {

@@ -90,6 +90,10 @@ class StdioCodexAdapter(SessionAdapter):
         # Approval requests from codex are JSON-RPC requests (not notifs).
         # We record their rpc ids so we can respond after the client answers.
         self._pending_approvals: dict[str, int] = {}
+        # call_id → rpc id, mirroring _pending_approvals but for codex's
+        # item/tool/requestUserInput prompts (the "pick from these options"
+        # dialogs codex uses for plan mode and other interactive tools).
+        self._pending_user_inputs: dict[str, int] = {}
         # Slash-command state: if the user sends `/plan`, the next turn
         # uses collaborationMode; `/default` clears it.
         self._next_collab_mode: dict | None = None
@@ -196,6 +200,9 @@ class StdioCodexAdapter(SessionAdapter):
         ftype = frame.get("type")
         if ftype == "approval-response":
             await self._resolve_approval(frame)
+            return
+        if ftype == "user-input-response":
+            await self._resolve_user_input(frame)
             return
         if ftype == "slash-command":
             await self._handle_slash(frame)
@@ -480,6 +487,33 @@ class StdioCodexAdapter(SessionAdapter):
         result = {"decision": decision}
         await self._send({"id": rpc_id, "result": result})
 
+    async def _resolve_user_input(self, frame: dict) -> None:
+        """Reply to codex's item/tool/requestUserInput. Client sends:
+            {type:"user-input-response", call_id, answers:{<qid>:[strings]}}
+        We translate into the codex protocol shape and resolve the rpc."""
+        call_id = frame.get("call_id")
+        if not call_id:
+            return
+        rpc_id = self._pending_user_inputs.pop(call_id, None)
+        if rpc_id is None:
+            log.info("user-input-response for unknown call %s; ignoring", call_id)
+            return
+        raw = frame.get("answers") or {}
+        # Tolerate either {qid: [str]} or {qid: {answers: [str]}} from the
+        # client — both clients build it slightly differently.
+        normalized: dict[str, dict] = {}
+        for qid, value in raw.items():
+            if isinstance(value, dict) and "answers" in value:
+                arr = value["answers"]
+            elif isinstance(value, list):
+                arr = value
+            elif value is None:
+                arr = []
+            else:
+                arr = [str(value)]
+            normalized[str(qid)] = {"answers": [str(a) for a in arr]}
+        await self._send({"id": rpc_id, "result": {"answers": normalized}})
+
     # --- history replay -------------------------------------------------
 
     async def _replay_history(self, turns: list[dict] | None = None) -> None:
@@ -641,6 +675,25 @@ class StdioCodexAdapter(SessionAdapter):
         method = msg.get("method")
         params = msg.get("params") or {}
         if not method:
+            return
+
+        # Server-initiated request: codex asks the user a multiple-choice
+        # question (plan-mode confirmations, ambiguous-tool prompts, etc).
+        # See codex-rs/protocol/src/request_user_input.rs:
+        #   { call_id, turn_id, questions: [{id, header, question,
+        #     isOther, isSecret, options?: [{label, description}]}] }
+        # Response shape:
+        #   { answers: { <question_id>: { answers: [string] } } }
+        if "id" in msg and method == "item/tool/requestUserInput":
+            call_id = (params.get("callId")
+                       or params.get("call_id")
+                       or f"ui_{uuid.uuid4().hex[:8]}")
+            self._pending_user_inputs[call_id] = msg["id"]
+            await self._queue.put(SessionEvent("user-input-request", {
+                "call_id": call_id,
+                "turn_id": params.get("turnId") or params.get("turn_id"),
+                "questions": params.get("questions") or [],
+            }))
             return
 
         # Server-initiated request (approvals, tool prompts). These carry

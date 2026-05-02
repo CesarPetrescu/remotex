@@ -186,6 +186,7 @@ function reducer(state, action) {
         events: [],
         session: null,
         pendingApproval: null,
+        pendingUserInput: null,
         slashFeedback: null,
         pendingImages: [],
         pending: false,
@@ -313,6 +314,11 @@ function reducer(state, action) {
     case 'APPROVAL_CLEAR':
       return { ...state, pendingApproval: null };
 
+    case 'USER_INPUT_REQUEST':
+      return { ...state, pendingUserInput: action.prompt };
+    case 'USER_INPUT_CLEAR':
+      return { ...state, pendingUserInput: null };
+
     case 'SLASH_FEEDBACK':
       return { ...state, slashFeedback: action.text };
     case 'SET_PLAN':
@@ -374,6 +380,7 @@ export function useRemotex() {
     permissions: state.permissions,
     pendingImages: state.pendingImages,
     pendingApproval: state.pendingApproval,
+    pendingUserInput: state.pendingUserInput,
     browsePath: state.browsePath,
     selectedHostId: state.selectedHostId,
     userToken: state.userToken,
@@ -507,6 +514,16 @@ export function useRemotex() {
             command: data.command,
             cwd: data.cwd,
             decisions: data.decisions || ['accept', 'decline'],
+          },
+        });
+        return;
+      case 'user-input-request':
+        dispatch({
+          type: 'USER_INPUT_REQUEST',
+          prompt: {
+            callId: data.call_id,
+            turnId: data.turn_id,
+            questions: Array.isArray(data.questions) ? data.questions : [],
           },
         });
         return;
@@ -1143,6 +1160,23 @@ export function useRemotex() {
     }
   }, []);
 
+  // answers: { <question_id>: [string, ...] }
+  const resolveUserInput = useCallback((answers) => {
+    const pending = latestInputsRef.current.pendingUserInput;
+    if (!pending) return;
+    if (socketRef.current?.sendUserInput(pending.callId, answers || {})) {
+      dispatch({ type: 'USER_INPUT_CLEAR' });
+    }
+  }, []);
+  const cancelUserInput = useCallback(() => {
+    const pending = latestInputsRef.current.pendingUserInput;
+    if (!pending) return;
+    // Empty answers map → daemon returns { answers: {} } and codex
+    // treats every question as "skipped".
+    socketRef.current?.sendUserInput(pending.callId, {});
+    dispatch({ type: 'USER_INPUT_CLEAR' });
+  }, []);
+
   const attachImage = useCallback(async (file) => {
     try {
       const base64 = await readAsBase64(file);
@@ -1287,6 +1321,8 @@ export function useRemotex() {
       sendTurn,
       interruptTurn,
       resolveApproval,
+      resolveUserInput,
+      cancelUserInput,
       attachImage,
       removeImage,
       // Internal escape hatch: WorkspaceFilesDrawer needs apiRef directly
@@ -1324,6 +1360,8 @@ export function useRemotex() {
       sendTurn,
       interruptTurn,
       resolveApproval,
+      resolveUserInput,
+      cancelUserInput,
       attachImage,
       removeImage,
     ],
