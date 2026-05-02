@@ -94,6 +94,91 @@ internal fun CompactModelPicker(
     }
 }
 
+// 4th chip: kind selector for the next "+ New session" tap.
+//   coder        → today's flow, single codex agent on this thread.
+//   orchestrator → planner that fans out to child codex agents.
+// When [lockedTo] is non-null, the chip displays it read-only — used
+// inside an active session where the kind is fixed.
+enum class SessionKind(val wire: String, val label: String, val hint: String) {
+    Coder("coder", "coder", "one codex agent on this thread"),
+    Orchestrator("orchestrator", "orchestrator", "planner fans out to child agents"),
+}
+
+@Composable
+internal fun CompactKindPicker(
+    selected: SessionKind,
+    onSelect: (SessionKind) -> Unit,
+    lockedTo: SessionKind? = null,
+    modifier: Modifier = Modifier,
+) {
+    val display = lockedTo ?: selected
+    if (lockedTo != null) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RectangleShape,
+            border = BorderStroke(1.dp, Line),
+            modifier = modifier,
+        ) {
+            Row(
+                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("kind", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    display.label,
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                )
+            }
+        }
+        return
+    }
+    var expanded by remember { mutableStateOf(false) }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RectangleShape,
+        border = BorderStroke(1.dp, Line),
+        modifier = modifier.clickable { expanded = true },
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("kind", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                display.label,
+                color = Amber,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            shape = RectangleShape,
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            border = BorderStroke(1.dp, Line),
+        ) {
+            SessionKind.entries.forEach { opt ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(opt.label, color = Ink, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                            Text(opt.hint, color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        }
+                    },
+                    onClick = { onSelect(opt); expanded = false },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun CompactPermissionsPicker(
     selected: PermissionsMode,

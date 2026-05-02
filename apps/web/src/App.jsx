@@ -37,6 +37,13 @@ export default function App() {
   };
 
   const openSession = ({ threadId, cwd } = {}) => {
+    // If the user picked the orchestrator as the next-session kind and
+    // we're not just resuming an existing thread, route through the
+    // launcher modal so they can supply the task description.
+    if (!threadId && state.preferredKind === 'orchestrator') {
+      setOrchLauncherOpen(true);
+      return;
+    }
     r.openSession({ threadId, cwd });
     closeDrawers();
   };
@@ -110,6 +117,7 @@ export default function App() {
             workspaceApi={{
               apiRef: r.apiRef,
               upload: r.workspaceUploadFile,
+              setPreferredKind: r.setPreferredKind,
             }}
           />
         ) : (

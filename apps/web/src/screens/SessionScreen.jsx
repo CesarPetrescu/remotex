@@ -141,6 +141,9 @@ export function SessionScreen({
         onStop={onStop}
         onAttachImage={onAttachImage}
         onRemoveImage={onRemoveImage}
+        preferredKind={state.preferredKind}
+        sessionKind={info?.kind || null}
+        onPreferredKindChange={workspaceApi?.setPreferredKind}
       />
       <WorkspaceFilesDrawer
         open={filesOpen}

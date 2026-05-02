@@ -58,6 +58,46 @@ export function PermissionsPicker({ value, onChange }) {
   );
 }
 
+// 4th chip: which kind of session the next "+ New session" opens.
+// `coder`        → today's flow, single codex agent.
+// `orchestrator` → opens the launcher modal so the user can supply a
+//                  task; the brain plans + fans out to child codexes.
+// When inside an active session the chip shows the SESSION's actual
+// kind and is read-only — you can't switch a running session in place.
+export const SESSION_KINDS = [
+  { id: 'coder', label: 'coder', hint: 'one codex agent on this thread' },
+  { id: 'orchestrator', label: 'orchestrator', hint: 'planner that fans out to child agents' },
+];
+
+export function KindPicker({ value, onChange, locked = false, lockedReason = '' }) {
+  const current = SESSION_KINDS.find((k) => k.id === value) || SESSION_KINDS[0];
+  if (locked) {
+    return (
+      <span
+        className="chip-static"
+        title={lockedReason || 'Active session — kind is fixed'}
+      >
+        <span className="chip-label">kind</span>
+        <span className="chip-value">{current.label}</span>
+      </span>
+    );
+  }
+  return (
+    <ChipDropdown
+      label="kind"
+      value={current.label}
+      items={SESSION_KINDS}
+      renderItem={(opt) => (
+        <div>
+          <div className="dd-line">{opt.label}</div>
+          <div className="dd-hint">{opt.hint}</div>
+        </div>
+      )}
+      onPick={(opt) => onChange(opt.id)}
+    />
+  );
+}
+
 // --- internal primitive ---
 
 function ChipDropdown({ label, value, chipClass = '', items, renderItem, onPick }) {

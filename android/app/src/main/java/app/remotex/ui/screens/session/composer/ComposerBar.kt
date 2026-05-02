@@ -70,6 +70,11 @@ internal fun ComposerBar(
     onStop: () -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
+    // 4th chip — kind for the next "+ New session". Inside an active
+    // session [sessionKind] is non-null and locks the picker read-only.
+    preferredKind: SessionKind = SessionKind.Coder,
+    sessionKind: SessionKind? = null,
+    onPreferredKindChange: (SessionKind) -> Unit = {},
 ) {
     var text by remember { mutableStateOf("") }
     val textEnabled = connected && !pending
@@ -142,6 +147,13 @@ internal fun ComposerBar(
                     CompactPermissionsPicker(
                         selected = permissions,
                         onSelect = onPermissionsChange,
+                    )
+                }
+                item {
+                    CompactKindPicker(
+                        selected = preferredKind,
+                        onSelect = onPreferredKindChange,
+                        lockedTo = sessionKind,
                     )
                 }
             }

@@ -59,6 +59,8 @@ data class SessionInfo(
     val hostId: String,
     val model: String? = null,
     val cwd: String? = null,
+    /** "coder" | "orchestrator" — set from session-started; defaults to coder. */
+    val kind: String = "coder",
 )
 
 data class PendingImage(
@@ -137,6 +139,10 @@ data class UiState(
     val pendingUserInput: UserInputPrompt? = null,
     val slashFeedback: String? = null,
     val planMode: Boolean = false,   // true after /plan, cleared on /default
+    /** Preferred kind for the next "+ New session" tap. Surfaced as the
+     *  4th composer chip; persisted via SharedPreferences when set. */
+    val preferredKind: app.remotex.ui.screens.session.composer.SessionKind =
+        app.remotex.ui.screens.session.composer.SessionKind.Coder,
     // True between thread-status:resuming and thread-status:resumed/resume-failed.
     // Codex can take a minute+ to re-hydrate large rollouts; the banner makes it
     // obvious the app isn't hung.
@@ -344,6 +350,10 @@ class RemotexViewModel(
             val nextEffort = if (it.effort in supported) it.effort else EFFORT_DEFAULT
             it.copy(model = model, effort = nextEffort)
         }
+    }
+
+    fun setPreferredKind(kind: app.remotex.ui.screens.session.composer.SessionKind) {
+        _state.update { it.copy(preferredKind = kind) }
     }
 
     fun setEffort(effort: String) {

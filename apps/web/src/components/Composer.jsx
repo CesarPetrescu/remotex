@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ModelPicker, EffortPicker, PermissionsPicker } from './Pickers';
+import { ModelPicker, EffortPicker, PermissionsPicker, KindPicker } from './Pickers';
 import { SendOrStopButton } from './SendOrStopButton';
 
 // Bottom dock with three rows:
@@ -25,6 +25,12 @@ export function Composer({
   onStop,
   onAttachImage,
   onRemoveImage,
+  // 4th chip — preferred kind for the next "+ New session". When the
+  // current session is active, sessionKind is shown read-only since
+  // you can't switch a running session in place.
+  preferredKind = 'coder',
+  sessionKind = null,
+  onPreferredKindChange,
 }) {
   const [text, setText] = useState('');
   const fileInputRef = useRef(null);
@@ -74,6 +80,12 @@ export function Composer({
         <ModelPicker value={model} models={models} onChange={onModelChange} />
         <EffortPicker model={model} value={effort} models={models} onChange={onEffortChange} />
         <PermissionsPicker value={permissions} onChange={onPermissionsChange} />
+        <KindPicker
+          value={sessionKind || preferredKind}
+          onChange={onPreferredKindChange || (() => {})}
+          locked={!!sessionKind}
+          lockedReason={sessionKind ? `current session is ${sessionKind}` : ''}
+        />
       </div>
       {planMode && (
         <div className="plan-hint">plan mode active — /default to clear</div>

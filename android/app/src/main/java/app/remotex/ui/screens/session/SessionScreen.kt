@@ -55,6 +55,7 @@ fun SessionScreen(
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
     onPermissionsChange: (PermissionsMode) -> Unit,
+    onPreferredKindChange: (app.remotex.ui.screens.session.composer.SessionKind) -> Unit,
     onListWorkspace: suspend (path: String) -> List<FsEntry>,
     onDeleteWorkspaceFile: suspend (path: String) -> Unit,
     onRenameWorkspaceFile: suspend (from: String, to: String) -> Unit,
@@ -141,6 +142,12 @@ fun SessionScreen(
             onStop = onStop,
             onAttachImage = onAttachImage,
             onRemoveImage = onRemoveImage,
+            preferredKind = state.preferredKind,
+            sessionKind = state.session?.kind?.let { kindStr ->
+                app.remotex.ui.screens.session.composer.SessionKind.entries
+                    .firstOrNull { it.wire == kindStr }
+            },
+            onPreferredKindChange = onPreferredKindChange,
         )
     }
     if (filesPanelOpen) {

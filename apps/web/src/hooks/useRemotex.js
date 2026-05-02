@@ -55,6 +55,11 @@ const initialState = {
   pendingApproval: null,
   slashFeedback: null,
   planMode: false,
+  // Preferred kind for the next "+ New session" tap. The Composer's
+  // 4th chip surfaces this; persisted to localStorage so it sticks.
+  preferredKind: (() => {
+    try { return localStorage.getItem('remotex.preferredKind') || 'coder'; } catch { return 'coder'; }
+  })(),
   // True between thread-status:resuming and thread-status:resumed/resume-failed.
   // Codex can take a minute+ to re-hydrate big rollouts; surfaced as a banner.
   resuming: false,
@@ -100,6 +105,9 @@ function reducer(state, action) {
       return { ...state, error: action.error };
     case 'CLEAR_FEEDBACK':
       return { ...state, slashFeedback: null };
+    case 'SET_PREFERRED_KIND':
+      try { localStorage.setItem('remotex.preferredKind', action.kind); } catch { /* private mode */ }
+      return { ...state, preferredKind: action.kind };
 
     case 'HOSTS':
       return { ...state, hosts: action.hosts, hostsLoading: false };
@@ -1325,6 +1333,7 @@ export function useRemotex() {
       cancelUserInput,
       attachImage,
       removeImage,
+      setPreferredKind: (k) => dispatch({ type: 'SET_PREFERRED_KIND', kind: k }),
       // Internal escape hatch: WorkspaceFilesDrawer needs apiRef directly
       // so a single component can call read/rename/delete/upload without
       // dragging four wrappers through props.
