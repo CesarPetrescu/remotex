@@ -133,6 +133,7 @@ fun RemotexApp(relayUrl: String) {
                         onRemoveImage = vm::removeImage,
                         onPermissionsChange = vm::setPermissions,
                         onPreferredKindChange = vm::setPreferredKind,
+                        onSlashCommand = vm::sendSlash,
                         onListWorkspace = vm::listWorkspace,
                         onDeleteWorkspaceFile = vm::deleteWorkspaceFile,
                         onRenameWorkspaceFile = vm::renameWorkspaceFile,

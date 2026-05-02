@@ -356,6 +356,25 @@ class RemotexViewModel(
         _state.update { it.copy(preferredKind = kind) }
     }
 
+    /** Public slash sender — used by composer's plan-chip + autocomplete. */
+    fun sendSlash(cmd: String, args: String = "") {
+        val sock = socket ?: return
+        val frame = Json.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject {
+                put("type", "slash-command")
+                put("command", cmd)
+                if (args.isNotEmpty()) put("args", args)
+            },
+        )
+        if (!sock.sendJson(frame)) {
+            _state.update { it.copy(error = "socket is not connected") }
+            return
+        }
+        if (cmd == "plan") _state.update { it.copy(planMode = true) }
+        if (cmd == "default") _state.update { it.copy(planMode = false) }
+    }
+
     fun setEffort(effort: String) {
         _state.update { it.copy(effort = effort) }
     }

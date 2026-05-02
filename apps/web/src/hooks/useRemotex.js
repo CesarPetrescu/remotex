@@ -1118,6 +1118,20 @@ export function useRemotex() {
     [openSession],
   );
 
+  // Composer's slash autocomplete fires this when the user picks a
+  // command. Slash commands never carry images so we bypass sendTurn.
+  const sendSlash = useCallback((cmd, args = '') => {
+    const sock = socketRef.current;
+    if (!sock) return false;
+    if (!sock.sendSlash(cmd, args)) {
+      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+      return false;
+    }
+    if (cmd === 'plan') dispatch({ type: 'SET_PLAN', on: true });
+    if (cmd === 'default') dispatch({ type: 'SET_PLAN', on: false });
+    return true;
+  }, []);
+
   const sendTurn = useCallback(
     (rawText) => {
       const input = (rawText || '').trim();
@@ -1327,6 +1341,7 @@ export function useRemotex() {
         openSession({ cwd: latestInputsRef.current.browsePath || null }),
       closeSession,
       sendTurn,
+      sendSlash,
       interruptTurn,
       resolveApproval,
       resolveUserInput,
@@ -1367,6 +1382,7 @@ export function useRemotex() {
       openOrchestratorSession,
       closeSession,
       sendTurn,
+      sendSlash,
       interruptTurn,
       resolveApproval,
       resolveUserInput,

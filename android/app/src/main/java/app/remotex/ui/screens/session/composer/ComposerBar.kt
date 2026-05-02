@@ -48,6 +48,7 @@ import coil.compose.AsyncImage
 import app.remotex.ui.ModelOption
 import app.remotex.ui.PendingImage
 import app.remotex.ui.PermissionsMode
+import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
@@ -75,6 +76,8 @@ internal fun ComposerBar(
     preferredKind: SessionKind = SessionKind.Coder,
     sessionKind: SessionKind? = null,
     onPreferredKindChange: (SessionKind) -> Unit = {},
+    // Slash command sender — composer bypasses sendTurn for these.
+    onSlashCommand: (cmd: String, args: String) -> Unit = { _, _ -> },
 ) {
     var text by remember { mutableStateOf("") }
     val textEnabled = connected && !pending
@@ -157,12 +160,26 @@ internal fun ComposerBar(
                     )
                 }
             }
-            if (planMode) {
-                Text(
-                    "plan mode active — /default to clear",
-                    color = Amber,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
+            // Plan-mode toggle chip (Phase C). One tap flips it on/off
+            // without typing /plan. Sends the same slash so daemon state
+            // stays the source of truth.
+            PlanChip(
+                planMode = planMode,
+                onClick = {
+                    onSlashCommand(if (planMode) "default" else "plan", "")
+                },
+            )
+            if (text.startsWith("/") && !text.contains(' ')) {
+                SlashAutocomplete(
+                    query = text,
+                    onPick = { cmd ->
+                        if (cmd.takesArg) {
+                            text = "/${cmd.id} "
+                        } else {
+                            onSlashCommand(cmd.id, "")
+                            text = ""
+                        }
+                    },
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -198,9 +215,8 @@ internal fun ComposerBar(
                         singleLine = false,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = {
-                            if (textEnabled && text.isNotBlank()) {
-                                onSend(text); text = ""
-                            }
+                            val sent = handleSubmit(text, onSlashCommand, onSend)
+                            if (sent) text = ""
                         }),
                         cursorBrush = SolidColor(Amber),
                         decorationBox = { inner ->
@@ -223,9 +239,117 @@ internal fun ComposerBar(
                 SendOrStopButton(
                     pending = pending,
                     canSend = textEnabled && (text.isNotBlank() || pendingImages.isNotEmpty()),
-                    onSend = { onSend(text); text = "" },
+                    onSend = {
+                        val sent = handleSubmit(text, onSlashCommand, onSend)
+                        if (sent) text = ""
+                    },
                     onStop = onStop,
                 )
+            }
+        }
+    }
+}
+
+/** Returns true if the text should be cleared after submission. */
+private fun handleSubmit(
+    text: String,
+    onSlashCommand: (String, String) -> Unit,
+    onSend: (String) -> Unit,
+): Boolean {
+    if (text.startsWith("/")) {
+        val trimmed = text.trim().removePrefix("/")
+        val space = trimmed.indexOf(' ')
+        val cmd = if (space == -1) trimmed else trimmed.substring(0, space)
+        val args = if (space == -1) "" else trimmed.substring(space + 1)
+        if (KNOWN_SLASHES.any { it.id == cmd }) {
+            onSlashCommand(cmd, args)
+            return true
+        }
+    }
+    if (text.isBlank()) return false
+    onSend(text)
+    return true
+}
+
+internal data class SlashSpec(
+    val id: String,
+    val hint: String,
+    val takesArg: Boolean = false,
+    val argHint: String = "",
+)
+
+internal val KNOWN_SLASHES = listOf(
+    SlashSpec("plan", "plan-then-act for the next turn (codex plan mode)"),
+    SlashSpec("default", "clear plan mode"),
+    SlashSpec("cd", "change cwd for next turns", takesArg = true, argHint = "<path>"),
+    SlashSpec("pwd", "show current cwd"),
+    SlashSpec("compact", "have codex summarise + compact the thread"),
+)
+
+@Composable
+private fun PlanChip(planMode: Boolean, onClick: () -> Unit) {
+    val accent = if (planMode) Amber else InkDim
+    Surface(
+        color = if (planMode) Color(0x1A5EE1FF) else MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, if (planMode) Amber else Line),
+        shape = RectangleShape,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(6.dp).background(accent))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (planMode)
+                    "plan mode active — tap to clear"
+                else
+                    "plan mode (tap to enable for next turn)",
+                color = accent,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SlashAutocomplete(query: String, onPick: (SlashSpec) -> Unit) {
+    val q = query.removePrefix("/").lowercase()
+    val matches = KNOWN_SLASHES.filter { q.isEmpty() || it.id.startsWith(q) }
+    if (matches.isEmpty()) return
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, AccentDeep),
+        shape = RectangleShape,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column {
+            matches.forEach { cmd ->
+                Surface(
+                    color = Color.Transparent,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(cmd) },
+                ) {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                        Text(
+                            "/${cmd.id}${if (cmd.takesArg) " ${cmd.argHint}" else ""}",
+                            color = Amber,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            cmd.hint,
+                            color = InkDim,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                        )
+                    }
+                }
             }
         }
     }

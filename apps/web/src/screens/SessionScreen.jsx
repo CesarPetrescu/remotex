@@ -144,6 +144,7 @@ export function SessionScreen({
         preferredKind={state.preferredKind}
         sessionKind={info?.kind || null}
         onPreferredKindChange={workspaceApi?.setPreferredKind}
+        onSlashCommand={workspaceApi?.sendSlash}
       />
       <WorkspaceFilesDrawer
         open={filesOpen}

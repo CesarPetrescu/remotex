@@ -118,6 +118,7 @@ export default function App() {
               apiRef: r.apiRef,
               upload: r.workspaceUploadFile,
               setPreferredKind: r.setPreferredKind,
+              sendSlash: r.sendSlash,
             }}
           />
         ) : (
