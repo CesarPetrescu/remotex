@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
@@ -376,11 +375,3 @@ def _has_cycle(steps: list[_Step]) -> bool:
         return False
 
     return any(visit(s.step_id) for s in steps)
-
-
-def encode_await_response(results: dict) -> str:
-    """Render an ``await_steps`` result map as a compact text block to
-    feed back to the brain as the next turn's user input."""
-    lines = ["@@ORCH_RESULT await_steps"]
-    lines.append(json.dumps(results, indent=2, sort_keys=True))
-    return "\n".join(lines)

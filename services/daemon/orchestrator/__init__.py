@@ -1,15 +1,13 @@
 """Orchestrator: a long-horizon agent that wraps a brain Codex session
 and spawns short-lived child Codex sessions per planned step.
 
-The brain Codex emits structured ``@@ORCH`` commands inside its agent
-messages; the daemon-side ``OrchestratorRuntime`` parses, validates, and
-executes those commands by driving real :class:`StdioCodexAdapter`
-instances for each child step. Child sessions run on the same daemon as
-the parent.
+The brain runs as a normal Codex with a single MCP server registered
+on its session — ``orchestrator.*`` — whose tools call back into this
+package's :class:`OrchestratorRuntime` to manage the plan DAG and
+child sessions. See ``adapter.py`` for the wiring.
 """
 from __future__ import annotations
 
 from .adapter import OrchestratorAdapter
-from .protocol import ORCH_TAG, parse_commands
 
-__all__ = ["OrchestratorAdapter", "ORCH_TAG", "parse_commands"]
+__all__ = ["OrchestratorAdapter"]

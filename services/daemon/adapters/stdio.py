@@ -61,10 +61,15 @@ class StdioCodexAdapter(SessionAdapter):
         codex_binary: str = "codex",
         default_cwd: str | None = None,
         resume_thread_id: str | None = None,
+        extra_thread_config: dict | None = None,
     ) -> None:
         self.binary = codex_binary
         self._cwd = default_cwd or os.path.expanduser("~")
         self._resume_thread_id = resume_thread_id
+        # Free-form override map merged into thread/start.config — used
+        # by the orchestrator to register an MCP server on the brain
+        # session without polluting the regular thread/start path.
+        self._extra_thread_config: dict | None = extra_thread_config or None
         # Mutable working directory: thread/start kicks off in
         # `default_cwd`, /cd swaps it, every turn/start rides with it.
         self._current_cwd = self._cwd
@@ -154,10 +159,13 @@ class StdioCodexAdapter(SessionAdapter):
             )
             return
 
-        thread = await self._request("thread/start", {
+        thread_params: dict = {
             "cwd": self._cwd,
             "ephemeral": False,
-        })
+        }
+        if self._extra_thread_config:
+            thread_params["config"] = dict(self._extra_thread_config)
+        thread = await self._request("thread/start", thread_params)
         self._thread_id = thread["thread"].get("id", self._resume_thread_id)
         self._ready = True
         await self._queue.put(SessionEvent("session-started", {
