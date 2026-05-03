@@ -102,6 +102,7 @@ const initialState = {
   hostsLoading: false,
   selectedHostId: null,
   threads: [],
+  threadsHostId: null,
   threadsLoading: false,
   searchQuery: '',
   searchResults: [],
@@ -191,10 +192,23 @@ function reducer(state, action) {
       return { ...state, hostsLoading: action.loading };
 
     case 'SELECT_HOST':
-      return { ...state, selectedHostId: action.id };
+      return {
+        ...state,
+        selectedHostId: action.id,
+        threads: action.id === state.threadsHostId ? state.threads : [],
+        threadsHostId: action.id === state.threadsHostId ? state.threadsHostId : null,
+        threadsLoading: false,
+      };
     case 'THREADS':
-      return { ...state, threads: action.threads, threadsLoading: false };
+      if (action.hostId && action.hostId !== state.selectedHostId) return state;
+      return {
+        ...state,
+        threads: action.threads,
+        threadsHostId: action.hostId || state.selectedHostId,
+        threadsLoading: false,
+      };
     case 'THREADS_LOADING':
+      if (action.hostId && action.hostId !== state.selectedHostId) return state;
       return { ...state, threadsLoading: action.loading };
 
     case 'SEARCH_QUERY':
@@ -604,7 +618,10 @@ export function useRemotex() {
   const handleFrame = useCallback((frame) => {
     if (frame.type === 'attached') {
       reconnectAttemptRef.current = 0;
-      dispatch({ type: 'SESSION_STATUS', status: STATUS.Connecting });
+      dispatch({
+        type: 'SESSION_STATUS',
+        status: Number(frame.replay_from || 0) > 0 ? STATUS.Connected : STATUS.Connecting,
+      });
       dispatch({ type: 'SET_ERROR', error: null });
       dispatch({
         type: 'SESSION_INFO',
@@ -1109,13 +1126,19 @@ export function useRemotex() {
     async (hostOverride) => {
       const target = hostOverride || latestInputsRef.current.selectedHostId;
       if (!target) return;
-      dispatch({ type: 'THREADS_LOADING', loading: true });
+      dispatch({ type: 'THREADS_LOADING', hostId: target, loading: true });
       try {
         const threads = await apiRef.current.listThreads(target, 25);
-        dispatch({ type: 'THREADS', threads });
+        dispatch({
+          type: 'THREADS',
+          hostId: target,
+          threads: threads.map((thread) => ({ ...thread, host_id: target })),
+        });
       } catch (t) {
-        dispatch({ type: 'THREADS_LOADING', loading: false });
-        dispatch({ type: 'SET_ERROR', error: t.message });
+        if (latestInputsRef.current.selectedHostId === target) {
+          dispatch({ type: 'THREADS_LOADING', hostId: target, loading: false });
+          dispatch({ type: 'SET_ERROR', error: t.message });
+        }
       }
     },
     [],

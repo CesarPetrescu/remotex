@@ -30,9 +30,9 @@ Rules:
 - Do not include markdown, JSON, explanations, or <think> blocks.
 - Title must be 3-9 words.
 - Title must name the actual task, product, file, bug, or decision when possible.
-- Description must summarize the last 10 turns in 2-3 concise sentences
-  (max ~400 characters). Capture the current focus, key decisions, and
-  anything in-flight. Prefer the most recent turns over the oldest.
+- Description must summarize the first completed user/assistant turn in
+  1 concise sentence (max ~400 characters). Capture the concrete task
+  the user started, not later drift.
 - Set isGeneric=true if the transcript is too vague, only a greeting, only setup,
   or the best title would be generic.
 - Set isGeneric=false only when the title is specific enough that a user could
@@ -107,6 +107,21 @@ def _format_title_transcript(turns: list[dict[str, Any]], max_tokens: int) -> st
         if used >= max_tokens:
             break
     return "\n\n".join(blocks).strip()
+
+
+def _title_turn_ready(turn: dict[str, Any]) -> bool:
+    has_user = bool(_str_or_none(turn.get("user_text")))
+    has_agent = False
+    for item in turn.get("items") or []:
+        item_type = _field(item, "item_type")
+        raw_text = _field(item, "text")
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            continue
+        if item_type == "user_message":
+            has_user = True
+        elif item_type == "agent_message":
+            has_agent = True
+    return has_user and has_agent
 
 
 def _title_clip(text: str, limit: int = 2200) -> str:

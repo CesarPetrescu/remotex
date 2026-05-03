@@ -74,10 +74,12 @@ class StdioCodexAdapter(SessionAdapter):
         extra_thread_config: dict | None = None,
         session_kind: str = "codex",
         forced_collaboration_mode: str | None = None,
+        ephemeral: bool = False,
     ) -> None:
         self.binary = codex_binary
         self._cwd = default_cwd or os.path.expanduser("~")
         self._resume_thread_id = resume_thread_id
+        self._ephemeral = bool(ephemeral)
         # Free-form override map merged into thread/start.config — used
         # by the orchestrator to register an MCP server on the brain
         # session without polluting the regular thread/start path.
@@ -192,13 +194,7 @@ class StdioCodexAdapter(SessionAdapter):
             )
             return
 
-        thread_params: dict = {
-            "cwd": self._cwd,
-            "ephemeral": False,
-        }
-        if self._extra_thread_config:
-            thread_params["config"] = copy.deepcopy(self._extra_thread_config)
-        thread = await self._request("thread/start", thread_params)
+        thread = await self._request("thread/start", self._thread_start_params())
         self._thread_id = thread["thread"].get("id", self._resume_thread_id)
         if isinstance(thread.get("model"), str) and thread["model"].strip():
             self._current_model = thread["model"].strip()
@@ -210,6 +206,15 @@ class StdioCodexAdapter(SessionAdapter):
             "transport": "stdio",
             "kind": self._session_kind,
         }))
+
+    def _thread_start_params(self) -> dict:
+        thread_params: dict = {
+            "cwd": self._cwd,
+            "ephemeral": self._ephemeral,
+        }
+        if self._extra_thread_config:
+            thread_params["config"] = copy.deepcopy(self._extra_thread_config)
+        return thread_params
 
     async def stop(self) -> None:
         if self._resume_task:

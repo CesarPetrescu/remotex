@@ -97,6 +97,7 @@ class OrchestratorRuntime:
                 default_cwd=self._cwd,
                 extra_thread_config=native_subagent_thread_config(),
                 forced_collaboration_mode=COLLABORATION_MODE,
+                ephemeral=True,
             )
         )
         self._steps: dict[str, _Step] = {}

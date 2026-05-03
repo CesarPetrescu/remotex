@@ -51,7 +51,7 @@ services:
       MAIN_MODEL_DISABLE_THINKING_STYLE: ${MAIN_MODEL_DISABLE_THINKING_STYLE:-chat_template_kwargs}
       CHAT_TITLE_ENABLED: ${CHAT_TITLE_ENABLED:-1}
       CHAT_TITLE_MAX_INPUT_TOKENS: ${CHAT_TITLE_MAX_INPUT_TOKENS:-12000}
-      CHAT_TITLE_MAX_ATTEMPTS: ${CHAT_TITLE_MAX_ATTEMPTS:-8}
+      CHAT_TITLE_MAX_ATTEMPTS: ${CHAT_TITLE_MAX_ATTEMPTS:-3}
     ports:
       # Bind to localhost only by default; front with Caddy (profile `tls`)
       # or your own reverse proxy for anything public. Override the host

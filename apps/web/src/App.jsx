@@ -125,8 +125,8 @@ export default function App() {
   // chip's "switch to orchestrator" affordance — that way there's no
   // sticky preferredKind state silently routing future "+ New" taps
   // to the orchestrator just because the user once tapped it.
-  const openSession = ({ threadId, cwd } = {}) => {
-    r.openSession({ threadId, cwd });
+  const openSession = ({ threadId, cwd, hostId } = {}) => {
+    r.openSession({ threadId, cwd, hostId });
     closeDrawers();
   };
 
@@ -182,7 +182,11 @@ export default function App() {
           closeDrawers();
         }}
         onNewSession={() => openSession({})}
-        onResumeThread={(thread) => openSession({ threadId: thread.id })}
+        onResumeThread={(thread) => openSession({
+          hostId: thread.host_id,
+          threadId: thread.id,
+          cwd: thread.cwd || null,
+        })}
       />
 
       <main className="dashboard-main">

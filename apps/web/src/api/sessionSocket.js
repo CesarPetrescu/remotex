@@ -52,6 +52,7 @@ export class SessionSocket {
     this.lastMessageAt = Date.now();
     this.heartbeat = null;
     this.closedByCaller = false;
+    this.requestedLastSeq = Number.isFinite(lastSeq) ? lastSeq : loadLastSeq(sessionId);
 
     this.ws.addEventListener('open', () => {
       this.onStatus('connecting');
@@ -61,7 +62,7 @@ export class SessionSocket {
         session_id: sessionId,
         client_id: this.clientId,
         client_name: 'web',
-        last_seq: Number.isFinite(lastSeq) ? lastSeq : loadLastSeq(sessionId),
+        last_seq: this.requestedLastSeq,
       });
       this.startHeartbeat();
     });
@@ -74,6 +75,9 @@ export class SessionSocket {
         return;
       }
       if (frame.type === 'pong') return;
+      if (frame.type === 'attached') {
+        frame.replay_from = this.requestedLastSeq;
+      }
       if (Number.isFinite(frame.seq)) {
         storeLastSeq(this.sessionId, frame.seq);
       }

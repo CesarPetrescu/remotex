@@ -295,6 +295,7 @@ def test_orchestrator_brain_config_enables_mcp_and_native_subagents():
     }
     assert config["mcp_servers"]["orchestrator"]["enabled"] is True
     assert adapter._brain._forced_collaboration_mode == COLLABORATION_MODE
+    assert adapter._brain._ephemeral is False
 
 
 def test_orchestrator_child_factory_enables_native_subagents():
@@ -306,6 +307,35 @@ def test_orchestrator_child_factory_enables_native_subagents():
 
     assert child._extra_thread_config == native_subagent_thread_config()
     assert child._forced_collaboration_mode == COLLABORATION_MODE
+    assert child._ephemeral is True
+
+
+def test_stdio_thread_start_params_default_to_persistent():
+    adapter = StdioCodexAdapter(default_cwd="/work")
+
+    assert adapter._thread_start_params() == {
+        "cwd": "/work",
+        "ephemeral": False,
+    }
+
+
+def test_stdio_thread_start_params_can_be_ephemeral_and_copy_config():
+    config = {"mcp_servers": {"orchestrator": {"enabled": True}}}
+    adapter = StdioCodexAdapter(
+        default_cwd="/work",
+        extra_thread_config=config,
+        ephemeral=True,
+    )
+
+    params = adapter._thread_start_params()
+
+    assert params == {
+        "cwd": "/work",
+        "ephemeral": True,
+        "config": {"mcp_servers": {"orchestrator": {"enabled": True}}},
+    }
+    params["config"]["mcp_servers"]["orchestrator"]["enabled"] = False
+    assert config["mcp_servers"]["orchestrator"]["enabled"] is True
 
 
 @pytest.mark.asyncio

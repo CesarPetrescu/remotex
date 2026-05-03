@@ -91,7 +91,7 @@ class SearchConfig:
                 minimum=512,
                 maximum=30000,
             ),
-            title_max_attempts=_int_env("CHAT_TITLE_MAX_ATTEMPTS", 10000, minimum=1, maximum=1000000),
+            title_max_attempts=_int_env("CHAT_TITLE_MAX_ATTEMPTS", 3, minimum=1, maximum=1000000),
         )
 
     @property

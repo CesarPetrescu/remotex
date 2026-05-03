@@ -35,6 +35,7 @@ from .titles import (
     _looks_generic_title,
     _parse_title_xml,
     _title_user_prompt,
+    _title_turn_ready,
 )
 from .urls import _chat_completion_url, _embedding_url, _rerank_url, _vector_literal
 
@@ -774,10 +775,10 @@ class SearchService:
             if isinstance(turn_id, str) and turn_id:
                 await self._mark_turn_completed(str(session_id), turn_id)
                 await self._build_turn_chunks(str(session_id), turn_id)
-                self._enqueue_title(str(session_id))
+                await self._maybe_enqueue_title(str(session_id))
         elif event_kind == "history-end":
             await self._build_unindexed_session(str(session_id))
-            self._enqueue_title(str(session_id))
+            await self._maybe_enqueue_title(str(session_id))
 
     async def _upsert_session(self, session: dict[str, Any]) -> None:
         session_id = session.get("id") or session.get("session_id")
@@ -1088,6 +1089,21 @@ class SearchService:
         except asyncio.QueueFull:
             log.warning("chat title queue full; dropping %s", session_id)
 
+    async def _maybe_enqueue_title(self, session_id: str) -> None:
+        if not (
+            self.storage_enabled
+            and self.config.main_model_configured
+            and self._title_task is not None
+        ):
+            return
+        try:
+            _session, turns = await self._title_context(session_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("chat title readiness check failed for %s: %s", session_id, exc)
+            return
+        if turns:
+            self._enqueue_title(session_id)
+
     async def _title_loop(self) -> None:
         while True:
             session_id = await self._title_queue.get()
@@ -1108,12 +1124,14 @@ class SearchService:
         session, turns = await self._title_context(session_id)
         if not session or not turns:
             return
+        if session["title_generated_at"] is not None:
+            return
         attempts = int(session["title_attempts"] or 0)
         if attempts >= self.config.title_max_attempts:
             return
 
-        # Summarize the last 10 turns (or fewer if the session is short).
-        selected = turns[-10:]
+        # One-shot metadata: use the first completed user/assistant turn.
+        selected = turns[:1]
         desired_turns = len(selected)
         transcript = _format_title_transcript(
             selected,
@@ -1162,24 +1180,22 @@ class SearchService:
             )
             if not session:
                 return None, []
-            # Pull the most recent 10 turns (descending) and flip to chronological.
+            if session["title_generated_at"] is not None:
+                return session, []
+            attempts = int(session["title_attempts"] or 0)
+            if attempts >= self.config.title_max_attempts:
+                return session, []
             turn_rows = await conn.fetch(
                 """
                 SELECT turn_id, user_text, started_at, completed_at
                 FROM search_turns
                 WHERE session_id = $1
-                  AND EXISTS (
-                    SELECT 1
-                    FROM search_items i
-                    WHERE i.session_id = search_turns.session_id
-                      AND i.turn_id = search_turns.turn_id
-                  )
-                ORDER BY started_at DESC
-                LIMIT 10
+                  AND completed_at IS NOT NULL
+                ORDER BY started_at ASC
+                LIMIT 50
                 """,
                 session_id,
             )
-            turn_rows = list(reversed(turn_rows))
             turns: list[dict[str, Any]] = []
             for turn in turn_rows:
                 items = await conn.fetch(
@@ -1194,11 +1210,14 @@ class SearchService:
                     session_id,
                     turn["turn_id"],
                 )
-                turns.append({
+                candidate = {
                     "turn_id": turn["turn_id"],
                     "user_text": turn["user_text"],
                     "items": items,
-                })
+                }
+                if _title_turn_ready(candidate):
+                    turns.append(candidate)
+                    break
         return session, turns
 
     async def _call_title_model(self, session, transcript: str) -> dict[str, Any]:
@@ -1255,6 +1274,7 @@ class SearchService:
                 """
                 UPDATE search_sessions
                 SET title_last_error = $2,
+                    title_attempts = title_attempts + 1,
                     updated_at = $3
                 WHERE session_id = $1
                 """,
