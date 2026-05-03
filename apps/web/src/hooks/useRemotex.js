@@ -508,7 +508,13 @@ export function useRemotex() {
         });
         dispatch({
           type: 'SESSION_INFO',
-          info: { model: data.model, cwd: data.cwd },
+          // Spread `kind` only when present — older daemon builds
+          // don't include it and we don't want to overwrite an
+          // optimistic `kind: 'orchestrator'` set in
+          // openOrchestratorSession with `undefined`.
+          info: data.kind
+            ? { model: data.model, cwd: data.cwd, kind: data.kind }
+            : { model: data.model, cwd: data.cwd },
         });
         dispatch({
           type: 'SET_ERROR',

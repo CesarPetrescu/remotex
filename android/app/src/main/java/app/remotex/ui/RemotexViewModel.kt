@@ -1249,6 +1249,11 @@ class RemotexViewModel(
                         session = it.session?.copy(
                             model = data.string("model") ?: it.session.model,
                             cwd = data.string("cwd") ?: it.session.cwd,
+                            // Server-side truth for what the user is
+                            // actually attached to; keeps the KIND
+                            // chip honest instead of echoing the
+                            // user's preferredKind preference.
+                            kind = data.string("kind") ?: it.session.kind,
                         ),
                     )
                 }

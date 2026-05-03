@@ -94,6 +94,11 @@ class OrchestratorAdapter(SessionAdapter):
             codex_binary=codex_binary,
             default_cwd=cwd or None,
             extra_thread_config=self._brain_mcp_config(),
+            # Surface "orchestrator" in the brain's session-started so
+            # the client's KIND chip reflects what the user actually
+            # opened (the brain itself is a regular codex under the
+            # hood, but to the user this is the orchestrator session).
+            session_kind="orchestrator",
         )
         self._queue: asyncio.Queue[SessionEvent | None] = asyncio.Queue()
         self._runtime = OrchestratorRuntime(

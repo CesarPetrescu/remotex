@@ -62,6 +62,7 @@ class StdioCodexAdapter(SessionAdapter):
         default_cwd: str | None = None,
         resume_thread_id: str | None = None,
         extra_thread_config: dict | None = None,
+        session_kind: str = "codex",
     ) -> None:
         self.binary = codex_binary
         self._cwd = default_cwd or os.path.expanduser("~")
@@ -70,6 +71,12 @@ class StdioCodexAdapter(SessionAdapter):
         # by the orchestrator to register an MCP server on the brain
         # session without polluting the regular thread/start path.
         self._extra_thread_config: dict | None = extra_thread_config or None
+        # User-facing kind label echoed in session-started.data so the
+        # client UI can show what it's actually attached to (vs the
+        # user's preferred-kind chip). For an orchestrator brain this
+        # is "orchestrator" even though the underlying adapter is the
+        # same StdioCodexAdapter.
+        self._session_kind = session_kind
         # Mutable working directory: thread/start kicks off in
         # `default_cwd`, /cd swaps it, every turn/start rides with it.
         self._current_cwd = self._cwd
@@ -142,6 +149,7 @@ class StdioCodexAdapter(SessionAdapter):
                 "thread_id": self._thread_id,
                 "transport": "stdio",
                 "resuming": True,
+                "kind": self._session_kind,
             }))
             try:
                 local_turns = _load_rollout_history(self._resume_thread_id)
@@ -173,6 +181,7 @@ class StdioCodexAdapter(SessionAdapter):
             "cwd": thread.get("cwd", self._cwd),
             "thread_id": self._thread_id,
             "transport": "stdio",
+            "kind": self._session_kind,
         }))
 
     async def stop(self) -> None:

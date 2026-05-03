@@ -42,5 +42,9 @@ def build_adapter(
             codex_binary=codex_binary,
             default_cwd=default_cwd or None,
             resume_thread_id=resume_thread_id,
+            # Plain coder sessions tell the client "kind=codex" via
+            # session-started so the chip stops echoing the user's
+            # preferred-kind chip when they're actually in a coder.
+            session_kind=kind,
         )
     raise ValueError(f"unknown adapter mode: {mode!r}")
