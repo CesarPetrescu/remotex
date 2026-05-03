@@ -56,6 +56,8 @@ fun SessionScreen(
     onRemoveImage: (Int) -> Unit,
     onPermissionsChange: (PermissionsMode) -> Unit,
     onPreferredKindChange: (app.remotex.ui.screens.session.composer.SessionKind) -> Unit,
+    onSwitchToCoder: () -> Unit,
+    onSwitchToOrchestrator: () -> Unit,
     onSlashCommand: (cmd: String, args: String) -> Unit,
     onListWorkspace: suspend (path: String) -> List<FsEntry>,
     onDeleteWorkspaceFile: suspend (path: String) -> Unit,
@@ -152,6 +154,8 @@ fun SessionScreen(
                     .firstOrNull { it.wire == kindStr }
             },
             onPreferredKindChange = onPreferredKindChange,
+            onSwitchToCoder = onSwitchToCoder,
+            onSwitchToOrchestrator = onSwitchToOrchestrator,
             onSlashCommand = onSlashCommand,
         )
     }

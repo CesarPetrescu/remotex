@@ -141,6 +141,19 @@ fun RemotexApp(relayUrl: String) {
                         onRemoveImage = vm::removeImage,
                         onPermissionsChange = vm::setPermissions,
                         onPreferredKindChange = vm::setPreferredKind,
+                        // In-session chip → start a new session of
+                        // the OTHER kind. Both go through the files
+                        // screen first so the user picks a cwd; the
+                        // existing startSessionInCurrentPath then
+                        // routes by preferredKind.
+                        onSwitchToCoder = {
+                            vm.setPreferredKind(app.remotex.ui.screens.session.composer.SessionKind.Coder)
+                            vm.goToFiles()
+                        },
+                        onSwitchToOrchestrator = {
+                            vm.setPreferredKind(app.remotex.ui.screens.session.composer.SessionKind.Orchestrator)
+                            vm.goToFiles()
+                        },
                         onSlashCommand = vm::sendSlash,
                         onListWorkspace = vm::listWorkspace,
                         onDeleteWorkspaceFile = vm::deleteWorkspaceFile,

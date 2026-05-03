@@ -71,11 +71,16 @@ internal fun ComposerBar(
     onStop: () -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
-    // 4th chip — kind for the next "+ New session". Inside an active
-    // session [sessionKind] is non-null and locks the picker read-only.
+    // 4th chip — kind selector. When sessionKind is non-null (i.e.
+    // we're already in a session) the chip becomes a "switch session"
+    // affordance: picking the OTHER kind starts a NEW session of that
+    // kind (current one keeps running). Outside a session it falls
+    // back to setting preferredKind.
     preferredKind: SessionKind = SessionKind.Coder,
     sessionKind: SessionKind? = null,
     onPreferredKindChange: (SessionKind) -> Unit = {},
+    onSwitchToCoder: () -> Unit = {},
+    onSwitchToOrchestrator: () -> Unit = {},
     // Slash command sender — composer bypasses sendTurn for these.
     onSlashCommand: (cmd: String, args: String) -> Unit = { _, _ -> },
 ) {
@@ -154,9 +159,24 @@ internal fun ComposerBar(
                 }
                 item {
                     CompactKindPicker(
-                        selected = preferredKind,
-                        onSelect = onPreferredKindChange,
-                        lockedTo = sessionKind,
+                        // Show the actual session kind when we have
+                        // one; outside any session, show the user's
+                        // standing preference for the next "+ New".
+                        selected = sessionKind ?: preferredKind,
+                        onSelect = { picked ->
+                            if (sessionKind != null) {
+                                if (picked == sessionKind) return@CompactKindPicker
+                                when (picked) {
+                                    SessionKind.Orchestrator -> onSwitchToOrchestrator()
+                                    SessionKind.Coder -> onSwitchToCoder()
+                                }
+                            } else {
+                                onPreferredKindChange(picked)
+                            }
+                        },
+                        // Never locked — the chip is now a real
+                        // switcher even mid-session.
+                        lockedTo = null,
                     )
                 }
             }

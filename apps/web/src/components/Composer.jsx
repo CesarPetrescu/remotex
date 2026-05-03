@@ -47,6 +47,7 @@ export function Composer({
   sessionKind = null,
   onPreferredKindChange,
   onOpenOrchestrator,
+  onOpenCoder,
   onSlashCommand,
 }) {
   const [text, setText] = useState('');
@@ -159,21 +160,23 @@ export function Composer({
         <KindPicker
           value={sessionKind || preferredKind}
           onChange={(kind) => {
-            // In a live coder session the chip used to be locked, which
-            // looked broken: tapping "orchestrator" did nothing because
-            // you can't switch a running session's kind in place. Now
-            // picking orchestrator from a coder session opens the
-            // launcher modal so the user actually gets a new
-            // orchestrator session instead of a silent no-op. The
-            // current coder session keeps running in the background.
-            if (sessionKind && sessionKind !== kind && kind === 'orchestrator') {
-              onOpenOrchestrator?.();
+            // The chip is a "switch session" affordance — picking the
+            // OTHER kind starts a fresh session of that kind. The
+            // current session keeps running until the user navigates
+            // away. Picking the same kind we're already in is a no-op
+            // (no point starting a duplicate). Outside any session
+            // (sessionKind null) we still update preferredKind so a
+            // reload remembers the user's last pick.
+            if (sessionKind) {
+              if (kind === sessionKind) return;
+              if (kind === 'orchestrator') onOpenOrchestrator?.();
+              else if (kind === 'coder') onOpenCoder?.();
               return;
             }
             onPreferredKindChange?.(kind);
           }}
-          locked={!!sessionKind && !onOpenOrchestrator}
-          lockedReason={sessionKind ? `current session is ${sessionKind}` : ''}
+          locked={false}
+          lockedReason=""
         />
       </div>
       {/* Plan-mode toggle chip — same hue as the kind picker but

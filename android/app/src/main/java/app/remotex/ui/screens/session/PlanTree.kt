@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +26,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -50,9 +55,23 @@ private val OK = Ok
 
 /** Renders the orchestrator's plan DAG with status pills + a live
  *  block under each running step (current label + last ~800 chars of
- *  streaming agent text). Mirrors apps/web/src/components/PlanTree.jsx. */
+ *  streaming agent text). Mirrors apps/web/src/components/PlanTree.jsx.
+ *
+ *  Collapsible: the header is a tap-target. State is local to this
+ *  composable since collapsing is just a viewing preference. Auto-
+ *  expands when a step starts running so the live block isn't hidden
+ *  behind a closed header. */
 @Composable
 fun PlanTreePanel(orchestrator: OrchestratorState, modifier: Modifier = Modifier) {
+    val steps = orchestrator.steps
+    val running = steps.count { it.status == "running" }
+    val done = steps.count { it.status == "completed" }
+    val failed = steps.count { it.status == "failed" || it.status == "cancelled" }
+    var collapsed by remember { mutableStateOf(false) }
+    LaunchedEffect(running) {
+        if (running > 0) collapsed = false
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -61,41 +80,79 @@ fun PlanTreePanel(orchestrator: OrchestratorState, modifier: Modifier = Modifier
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            "PLAN",
-            color = InkDim,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-        )
-        if (orchestrator.steps.isEmpty()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { collapsed = !collapsed },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             Text(
-                "waiting for the orchestrator to submit a plan…",
+                if (collapsed) "▸" else "▾",
                 color = InkDim,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
             )
-        } else {
-            orchestrator.steps.forEach { step ->
-                PlanStepRow(step)
+            Text(
+                "PLAN",
+                color = Accent,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                buildHeaderSummary(steps.size, running, done, failed, orchestrator.finished),
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (!collapsed) {
+            if (steps.isEmpty()) {
+                Text(
+                    "waiting for the orchestrator to submit a plan…",
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                )
+            } else {
+                steps.forEach { step -> PlanStepRow(step) }
+            }
+            orchestrator.finished?.let { f ->
+                val color = if (f.ok) OK else Warn
+                val text = if (f.ok) "✓ ${f.summary ?: "orchestration complete"}"
+                           else "✗ ${f.error ?: "orchestrator stopped"}"
+                Text(
+                    text,
+                    color = color,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(color.copy(alpha = 0.06f))
+                        .padding(6.dp),
+                )
             }
         }
-        orchestrator.finished?.let { f ->
-            val color = if (f.ok) OK else Warn
-            val text = if (f.ok) "✓ ${f.summary ?: "orchestration complete"}"
-                       else "✗ ${f.error ?: "orchestrator stopped"}"
-            Text(
-                text,
-                color = color,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(color.copy(alpha = 0.06f))
-                    .padding(6.dp),
-            )
-        }
     }
+}
+
+private fun buildHeaderSummary(
+    total: Int,
+    running: Int,
+    done: Int,
+    failed: Int,
+    finished: app.remotex.model.OrchFinished?,
+): String {
+    if (total == 0 && finished == null) return "waiting…"
+    val parts = mutableListOf<String>()
+    if (total > 0) parts += "$total ${if (total == 1) "step" else "steps"}"
+    if (running > 0) parts += "$running running"
+    if (done > 0) parts += "$done done"
+    if (failed > 0) parts += "$failed failed"
+    if (finished != null) parts += if (finished.ok) "✓ done" else "✗ stopped"
+    return parts.joinToString(" · ")
 }
 
 @Composable

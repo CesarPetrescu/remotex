@@ -3293,12 +3293,43 @@ main.screen-host {
 .plan-tree.empty .plan-tree-hint {
   color: var(--ink-dim);
   font-style: italic;
+  margin-top: 4px;
+}
+.plan-tree.collapsed {
+  padding-bottom: 6px;
+}
+.plan-tree-header {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  padding: 0 0 6px;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.plan-tree-header:hover .plan-tree-label {
+  color: var(--amber);
+}
+.plan-tree-chevron {
+  color: var(--ink-dim);
+  font-size: 10px;
+  width: 10px;
+  text-align: center;
 }
 .plan-tree-label {
   font-size: 10px;
   letter-spacing: 0.12em;
   color: var(--accent);
-  margin-bottom: 6px;
+}
+.plan-tree-summary {
+  color: var(--ink-dim);
+  font-size: 10px;
+  flex: 1;
 }
 .plan-tree-steps {
   list-style: none;

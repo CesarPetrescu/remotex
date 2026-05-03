@@ -36,14 +36,12 @@ export default function App() {
     setRightOpen(false);
   };
 
+  // "+ New session" always opens a coder. Orchestrator is started
+  // explicitly from the dashboard's Orchestrate tile or the in-session
+  // chip's "switch to orchestrator" affordance — that way there's no
+  // sticky preferredKind state silently routing future "+ New" taps
+  // to the orchestrator just because the user once tapped it.
   const openSession = ({ threadId, cwd } = {}) => {
-    // If the user picked the orchestrator as the next-session kind and
-    // we're not just resuming an existing thread, route through the
-    // launcher modal so they can supply the task description.
-    if (!threadId && state.preferredKind === 'orchestrator') {
-      setOrchLauncherOpen(true);
-      return;
-    }
     r.openSession({ threadId, cwd });
     closeDrawers();
   };
@@ -117,9 +115,15 @@ export default function App() {
             workspaceApi={{
               apiRef: r.apiRef,
               upload: r.workspaceUploadFile,
-              setPreferredKind: r.setPreferredKind,
               sendSlash: r.sendSlash,
+              // In-session chip: "switch to orchestrator" opens the
+              // launcher; "switch to coder" opens the folder picker
+              // → that picks goes through openSession() above which
+              // is now always a coder. Both paths spawn a NEW
+              // session; the current one keeps running until the
+              // user navigates away.
               openOrchestrator: () => setOrchLauncherOpen(true),
+              openCoder: () => setFolderPickerOpen(true),
             }}
           />
         ) : (
