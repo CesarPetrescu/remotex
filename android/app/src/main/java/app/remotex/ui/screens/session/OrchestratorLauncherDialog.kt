@@ -79,8 +79,10 @@ fun OrchestratorLauncherDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "The orchestrator brain plans a DAG of subtasks, fans them out " +
-                        "to child Codex agents, and synthesizes a final result.",
+                    "This opens an orchestrator brain, not a coder. It uses " +
+                        "orchestrator MCP tools to plan a DAG, delegate concrete " +
+                        "work to child Codex agents, await them, and synthesize " +
+                        "the final result.",
                     color = InkDim,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,

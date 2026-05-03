@@ -100,8 +100,8 @@ internal fun CompactModelPicker(
 // When [lockedTo] is non-null, the chip displays it read-only — used
 // inside an active session where the kind is fixed.
 enum class SessionKind(val wire: String, val label: String, val hint: String) {
-    Coder("coder", "coder", "one codex agent on this thread"),
-    Orchestrator("orchestrator", "orchestrator", "planner fans out to child agents"),
+    Coder("coder", "coder", "one Codex agent works directly in this thread"),
+    Orchestrator("orchestrator", "orchestrator", "brain uses MCP tools to delegate to child agents"),
 }
 
 @Composable

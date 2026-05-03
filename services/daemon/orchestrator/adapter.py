@@ -44,8 +44,9 @@ from typing import AsyncIterator
 from ..adapters.base import SessionAdapter, SessionEvent
 from ..adapters.stdio import StdioCodexAdapter
 from .bridge import BridgeServer, socket_path_for
-from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
-from .runtime import OrchestratorRuntime
+from .collab import COLLABORATION_MODE, merge_thread_config, native_subagent_thread_config
+from .prompts import ORCHESTRATOR_SYSTEM_PROMPT, ORCHESTRATOR_TURN_REMINDER
+from .runtime import OrchestratorRuntime, _record_collab_agent_links
 
 log = logging.getLogger("daemon.orchestrator.adapter")
 
@@ -99,6 +100,7 @@ class OrchestratorAdapter(SessionAdapter):
             # opened (the brain itself is a regular codex under the
             # hood, but to the user this is the orchestrator session).
             session_kind="orchestrator",
+            forced_collaboration_mode=COLLABORATION_MODE,
         )
         self._queue: asyncio.Queue[SessionEvent | None] = asyncio.Queue()
         self._runtime = OrchestratorRuntime(
@@ -170,7 +172,7 @@ class OrchestratorAdapter(SessionAdapter):
         """The `thread/start.config` blob that registers our MCP server
         on the brain's session. Codex's McpServerConfig is a flat dict
         per server: {command, args, env?, enabled?}."""
-        return {
+        mcp_config = {
             "mcp_servers": {
                 "orchestrator": {
                     "command": _python_executable(),
@@ -179,6 +181,7 @@ class OrchestratorAdapter(SessionAdapter):
                 },
             },
         }
+        return merge_thread_config(native_subagent_thread_config(), mcp_config)
 
     def _build_handlers(self) -> dict:
         """Map MCP tool name → async runtime call. Each handler must
@@ -217,6 +220,17 @@ class OrchestratorAdapter(SessionAdapter):
 
         async def finish(params: dict) -> dict:
             summary = str(params.get("summary") or "")
+            if not self._runtime.has_steps():
+                raise RuntimeError("finish: no plan has been submitted")
+            nonterminal = self._runtime.nonterminal_steps()
+            if nonterminal:
+                detail = ", ".join(
+                    f"{s.get('step_id')}={s.get('status')}" for s in nonterminal
+                )
+                raise RuntimeError(
+                    "finish: non-terminal steps remain; "
+                    f"await or cancel them before finishing ({detail})"
+                )
             self._finished = True
             await self._emit(SessionEvent("orchestrator-finished", {
                 "ok": True,
@@ -234,8 +248,15 @@ class OrchestratorAdapter(SessionAdapter):
             "finish": finish,
         }
 
-    def _brain_turn_frame(self, text: str) -> dict:
-        frame: dict = {"type": "turn-start", "input": text}
+    def _brain_turn_frame(self, text: str, *, include_role_reminder: bool = True) -> dict:
+        input_text = text
+        if include_role_reminder:
+            input_text = (
+                ORCHESTRATOR_TURN_REMINDER
+                + "\n\nUser update/task:\n"
+                + (text or "(no text supplied)")
+            )
+        frame: dict = {"type": "turn-start", "input": input_text}
         if self._brain_model:
             frame["model"] = self._brain_model
         if self._brain_effort:
@@ -259,6 +280,9 @@ class OrchestratorAdapter(SessionAdapter):
     async def _pump_brain(self) -> None:
         try:
             session_started_seen = False
+            root_thread_id: str | None = None
+            thread_parents: dict[str, str] = {}
+            thread_depths: dict[str, int] = {}
             async for ev in self._brain.events():
                 # Forward every brain event upstream so the existing UI
                 # sees the brain's reasoning + agent messages live.
@@ -266,8 +290,24 @@ class OrchestratorAdapter(SessionAdapter):
                 await self._queue.put(tagged)
                 kind = ev.kind
                 data = ev.data or {}
+                if root_thread_id is None and data.get("thread_id"):
+                    root_thread_id = data.get("thread_id")
+                    thread_depths[root_thread_id] = 0
+                _record_collab_agent_links(data, "brain", thread_parents, thread_depths)
+                agent_event = _build_brain_agent_event(
+                    kind,
+                    data,
+                    root_thread_id=root_thread_id,
+                    thread_parents=thread_parents,
+                    thread_depths=thread_depths,
+                )
+                if agent_event is not None:
+                    await self._queue.put(SessionEvent("orchestrator-agent-event", agent_event))
                 if kind == "session-started" and not session_started_seen:
                     session_started_seen = True
+                    if data.get("thread_id"):
+                        root_thread_id = data.get("thread_id")
+                        thread_depths[root_thread_id] = 0
                     if not self._initial_input_sent:
                         self._initial_input_sent = True
                         prompt = (
@@ -276,7 +316,9 @@ class OrchestratorAdapter(SessionAdapter):
                             + (self._task or "(no task supplied)")
                         )
                         try:
-                            await self._brain.handle(self._brain_turn_frame(prompt))
+                            await self._brain.handle(
+                                self._brain_turn_frame(prompt, include_role_reminder=False)
+                            )
                         except Exception as exc:  # noqa: BLE001
                             log.exception("brain initial turn failed: %s", exc)
                             await self._emit(SessionEvent("orchestrator-finished", {
@@ -314,3 +356,45 @@ class OrchestratorAdapter(SessionAdapter):
                 "ok": False,
                 "error": f"orchestrator pump crashed: {exc}",
             }))
+
+
+def _build_brain_agent_event(
+    kind: str,
+    data: dict,
+    *,
+    root_thread_id: str | None,
+    thread_parents: dict[str, str],
+    thread_depths: dict[str, int],
+) -> dict | None:
+    if kind not in (
+        "turn-started",
+        "turn-completed",
+        "item-started",
+        "item-delta",
+        "item-completed",
+        "approval-request",
+        "user-input-request",
+    ):
+        return None
+    thread_id = data.get("thread_id")
+    is_root = not thread_id or thread_id == root_thread_id
+    if is_root:
+        agent_id = "brain"
+        parent_agent_id = None
+        depth = 0
+        label = "brain"
+    else:
+        agent_id = str(thread_id)
+        parent_agent_id = thread_parents.get(agent_id, "brain")
+        depth = thread_depths.get(agent_id, 1)
+        label = f"native agent {agent_id[:8]}"
+    return {
+        **data,
+        "agent_id": agent_id,
+        "parent_agent_id": parent_agent_id,
+        "step_id": None,
+        "thread_id": thread_id,
+        "depth": depth,
+        "label": label,
+        "kind": kind,
+    }

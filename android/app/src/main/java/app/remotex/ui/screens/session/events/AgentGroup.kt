@@ -79,7 +79,7 @@ private fun AgentSubEvent(event: UiEvent, pending: Boolean) {
         is UiEvent.Tool -> {
             var expanded by rememberSaveable(event.id) { mutableStateOf(false) }
             Text(
-                text = (if (expanded) "▾ " else "▸ ") + "TOOL · ${event.tool}",
+                text = (if (expanded) "▾ " else "▸ ") + "TOOL · ${event.tool}${toolMeta(event)}",
                 color = AccentDeep,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 9.sp,
@@ -113,6 +113,26 @@ private fun AgentSubEvent(event: UiEvent, pending: Boolean) {
                     )
                 }
             }
+            if (expanded) {
+                if (event.rawArguments.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("ARGUMENTS", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 8.sp)
+                    Spacer(Modifier.height(2.dp))
+                    CodeBlock(event.rawArguments, dim = true)
+                }
+                if (event.rawResult.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("RESULT", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 8.sp)
+                    Spacer(Modifier.height(2.dp))
+                    CodeBlock(event.rawResult, dim = true)
+                }
+                if (event.error.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("ERROR", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 8.sp)
+                    Spacer(Modifier.height(2.dp))
+                    CodeBlock(event.error, dim = true)
+                }
+            }
         }
         is UiEvent.Agent -> {
             MarkdownText(
@@ -133,4 +153,12 @@ private fun AgentSubEvent(event: UiEvent, pending: Boolean) {
         }
         is UiEvent.User -> Unit
     }
+}
+
+private fun toolMeta(event: UiEvent.Tool): String {
+    val parts = mutableListOf<String>()
+    if (event.status.isNotBlank()) parts += event.status
+    event.durationMs?.let { parts += "${it}ms" }
+    if (event.error.isNotBlank()) parts += "error"
+    return if (parts.isEmpty()) "" else " · " + parts.joinToString(" · ")
 }

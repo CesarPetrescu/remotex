@@ -65,8 +65,8 @@ export function PermissionsPicker({ value, onChange }) {
 // When inside an active session the chip shows the SESSION's actual
 // kind and is read-only — you can't switch a running session in place.
 export const SESSION_KINDS = [
-  { id: 'coder', label: 'coder', hint: 'one codex agent on this thread' },
-  { id: 'orchestrator', label: 'orchestrator', hint: 'planner that fans out to child agents' },
+  { id: 'coder', label: 'coder', hint: 'one Codex agent works directly in this thread' },
+  { id: 'orchestrator', label: 'orchestrator', hint: 'brain uses MCP tools to delegate to child agents' },
 ];
 
 export function KindPicker({ value, onChange, locked = false, lockedReason = '' }) {

@@ -1,5 +1,6 @@
 package app.remotex.ui.screens.session
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,18 +13,23 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.ui.UiState
 import app.remotex.ui.theme.Amber
+import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
+import app.remotex.ui.theme.Line
 
 @Composable
 internal fun MetaBar(state: UiState) {
     val info = state.session
+    val isOrchestrator = info?.kind == "orchestrator"
     val text = when {
         info == null -> "no session"
         else -> buildString {
@@ -47,11 +53,31 @@ internal fun MetaBar(state: UiState) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            KindBadge(isOrchestrator)
             if (haveTokens) {
                 Spacer(Modifier.width(8.dp))
                 TokenChip(state)
             }
         }
+    }
+}
+
+@Composable
+private fun KindBadge(isOrchestrator: Boolean) {
+    val label = if (isOrchestrator) "ORCHESTRATOR" else "CODER"
+    val accent = if (isOrchestrator) Amber else AccentDeep
+    Surface(
+        color = if (isOrchestrator) Amber.copy(alpha = 0.07f) else Color.Transparent,
+        border = BorderStroke(1.dp, if (isOrchestrator) Amber.copy(alpha = 0.72f) else Line),
+        shape = RectangleShape,
+    ) {
+        Text(
+            label,
+            color = accent,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 9.sp,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+        )
     }
 }
 

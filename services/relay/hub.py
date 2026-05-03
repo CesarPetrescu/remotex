@@ -94,6 +94,12 @@ class Hub:
         # approval_id → session_id while an approval is still answerable.
         # First response wins; later responses are ignored by ws_client.
         self.pending_approvals: dict[str, str] = {}
+        # call_id → session_id while a Codex request_user_input prompt is
+        # still answerable. Mirrors pending_approvals so replayed/stale
+        # plan-mode dialogs cannot be answered twice by different clients.
+        self.pending_user_inputs: dict[str, str] = {}
+        self.pending_approval_events: dict[str, dict] = {}
+        self.pending_user_input_events: dict[str, dict] = {}
 
     async def attach_daemon(self, host_id: str, ws: web.WebSocketResponse) -> web.WebSocketResponse | None:
         async with self._lock:
@@ -344,6 +350,11 @@ class Hub:
             for approval_id, sid in list(self.pending_approvals.items()):
                 if sid == session_id:
                     self.pending_approvals.pop(approval_id, None)
+                    self.pending_approval_events.pop(approval_id, None)
+            for call_id, sid in list(self.pending_user_inputs.items()):
+                if sid == session_id:
+                    self.pending_user_inputs.pop(call_id, None)
+                    self.pending_user_input_events.pop(call_id, None)
             key = self.session_thread.pop(session_id, None)
             if key is not None:
                 # Only drop the index entry if it still points at us;
@@ -367,6 +378,17 @@ class Hub:
         self.turn_in_flight[session_id] = False
         self.bump_activity(session_id)
 
+    async def clear_session_prompts(self, session_id: str) -> None:
+        async with self._lock:
+            for approval_id, sid in list(self.pending_approvals.items()):
+                if sid == session_id:
+                    self.pending_approvals.pop(approval_id, None)
+                    self.pending_approval_events.pop(approval_id, None)
+            for call_id, sid in list(self.pending_user_inputs.items()):
+                if sid == session_id:
+                    self.pending_user_inputs.pop(call_id, None)
+                    self.pending_user_input_events.pop(call_id, None)
+
     async def try_begin_turn(self, session_id: str) -> bool:
         """Reserve the single active turn slot for a session."""
         async with self._lock:
@@ -376,9 +398,15 @@ class Hub:
             self.session_activity[session_id] = time.monotonic()
             return True
 
-    async def note_approval_request(self, session_id: str, approval_id: str) -> None:
+    async def note_approval_request(
+        self,
+        session_id: str,
+        approval_id: str,
+        data: dict | None = None,
+    ) -> None:
         async with self._lock:
             self.pending_approvals[approval_id] = session_id
+            self.pending_approval_events[approval_id] = copy.deepcopy(data or {})
 
     async def resolve_approval(self, session_id: str, approval_id: str) -> bool:
         """Claim an approval. Returns False if another client got there first."""
@@ -386,7 +414,58 @@ class Hub:
             if self.pending_approvals.get(approval_id) != session_id:
                 return False
             self.pending_approvals.pop(approval_id, None)
+            self.pending_approval_events.pop(approval_id, None)
             return True
+
+    async def note_user_input_request(
+        self,
+        session_id: str,
+        call_id: str,
+        data: dict | None = None,
+    ) -> None:
+        async with self._lock:
+            self.pending_user_inputs[call_id] = session_id
+            self.pending_user_input_events[call_id] = copy.deepcopy(data or {})
+
+    async def resolve_user_input(self, session_id: str, call_id: str) -> bool:
+        """Claim a request_user_input prompt. First response wins."""
+        async with self._lock:
+            if self.pending_user_inputs.get(call_id) != session_id:
+                return False
+            self.pending_user_inputs.pop(call_id, None)
+            self.pending_user_input_events.pop(call_id, None)
+            return True
+
+    async def pending_prompt_snapshot(self, session_id: str) -> dict:
+        """Return current unresolved prompt requests for an attaching client.
+
+        Replay is sequence-based, so a browser refresh after seeing a prompt
+        would otherwise skip the old request while losing its React state.
+        This synthetic frame is not recorded and does not advance seq.
+        """
+        async with self._lock:
+            approvals: list[dict] = []
+            user_inputs: list[dict] = []
+            for approval_id, sid in self.pending_approvals.items():
+                if sid != session_id:
+                    continue
+                data = copy.deepcopy(self.pending_approval_events.get(approval_id) or {})
+                data.setdefault("approval_id", approval_id)
+                data["replayed"] = True
+                approvals.append(data)
+            for call_id, sid in self.pending_user_inputs.items():
+                if sid != session_id:
+                    continue
+                data = copy.deepcopy(self.pending_user_input_events.get(call_id) or {})
+                data.setdefault("call_id", call_id)
+                data["replayed"] = True
+                user_inputs.append(data)
+            return {
+                "type": "pending-prompts",
+                "session_id": session_id,
+                "approvals": approvals,
+                "user_inputs": user_inputs,
+            }
 
     async def remember_session_thread(
         self,

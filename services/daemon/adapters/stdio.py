@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 import logging
 import os
@@ -13,7 +14,11 @@ from typing import AsyncIterator
 
 from .base import SessionAdapter, SessionEvent
 from .items import _item_extras, _join_input, _snake_item_type
-from .permissions import _image_suffix, _permissions_to_codex
+from .permissions import (
+    _approval_policy_to_codex,
+    _image_suffix,
+    _permissions_to_codex,
+)
 from .rollout import (
     _load_rollout_history,
     _load_rollout_metadata,
@@ -21,6 +26,11 @@ from .rollout import (
 )
 
 log = logging.getLogger("daemon.adapters.stdio")
+
+
+def _thread_extra(params: dict) -> dict:
+    thread_id = params.get("threadId")
+    return {"thread_id": thread_id} if thread_id else {}
 
 
 async def _read_line_unbounded(stream: asyncio.StreamReader) -> bytes:
@@ -63,6 +73,7 @@ class StdioCodexAdapter(SessionAdapter):
         resume_thread_id: str | None = None,
         extra_thread_config: dict | None = None,
         session_kind: str = "codex",
+        forced_collaboration_mode: str | None = None,
     ) -> None:
         self.binary = codex_binary
         self._cwd = default_cwd or os.path.expanduser("~")
@@ -77,6 +88,14 @@ class StdioCodexAdapter(SessionAdapter):
         # is "orchestrator" even though the underlying adapter is the
         # same StdioCodexAdapter.
         self._session_kind = session_kind
+        # Optional baseline collaboration mode sent on every turn. Slash
+        # commands can still override it for plain sessions; orchestrator
+        # sessions use this to keep native subagent tools consistently loaded.
+        self._forced_collaboration_mode = (
+            forced_collaboration_mode.strip()
+            if isinstance(forced_collaboration_mode, str) and forced_collaboration_mode.strip()
+            else None
+        )
         # Mutable working directory: thread/start kicks off in
         # `default_cwd`, /cd swaps it, every turn/start rides with it.
         self._current_cwd = self._cwd
@@ -99,16 +118,20 @@ class StdioCodexAdapter(SessionAdapter):
         # Temp files we wrote for localImage inputs on the current turn;
         # cleared on turn-completed.
         self._turn_tmp_files: list[str] = []
+        self._current_model: str | None = None
+        self._current_effort: str | None = None
         # Approval requests from codex are JSON-RPC requests (not notifs).
-        # We record their rpc ids so we can respond after the client answers.
-        self._pending_approvals: dict[str, int] = {}
+        # We record their rpc ids + shape so we can respond after the
+        # client answers. Different approval methods expect different
+        # response bodies.
+        self._pending_approvals: dict[str, dict] = {}
         # call_id → rpc id, mirroring _pending_approvals but for codex's
         # item/tool/requestUserInput prompts (the "pick from these options"
         # dialogs codex uses for plan mode and other interactive tools).
         self._pending_user_inputs: dict[str, int] = {}
-        # Slash-command state: if the user sends `/plan`, the next turn
-        # uses collaborationMode; `/default` clears it.
-        self._next_collab_mode: dict | None = None
+        # Slash-command state: if the user sends `/plan` or `/default`,
+        # every subsequent turn sends a full collaborationMode payload.
+        self._next_collab_mode: str | None = None
 
     # --- lifecycle -------------------------------------------------------
 
@@ -118,6 +141,8 @@ class StdioCodexAdapter(SessionAdapter):
             resume_meta = _load_rollout_metadata(self._resume_thread_id)
             if resume_meta.get("cwd"):
                 self._current_cwd = resume_meta["cwd"]
+            if isinstance(resume_meta.get("model"), str) and resume_meta["model"].strip():
+                self._current_model = resume_meta["model"].strip()
 
         cmd = shlex.split(self.binary) + ["app-server"]
         log.info("spawning %s (cwd=%s)", " ".join(cmd), self._cwd)
@@ -172,9 +197,11 @@ class StdioCodexAdapter(SessionAdapter):
             "ephemeral": False,
         }
         if self._extra_thread_config:
-            thread_params["config"] = dict(self._extra_thread_config)
+            thread_params["config"] = copy.deepcopy(self._extra_thread_config)
         thread = await self._request("thread/start", thread_params)
         self._thread_id = thread["thread"].get("id", self._resume_thread_id)
+        if isinstance(thread.get("model"), str) and thread["model"].strip():
+            self._current_model = thread["model"].strip()
         self._ready = True
         await self._queue.put(SessionEvent("session-started", {
             "model": thread.get("model") or model_hint,
@@ -295,12 +322,16 @@ class StdioCodexAdapter(SessionAdapter):
             }
             # Optional per-turn overrides. Codex applies these to this turn
             # and every subsequent turn on the thread.
+            requested_model: str | None = None
             model = frame.get("model")
             if isinstance(model, str) and model.strip():
-                params["model"] = model.strip()
+                requested_model = model.strip()
+                params["model"] = requested_model
+            requested_effort: str | None = None
             effort = frame.get("effort")
             if isinstance(effort, str) and effort.strip():
-                params["effort"] = effort.strip()
+                requested_effort = effort.strip()
+                params["effort"] = requested_effort
             perms = frame.get("permissions")
             if isinstance(perms, str) and perms:
                 sandbox, approval = _permissions_to_codex(perms, self._cwd)
@@ -308,8 +339,51 @@ class StdioCodexAdapter(SessionAdapter):
                     params["sandboxPolicy"] = sandbox
                 if approval:
                     params["approvalPolicy"] = approval
-            if self._next_collab_mode is not None:
-                params["collaborationMode"] = self._next_collab_mode
+            raw_approval_policy = frame.get("approvalPolicy", frame.get("approval_policy"))
+            approval_policy = _approval_policy_to_codex(raw_approval_policy)
+            if raw_approval_policy is not None and approval_policy is None:
+                await self._queue.put(SessionEvent("turn-completed", {
+                    "error": f"unsupported approvalPolicy: {raw_approval_policy!r}",
+                }))
+                return
+            if approval_policy is not None:
+                params["approvalPolicy"] = approval_policy
+            collab_payload: dict | None = None
+            explicit_collab = frame.get("collaborationMode")
+            collab_mode: str | None = None
+            if isinstance(explicit_collab, dict):
+                collab_payload = explicit_collab
+            elif isinstance(explicit_collab, str) and explicit_collab.strip():
+                collab_mode = explicit_collab.strip()
+            elif self._next_collab_mode is not None:
+                collab_mode = self._next_collab_mode
+            elif self._forced_collaboration_mode is not None:
+                collab_mode = self._forced_collaboration_mode
+
+            if collab_payload is None and collab_mode is not None:
+                collab_model = requested_model or self._current_model
+                if not collab_model:
+                    await self._queue.put(SessionEvent("turn-completed", {
+                        "error": (
+                            f"cannot enter /{collab_mode}: "
+                            "Codex did not report a current model"
+                        ),
+                    }))
+                    return
+                try:
+                    collab_payload = self._collaboration_mode_payload(
+                        collab_mode,
+                        collab_model,
+                        requested_effort or self._current_effort,
+                    )
+                except ValueError as exc:
+                    await self._queue.put(SessionEvent("turn-completed", {
+                        "error": str(exc),
+                    }))
+                    return
+                params["collaborationMode"] = collab_payload
+            elif collab_payload is not None:
+                params["collaborationMode"] = collab_payload
             try:
                 await self._request("turn/start", params)
             except Exception as exc:  # noqa: BLE001
@@ -317,6 +391,22 @@ class StdioCodexAdapter(SessionAdapter):
                 await self._queue.put(SessionEvent("turn-completed", {
                     "error": str(exc),
                 }))
+            else:
+                if requested_model:
+                    self._current_model = requested_model
+                if requested_effort:
+                    self._current_effort = requested_effort
+                if collab_payload:
+                    settings = collab_payload.get("settings") or {}
+                    collab_model = settings.get("model")
+                    if isinstance(collab_model, str) and collab_model.strip():
+                        self._current_model = collab_model.strip()
+                    collab_effort = settings.get("reasoning_effort")
+                    self._current_effort = (
+                        collab_effort
+                        if isinstance(collab_effort, str) and collab_effort
+                        else None
+                    )
         elif ftype == "turn-interrupt":
             if not self._turn_id or not self._thread_id:
                 log.info("turn-interrupt but no turn in flight; ignoring")
@@ -384,6 +474,9 @@ class StdioCodexAdapter(SessionAdapter):
         thread_obj = resp.get("thread") or {"id": self._resume_thread_id}
         self._thread_id = thread_obj.get("id") or self._resume_thread_id
         self._current_cwd = resp.get("cwd") or thread_obj.get("cwd") or self._current_cwd
+        resume_model = resp.get("model") or thread_obj.get("model")
+        if isinstance(resume_model, str) and resume_model.strip():
+            self._current_model = resume_model.strip()
         self._ready = True
         self._resume_error = None
         resume_turns = (
@@ -430,25 +523,14 @@ class StdioCodexAdapter(SessionAdapter):
                 return
             await self._queue.put(SessionEvent("slash-ack", {"command": command, "ok": True}))
         elif command in ("plan", "default"):
-            if command == "plan":
-                self._next_collab_mode = {
-                    "mode": "plan",
-                    # Null developer_instructions means "use mode's built-in".
-                    "settings": {
-                        "model": "",
-                        "reasoning_effort": None,
-                        "developer_instructions": None,
-                    },
-                }
-            else:
-                self._next_collab_mode = None
+            self._next_collab_mode = command
             await self._queue.put(SessionEvent("slash-ack", {
                 "command": command,
                 "ok": True,
                 "message": (
                     "next turn will use plan mode"
                     if command == "plan"
-                    else "collab mode cleared"
+                    else "next turn will use default mode"
                 ),
             }))
         elif command == "collab":
@@ -492,17 +574,49 @@ class StdioCodexAdapter(SessionAdapter):
             "message": f"cwd → {expanded}",
         }))
 
+    def _collaboration_mode_payload(
+        self,
+        mode: str,
+        model: str,
+        effort: str | None,
+    ) -> dict:
+        if mode == "plan":
+            effort = "medium"
+        elif mode != "default":
+            raise ValueError(f"unsupported collaboration mode: {mode}")
+        return {
+            "mode": mode,
+            "settings": {
+                "model": model,
+                "reasoning_effort": effort,
+                # Null asks codex app-server to fill the built-in
+                # instructions for the selected mode.
+                "developer_instructions": None,
+            },
+        }
+
     async def _resolve_approval(self, frame: dict) -> None:
         approval_id = frame.get("approval_id")
         if not approval_id:
             return
-        rpc_id = self._pending_approvals.pop(approval_id, None)
-        if rpc_id is None:
+        pending = self._pending_approvals.pop(approval_id, None)
+        if pending is None:
             log.info("approval-response for unknown id %s; ignoring", approval_id)
             return
         decision = frame.get("decision") or "decline"
-        result = {"decision": decision}
-        await self._send({"id": rpc_id, "result": result})
+        await self._send({
+            "id": pending["rpc_id"],
+            "result": self._approval_result(pending, decision),
+        })
+
+    def _approval_result(self, pending: dict, decision: str) -> dict:
+        if pending.get("kind") == "permissions":
+            accepted = decision in {"accept", "acceptForSession"}
+            return {
+                "permissions": pending.get("permissions") if accepted else {},
+                "scope": "session" if decision == "acceptForSession" else "turn",
+            }
+        return {"decision": decision}
 
     async def _resolve_user_input(self, frame: dict) -> None:
         """Reply to codex's item/tool/requestUserInput. Client sends:
@@ -719,10 +833,20 @@ class StdioCodexAdapter(SessionAdapter):
         if "id" in msg and method in (
             "item/commandExecution/requestApproval",
             "item/fileChange/requestApproval",
+            "item/permissions/requestApproval",
         ):
             approval_id = f"appr_{uuid.uuid4().hex[:8]}"
-            self._pending_approvals[approval_id] = msg["id"]
-            kind = "command" if method == "item/commandExecution/requestApproval" else "file_change"
+            if method == "item/commandExecution/requestApproval":
+                kind = "command"
+            elif method == "item/fileChange/requestApproval":
+                kind = "file_change"
+            else:
+                kind = "permissions"
+            self._pending_approvals[approval_id] = {
+                "rpc_id": msg["id"],
+                "kind": kind,
+                "permissions": params.get("permissions") or {},
+            }
             payload: dict = {
                 "approval_id": approval_id,
                 "kind": kind,
@@ -741,16 +865,32 @@ class StdioCodexAdapter(SessionAdapter):
                     d if isinstance(d, str) else (list(d.keys())[0] if isinstance(d, dict) else str(d))
                     for d in decisions
                 ]
+            elif kind == "file_change":
+                payload["decisions"] = ["accept", "acceptForSession", "decline", "cancel"]
             else:
+                payload["cwd"] = params.get("cwd")
+                payload["permissions"] = params.get("permissions") or {}
                 payload["decisions"] = ["accept", "acceptForSession", "decline", "cancel"]
             await self._queue.put(SessionEvent("approval-request", payload))
             return
 
+        if "id" in msg:
+            await self._reject_unsupported_server_request(msg["id"], method)
+            return
+
         if method == "turn/started":
             turn = params.get("turn", {})
-            self._turn_id = turn.get("id")
+            turn_id = turn.get("id")
+            if self._turn_id is not None and turn_id != self._turn_id:
+                # Native Codex subagents emit their own turn lifecycle
+                # notifications on the parent app-server stream. Relay
+                # turn state tracks the user-visible root turn only; item
+                # events still carry subagent progress.
+                return
+            self._turn_id = turn_id
             await self._queue.put(SessionEvent("turn-started", {
-                "turn_id": turn.get("id"),
+                **_thread_extra(params),
+                "turn_id": turn_id,
                 "input": _join_input(params.get("input")),
             }))
         elif method == "item/started":
@@ -760,15 +900,27 @@ class StdioCodexAdapter(SessionAdapter):
                 # We echo user input client-side already.
                 return
             await self._queue.put(SessionEvent("item-started", {
+                **_thread_extra(params),
                 "turn_id": params.get("turnId"),
                 "item_id": item.get("id"),
                 "item_type": _snake_item_type(codex_type),
                 **_item_extras(item),
             }))
+        elif method == "item/mcpToolCall/progress":
+            message = params.get("message") or ""
+            if message:
+                await self._queue.put(SessionEvent("item-delta", {
+                    **_thread_extra(params),
+                    "turn_id": params.get("turnId"),
+                    "item_id": params.get("itemId"),
+                    "item_type": "mcp_tool_call",
+                    "delta": message,
+                }))
         elif method.startswith("item/") and method.endswith("/delta"):
             # e.g. item/agentMessage/delta → codex_type = "agentMessage"
             codex_type = method.split("/")[1]
             await self._queue.put(SessionEvent("item-delta", {
+                **_thread_extra(params),
                 "turn_id": params.get("turnId"),
                 "item_id": params.get("itemId"),
                 "item_type": _snake_item_type(codex_type),
@@ -779,6 +931,7 @@ class StdioCodexAdapter(SessionAdapter):
             # agentMessage; normalize here so the client sees the same
             # item-delta envelope.
             await self._queue.put(SessionEvent("item-delta", {
+                **_thread_extra(params),
                 "turn_id": params.get("turnId"),
                 "item_id": params.get("itemId"),
                 "item_type": "agent_reasoning",
@@ -788,6 +941,7 @@ class StdioCodexAdapter(SessionAdapter):
             # A new summary "part" starts — use a double-newline so
             # consecutive reasoning summaries render as separate blocks.
             await self._queue.put(SessionEvent("item-delta", {
+                **_thread_extra(params),
                 "turn_id": params.get("turnId"),
                 "item_id": params.get("itemId"),
                 "item_type": "agent_reasoning",
@@ -799,6 +953,7 @@ class StdioCodexAdapter(SessionAdapter):
             if codex_type == "userMessage":
                 return
             await self._queue.put(SessionEvent("item-completed", {
+                **_thread_extra(params),
                 "turn_id": params.get("turnId"),
                 "item_id": item.get("id"),
                 "item_type": _snake_item_type(codex_type),
@@ -806,6 +961,11 @@ class StdioCodexAdapter(SessionAdapter):
             }))
         elif method == "turn/completed":
             turn = params.get("turn", {})
+            turn_id = turn.get("id")
+            if self._turn_id is not None and turn_id != self._turn_id:
+                # See turn/started handling above: nested subagent turn
+                # completions must not end the root Remotex turn.
+                return
             self._turn_id = None
             # Clean up any image temp files we wrote for this turn.
             for path in self._turn_tmp_files:
@@ -815,7 +975,8 @@ class StdioCodexAdapter(SessionAdapter):
                     pass
             self._turn_tmp_files.clear()
             await self._queue.put(SessionEvent("turn-completed", {
-                "turn_id": turn.get("id"),
+                **_thread_extra(params),
+                "turn_id": turn_id,
                 "duration_ms": turn.get("durationMs"),
                 "status": turn.get("status"),
             }))
@@ -846,3 +1007,15 @@ class StdioCodexAdapter(SessionAdapter):
         else:
             # Drop mcpServer/*, account/*, etc.
             log.debug("ignored codex notification: %s", method)
+
+    async def _reject_unsupported_server_request(self, rpc_id, method: str) -> None:
+        message = f"unsupported Codex server request: {method}"
+        log.warning(message)
+        await self._send({
+            "id": rpc_id,
+            "error": {
+                "code": -32601,
+                "message": message,
+            },
+        })
+        await self._queue.put(SessionEvent("turn-completed", {"error": message}))

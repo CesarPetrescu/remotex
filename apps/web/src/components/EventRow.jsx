@@ -69,6 +69,8 @@ function ToolSub({ event, grouped }) {
   const output = event.output || '';
   const needsTruncation = output && countLines(output) > 5;
   const shown = expanded || !needsTruncation ? output : previewLines(output);
+  const hasRawDetails = event.rawArguments !== undefined || event.rawResult !== undefined || event.error;
+  const meta = toolMeta(event);
 
   return (
     <div className={`sub sub-tool${grouped ? '' : ' standalone'}`}>
@@ -80,6 +82,7 @@ function ToolSub({ event, grouped }) {
       >
         <span className="sub-chev">{expanded ? '▾' : '▸'}</span>
         TOOL · {event.tool}
+        {meta && <span className="tool-meta"> · {meta}</span>}
       </button>
       {event.command && (
         <pre className="item-code">
@@ -112,8 +115,50 @@ function ToolSub({ event, grouped }) {
           )}
         </pre>
       )}
+      {expanded && hasRawDetails && (
+        <div className="tool-details">
+          {event.rawArguments !== undefined && (
+            <ToolDetail label="arguments" value={event.rawArguments} />
+          )}
+          {event.rawResult !== undefined && (
+            <ToolDetail label="result" value={event.rawResult} />
+          )}
+          {event.error && (
+            <ToolDetail label="error" value={event.error} />
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function ToolDetail({ label, value }) {
+  const text = typeof value === 'string' ? value : stringify(value);
+  return (
+    <div className="tool-detail">
+      <div className="tool-detail-label">{label}</div>
+      <pre className="item-code dim">
+        <CopyButton getText={() => text} />
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+function toolMeta(event) {
+  const parts = [];
+  if (event.status) parts.push(event.status);
+  if (Number.isFinite(event.durationMs)) parts.push(`${event.durationMs}ms`);
+  if (event.error) parts.push('error');
+  return parts.join(' · ');
+}
+
+function stringify(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function countLines(s) {

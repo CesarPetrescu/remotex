@@ -1,5 +1,6 @@
 import { TelemetrySidebar } from './TelemetrySidebar';
 import { PlanTree } from './PlanTree';
+import { PendingPromptsPanel } from './PendingPromptsPanel';
 
 const TAB_LABELS = {
   plan: 'Plan',
@@ -18,8 +19,14 @@ export function RightSidebar({
   selectedHost,
   orchestrator,
   hasOrchestrator,
+  pendingApproval,
+  pendingUserInput,
+  onResolveApproval,
+  onResolveUserInput,
+  onCancelUserInput,
 }) {
   if (view === 'off') return null;
+  const pendingPromptCount = (pendingApproval ? 1 : 0) + (pendingUserInput ? 1 : 0);
   return (
     <aside className="right-sidebar" aria-label="Right sidebar">
       <div className="right-sidebar-tabs">
@@ -27,7 +34,7 @@ export function RightSidebar({
           id="plan"
           active={view === 'plan'}
           onClick={() => onView('plan')}
-          badge={hasOrchestrator ? '●' : null}
+          badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasOrchestrator ? '●' : null}
         />
         <RightTab
           id="telemetry"
@@ -44,19 +51,28 @@ export function RightSidebar({
       </div>
       <div className="right-sidebar-body">
         {view === 'plan' ? (
-          hasOrchestrator ? (
-            <PlanTree orchestrator={orchestrator} />
-          ) : (
-            <div className="right-sidebar-empty">
-              No orchestrator session active.
-              <br /><br />
-              Open the launcher from the dashboard's
-              <span className="hl"> Quick Actions → Orchestrate</span>
-              {' '}tile, or tap the <span className="hl">kind</span>
-              {' '}chip in the composer of any session and pick
-              <span className="hl"> orchestrator</span>.
-            </div>
-          )
+          <div className="plan-sidebar-stack">
+            <PendingPromptsPanel
+              approval={pendingApproval}
+              userInput={pendingUserInput}
+              onApprovalDecision={onResolveApproval}
+              onUserInputSubmit={onResolveUserInput}
+              onUserInputCancel={onCancelUserInput}
+            />
+            {hasOrchestrator ? (
+              <PlanTree orchestrator={orchestrator} />
+            ) : !pendingPromptCount ? (
+              <div className="right-sidebar-empty">
+                No orchestrator session active.
+                <br /><br />
+                Open the launcher from the dashboard's
+                <span className="hl"> Quick Actions → Orchestrate</span>
+                {' '}tile, or tap the <span className="hl">kind</span>
+                {' '}chip in the composer of any session and pick
+                <span className="hl"> orchestrator</span>.
+              </div>
+            ) : null}
+          </div>
         ) : (
           <TelemetrySidebar telemetry={telemetry} selectedHost={selectedHost} />
         )}

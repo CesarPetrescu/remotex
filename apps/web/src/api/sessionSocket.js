@@ -41,7 +41,7 @@ function storeLastSeq(sessionId, seq) {
 }
 
 export class SessionSocket {
-  constructor({ userToken, sessionId, onFrame, onStatus }) {
+  constructor({ userToken, sessionId, onFrame, onStatus, lastSeq = null }) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}/ws/client`;
     this.ws = new WebSocket(url);
@@ -61,7 +61,7 @@ export class SessionSocket {
         session_id: sessionId,
         client_id: this.clientId,
         client_name: 'web',
-        last_seq: loadLastSeq(sessionId),
+        last_seq: Number.isFinite(lastSeq) ? lastSeq : loadLastSeq(sessionId),
       });
       this.startHeartbeat();
     });

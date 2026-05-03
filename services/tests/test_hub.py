@@ -146,3 +146,69 @@ async def test_approval_resolution_is_first_writer_wins():
     await hub.note_approval_request("sess_1", "appr_1")
     assert await hub.resolve_approval("sess_1", "appr_1") is True
     assert await hub.resolve_approval("sess_1", "appr_1") is False
+
+
+@pytest.mark.asyncio
+async def test_user_input_resolution_is_first_writer_wins():
+    hub = Hub()
+
+    await hub.note_user_input_request("sess_1", "call_1")
+    assert await hub.resolve_user_input("other_sess", "call_1") is False
+    assert await hub.resolve_user_input("sess_1", "call_1") is True
+    assert await hub.resolve_user_input("sess_1", "call_1") is False
+
+
+@pytest.mark.asyncio
+async def test_forget_session_clears_pending_prompt_claims():
+    hub = Hub()
+
+    await hub.note_approval_request("sess_1", "appr_1", {"reason": "approve"})
+    await hub.note_user_input_request("sess_1", "call_1", {"questions": []})
+
+    await hub.forget_session("sess_1")
+
+    assert await hub.resolve_approval("sess_1", "appr_1") is False
+    assert await hub.resolve_user_input("sess_1", "call_1") is False
+
+
+@pytest.mark.asyncio
+async def test_pending_prompt_snapshot_is_independent_of_seq():
+    hub = Hub()
+
+    await hub.note_approval_request("sess_1", "appr_1", {
+        "approval_id": "appr_1",
+        "kind": "command",
+        "reason": "run command",
+    })
+    await hub.note_user_input_request("sess_1", "call_1", {
+        "call_id": "call_1",
+        "turn_id": "turn_1",
+        "questions": [{"id": "q1", "question": "Pick one"}],
+    })
+
+    snapshot = await hub.pending_prompt_snapshot("sess_1")
+
+    assert snapshot["type"] == "pending-prompts"
+    assert snapshot["session_id"] == "sess_1"
+    assert snapshot["approvals"][0]["replayed"] is True
+    assert snapshot["approvals"][0]["approval_id"] == "appr_1"
+    assert snapshot["user_inputs"][0]["questions"][0]["id"] == "q1"
+
+    assert await hub.resolve_user_input("sess_1", "call_1") is True
+    snapshot = await hub.pending_prompt_snapshot("sess_1")
+    assert len(snapshot["approvals"]) == 1
+    assert snapshot["user_inputs"] == []
+
+
+@pytest.mark.asyncio
+async def test_clear_session_prompts_clears_pending_prompt_snapshot():
+    hub = Hub()
+
+    await hub.note_approval_request("sess_1", "appr_1", {"approval_id": "appr_1"})
+    await hub.note_user_input_request("sess_1", "call_1", {"call_id": "call_1"})
+
+    await hub.clear_session_prompts("sess_1")
+    snapshot = await hub.pending_prompt_snapshot("sess_1")
+
+    assert snapshot["approvals"] == []
+    assert snapshot["user_inputs"] == []

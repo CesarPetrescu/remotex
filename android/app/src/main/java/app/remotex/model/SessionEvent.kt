@@ -33,6 +33,12 @@ sealed class UiEvent {
         val command: String,
         val output: String,
         val completed: Boolean,
+        val toolKind: String = "",
+        val status: String = "",
+        val durationMs: Long? = null,
+        val error: String = "",
+        val rawArguments: String = "",
+        val rawResult: String = "",
     ) : UiEvent()
 
     data class Agent(

@@ -18,6 +18,7 @@ export function DashboardHeader({
   leftCollapsed = false,
   onToggleLeftCollapsed,
   hasOrchestrator = false,
+  pendingPromptCount = 0,
   onDashboard,
 }) {
   const label = STATUS_LABELS[state.status] || 'idle';
@@ -75,7 +76,7 @@ export function DashboardHeader({
               label="Plan"
               active={rightView === 'plan'}
               onClick={() => onRightView('plan')}
-              badge={hasOrchestrator}
+              badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasOrchestrator}
             />
             <RightHeaderTab
               id="telemetry"
@@ -117,7 +118,11 @@ function RightHeaderTab({ id, label, active, onClick, badge }) {
       role="tab"
     >
       {label}
-      {badge && <span className="right-view-tab-badge" aria-label="active" />}
+      {badge && (
+        <span className="right-view-tab-badge" aria-label="active">
+          {typeof badge === 'string' ? badge : ''}
+        </span>
+      )}
     </button>
   );
 }

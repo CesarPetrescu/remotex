@@ -21,6 +21,10 @@ function shortenCwdLeft(cwd, max = 36) {
   return '…' + (slash > 0 ? tail.slice(slash) : tail);
 }
 
+function sessionKindLabel(kind) {
+  return kind === 'orchestrator' ? 'orchestrator' : 'coder';
+}
+
 export function SessionScreen({
   state,
   onSend,
@@ -33,6 +37,7 @@ export function SessionScreen({
   workspaceApi,
 }) {
   const info = state.session;
+  const sessionKind = sessionKindLabel(info?.kind);
   const hostId = info?.hostId;
   const cwd = info?.cwd || '/';
   const totalIn = state.tokensInput + state.tokensCached;
@@ -75,6 +80,16 @@ export function SessionScreen({
       <div className="session-meta">
         <div className="session-meta-row1">
           <span className="session-meta-title" title={chatTitle}>{chatTitle}</span>
+          <span
+            className={`session-kind-badge ${sessionKind}`}
+            title={
+              sessionKind === 'orchestrator'
+                ? 'Orchestrator brain: plans and delegates through orchestrator MCP tools'
+                : 'Coder session: one Codex agent works directly in this thread'
+            }
+          >
+            {sessionKind === 'orchestrator' ? 'orchestrator brain' : 'coder'}
+          </span>
           {haveTokens && (
             <span
               className="token-chip"
@@ -140,7 +155,7 @@ export function SessionScreen({
         onAttachImage={onAttachImage}
         onRemoveImage={onRemoveImage}
         preferredKind={state.preferredKind}
-        sessionKind={info?.kind || null}
+        sessionKind={sessionKind}
         onPreferredKindChange={workspaceApi?.setPreferredKind}
         onOpenOrchestrator={workspaceApi?.openOrchestrator}
         onOpenCoder={workspaceApi?.openCoder}

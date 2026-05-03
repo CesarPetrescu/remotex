@@ -180,15 +180,19 @@ internal fun ComposerBar(
                     )
                 }
             }
-            // Plan-mode toggle chip (Phase C). One tap flips it on/off
-            // without typing /plan. Sends the same slash so daemon state
-            // stays the source of truth.
-            PlanChip(
-                planMode = planMode,
-                onClick = {
-                    onSlashCommand(if (planMode) "default" else "plan", "")
-                },
-            )
+            if (sessionKind == SessionKind.Orchestrator) {
+                OrchestratorRoleChip()
+            } else {
+                // Plan-mode toggle chip (Phase C). One tap flips it on/off
+                // without typing /plan. Sends the same slash so daemon state
+                // stays the source of truth.
+                PlanChip(
+                    planMode = planMode,
+                    onClick = {
+                        onSlashCommand(if (planMode) "default" else "plan", "")
+                    },
+                )
+            }
             if (text.startsWith("/") && !text.contains(' ')) {
                 SlashAutocomplete(
                     query = text,
@@ -329,6 +333,33 @@ private fun PlanChip(planMode: Boolean, onClick: () -> Unit) {
                 else
                     "plan mode (tap to enable for next turn)",
                 color = accent,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OrchestratorRoleChip() {
+    Surface(
+        color = Amber.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, Amber.copy(alpha = 0.65f)),
+        shape = RectangleShape,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .background(Amber)
+            )
+            Text(
+                "orchestrator role: plan · delegate · await · finish",
+                color = Amber,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
             )

@@ -11,14 +11,20 @@ import { createPortal } from 'react-dom';
 // stray grid cell at the bottom-left of the screen.
 export function ApprovalDialog({ prompt, onDecision }) {
   if (!prompt) return null;
-  const title =
-    prompt.kind === 'command' ? 'COMMAND APPROVAL' : 'FILE CHANGE APPROVAL';
+  const title = prompt.kind === 'command'
+    ? 'COMMAND APPROVAL'
+    : prompt.kind === 'permissions'
+      ? 'PERMISSION APPROVAL'
+      : 'FILE CHANGE APPROVAL';
   const node = (
     <div className="modal-scrim" onClick={() => onDecision('cancel')}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">{title}</div>
         {prompt.reason && <div className="modal-reason">{prompt.reason}</div>}
         {prompt.command && <pre className="item-code">{prompt.command}</pre>}
+        {prompt.permissions && (
+          <pre className="item-code">{JSON.stringify(prompt.permissions, null, 2)}</pre>
+        )}
         {prompt.cwd && <div className="modal-cwd">cwd: {prompt.cwd}</div>}
         <div className="modal-actions">
           <button type="button" className="btn-decline" onClick={() => onDecision('decline')}>

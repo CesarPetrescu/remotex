@@ -1,10 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRemotex } from './hooks/useRemotex';
 import { useBackgroundCompletionAlert } from './hooks/useBackgroundCompletionAlert';
 import { SCREENS, STATUS } from './config';
 import { Toast } from './components/Toast';
-import { ApprovalDialog } from './components/ApprovalDialog';
-import { UserInputDialog } from './components/UserInputDialog';
 import { SessionScreen } from './screens/SessionScreen';
 import { SearchScreen } from './screens/SearchScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
@@ -36,6 +34,13 @@ function writePersisted(key, value) {
   }
 }
 
+function isCompactLayout() {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-width: 1000px)').matches
+  );
+}
+
 export default function App() {
   const r = useRemotex();
   const { state } = r;
@@ -51,7 +56,50 @@ export default function App() {
   const [rightView, setRightViewState] = useState(() =>
     readPersisted(RIGHT_VIEW_KEY, RIGHT_VIEWS, 'telemetry'),
   );
-  const setRightView = (v) => { writePersisted(RIGHT_VIEW_KEY, v); setRightViewState(v); };
+  const setRightView = useCallback((v) => {
+    writePersisted(RIGHT_VIEW_KEY, v);
+    setRightViewState(v);
+  }, []);
+  const pendingPromptKey =
+    state.pendingUserInput?.callId || state.pendingApproval?.approvalId || null;
+  const pendingPromptCount = (state.pendingUserInput ? 1 : 0) + (state.pendingApproval ? 1 : 0);
+  const hasPendingPrompt = pendingPromptCount > 0;
+
+  const openRightView = useCallback((v) => {
+    setRightView(v);
+    if (v === 'off') {
+      setRightOpen(false);
+      return;
+    }
+    if (isCompactLayout()) {
+      setRightOpen(true);
+    }
+  }, [setRightView]);
+
+  const closeRightView = useCallback(() => {
+    setRightView('off');
+    setRightOpen(false);
+  }, [setRightView]);
+
+  const toggleRightDrawer = useCallback(() => {
+    if (rightOpen) {
+      setRightOpen(false);
+      return;
+    }
+    if (rightView === 'off') {
+      setRightView(hasPendingPrompt ? 'plan' : 'telemetry');
+    }
+    setRightOpen(true);
+  }, [hasPendingPrompt, rightOpen, rightView, setRightView]);
+
+  useEffect(() => {
+    if (!pendingPromptKey) return;
+    setRightView('plan');
+    if (!isCompactLayout()) {
+      setRightOpen(true);
+    }
+  }, [pendingPromptKey, setRightView]);
+
   // Left hosts sidebar: collapsed mode (desktop). The mobile drawer
   // is controlled by leftOpen above; this is the desktop on/off.
   const [leftCollapsed, setLeftCollapsedState] = useState(() =>
@@ -104,12 +152,13 @@ export default function App() {
       <DashboardHeader
         state={state}
         onMenuClick={() => setLeftOpen((v) => !v)}
-        onToggleTelemetry={() => setRightOpen((v) => !v)}
+        onToggleTelemetry={toggleRightDrawer}
         rightView={rightView}
-        onRightView={setRightView}
+        onRightView={openRightView}
         leftCollapsed={leftCollapsed}
         onToggleLeftCollapsed={() => setLeftCollapsed(!leftCollapsed)}
-        hasOrchestrator={!!state.orchestrator?.active}
+        hasOrchestrator={!!state.orchestrator?.active || hasPendingPrompt}
+        pendingPromptCount={pendingPromptCount}
         onDashboard={() => {
           r.goToDashboard();
           closeDrawers();
@@ -208,12 +257,17 @@ export default function App() {
 
       <RightSidebar
         view={rightView}
-        onView={setRightView}
-        onClose={() => setRightView('off')}
+        onView={openRightView}
+        onClose={closeRightView}
         telemetry={telemetry}
         selectedHost={selectedHost}
         orchestrator={state.orchestrator}
         hasOrchestrator={!!state.orchestrator?.active}
+        pendingApproval={state.pendingApproval}
+        pendingUserInput={state.pendingUserInput}
+        onResolveApproval={r.resolveApproval}
+        onResolveUserInput={r.resolveUserInput}
+        onCancelUserInput={r.cancelUserInput}
       />
 
       <footer className="dashboard-footer">
@@ -245,12 +299,6 @@ export default function App() {
         }}
       />
 
-      <ApprovalDialog prompt={state.pendingApproval} onDecision={r.resolveApproval} />
-      <UserInputDialog
-        prompt={state.pendingUserInput}
-        onSubmit={r.resolveUserInput}
-        onCancel={r.cancelUserInput}
-      />
       <Toast message={state.error} tone="error" onDismiss={r.clearError} />
       <Toast message={state.slashFeedback} tone="info" onDismiss={r.clearFeedback} />
 

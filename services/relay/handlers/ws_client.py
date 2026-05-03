@@ -191,6 +191,7 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             "client_id": client_id,
             "peer_count": peer_count,
         })
+        await ws.send_json(await hub.pending_prompt_snapshot(session_id))
         for frame in await hub.replay_since(session_id, last_seq):
             await ws.send_json(frame)
         audit(
@@ -284,6 +285,15 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                     })
                     continue
                 frame["client_id"] = client_id
+            if frame.get("type") == "user-input-response":
+                call_id = frame.get("call_id")
+                if not call_id or not await hub.resolve_user_input(session_id, call_id):
+                    await ws.send_json({
+                        "type": "error",
+                        "error": "user input already resolved",
+                    })
+                    continue
+                frame["client_id"] = client_id
             daemon_ws = hub.daemon_for(host_id)
             if daemon_ws is None or daemon_ws.closed:
                 if frame.get("type") == "turn-start":
@@ -320,6 +330,13 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                     "session_id": session_id,
                     "approval_id": frame.get("approval_id"),
                     "decision": frame.get("decision"),
+                    "client_id": client_id,
+                })
+            if frame.get("type") == "user-input-response":
+                await hub.broadcast_to_session(session_id, {
+                    "type": "user-input-resolved",
+                    "session_id": session_id,
+                    "call_id": frame.get("call_id"),
                     "client_id": client_id,
                 })
     except asyncio.TimeoutError:

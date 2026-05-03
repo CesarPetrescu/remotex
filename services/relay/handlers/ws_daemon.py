@@ -148,13 +148,20 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                         hub.mark_turn_started(sid)
                     elif kind == "turn-completed":
                         hub.mark_turn_completed(sid)
+                        await hub.clear_session_prompts(sid)
                     elif kind == "approval-request":
                         data = event.get("data") or {}
                         approval_id = data.get("approval_id")
                         if approval_id:
-                            await hub.note_approval_request(sid, approval_id)
+                            await hub.note_approval_request(sid, approval_id, data)
+                    elif kind == "user-input-request":
+                        data = event.get("data") or {}
+                        call_id = data.get("call_id")
+                        if call_id:
+                            await hub.note_user_input_request(sid, call_id, data)
                 elif ftype == "session-closed":
                     hub.mark_turn_completed(sid)
+                    await hub.clear_session_prompts(sid)
                 # Bounded fanout: close slow clients rather than letting
                 # the daemon's event loop stall behind one consumer.
                 await hub.broadcast_to_session(sid, frame)

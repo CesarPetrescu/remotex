@@ -29,13 +29,22 @@ fun ApprovalDialog(
     prompt: ApprovalPrompt,
     onDecision: (String) -> Unit,
 ) {
+    val title = when (prompt.kind) {
+        "command" -> "COMMAND APPROVAL"
+        "permissions" -> "PERMISSION APPROVAL"
+        else -> "FILE CHANGE APPROVAL"
+    }
+    val permissionsText = prompt.permissions
+        ?.toString()
+        ?.takeIf { it.isNotBlank() && it != "{}" && it != "null" }
+
     AlertDialog(
         onDismissRequest = { onDecision("cancel") },
         containerColor = MaterialTheme.colorScheme.surface,
         shape = RectangleShape,
         title = {
             Text(
-                if (prompt.kind == "command") "COMMAND APPROVAL" else "FILE CHANGE APPROVAL",
+                title,
                 color = Amber,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
@@ -52,6 +61,21 @@ fun ApprovalDialog(
                     )
                 }
                 prompt.command?.let {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RectangleShape,
+                        border = BorderStroke(1.dp, Line),
+                    ) {
+                        Text(
+                            it,
+                            color = Ink,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(8.dp),
+                        )
+                    }
+                }
+                permissionsText?.let {
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         shape = RectangleShape,

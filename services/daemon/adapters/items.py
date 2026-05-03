@@ -10,6 +10,9 @@ _ITEM_TYPE_MAP = {
     "reasoning": "agent_reasoning",         # codex emits `type: "reasoning"`
     "agentReasoning": "agent_reasoning",    # older name, keep for compat
     "commandExecution": "tool_call",
+    "mcpToolCall": "mcp_tool_call",
+    "dynamicToolCall": "dynamic_tool_call",
+    "collabAgentToolCall": "collab_agent_tool_call",
     "fileChange": "file_change",
     "userMessage": "user_message",  # echoed; we drop these client-side
 }
@@ -62,4 +65,46 @@ def _item_extras(item: dict) -> dict:
     elif t == "fileChange":
         if "changes" in item:
             extras["changes"] = item["changes"]
+    elif t == "mcpToolCall":
+        for src, dst in (
+            ("server", "server"),
+            ("tool", "tool"),
+            ("arguments", "arguments"),
+            ("status", "status"),
+            ("result", "result"),
+            ("durationMs", "duration_ms"),
+            ("mcpAppResourceUri", "mcp_app_resource_uri"),
+        ):
+            if src in item:
+                extras[dst] = item[src]
+        error = item.get("error")
+        if isinstance(error, dict):
+            extras["error"] = error.get("message") or str(error)
+        elif error:
+            extras["error"] = str(error)
+    elif t == "dynamicToolCall":
+        for src, dst in (
+            ("namespace", "namespace"),
+            ("tool", "tool"),
+            ("arguments", "arguments"),
+            ("status", "status"),
+            ("success", "success"),
+            ("contentItems", "content_items"),
+            ("durationMs", "duration_ms"),
+        ):
+            if src in item:
+                extras[dst] = item[src]
+    elif t == "collabAgentToolCall":
+        for src, dst in (
+            ("tool", "tool"),
+            ("status", "status"),
+            ("senderThreadId", "sender_thread_id"),
+            ("receiverThreadIds", "receiver_thread_ids"),
+            ("prompt", "prompt"),
+            ("model", "model"),
+            ("reasoningEffort", "reasoning_effort"),
+            ("agentsStates", "agents_states"),
+        ):
+            if src in item:
+                extras[dst] = item[src]
     return extras

@@ -11,8 +11,11 @@ import app.remotex.model.Host
 import app.remotex.model.HostTelemetryData
 import app.remotex.model.HostTelemetrySnapshot
 import app.remotex.model.OrchFinished
+import app.remotex.model.OrchAgentTranscript
 import app.remotex.model.OrchStep
 import app.remotex.model.OrchStepLive
+import app.remotex.model.OrchSubagentEvent
+import app.remotex.model.OrchSubagentState
 import app.remotex.model.OrchestratorState
 import app.remotex.model.SearchResult
 import app.remotex.model.SearchStage
@@ -81,6 +84,7 @@ data class ApprovalPrompt(
     val reason: String?,
     val command: String?,
     val cwd: String?,
+    val permissions: JsonElement? = null,
     val decisions: List<String>,
 )
 
@@ -894,7 +898,7 @@ class RemotexViewModel(
         approvalPolicy: String? = null,
     ) {
         val target = hostId ?: _state.value.selectedHostId ?: return
-        closeSession()
+        detachSession()
         userClosed = false
         // Track for the foreground service / done notification — they
         // need the thread id to look up the title and deep-link back.
@@ -1167,6 +1171,17 @@ class RemotexViewModel(
         }
     }
 
+    private fun detachSession() {
+        userClosed = true
+        reconnectJob?.cancel()
+        reconnectJob = null
+        reconnectAttempt = 0
+        socket?.close(endSession = false)
+        socket = null
+        socketJob?.cancel()
+        socketJob = null
+    }
+
     // --- frame parsing ------------------------------------------------------
 
     private fun handleFrame(raw: String) {
@@ -1195,6 +1210,17 @@ class RemotexViewModel(
                     }
                 }
             }
+            "user-input-resolved" -> {
+                val callId = msg.string("call_id")
+                _state.update {
+                    if (callId == null || it.pendingUserInput?.callId == callId) {
+                        it.copy(pendingUserInput = null)
+                    } else {
+                        it
+                    }
+                }
+            }
+            "pending-prompts" -> applyPendingPrompts(msg)
             "pong" -> Unit
             "session-closed" -> _state.update {
                 it.copy(status = Status.Disconnected, pending = false)
@@ -1225,6 +1251,68 @@ class RemotexViewModel(
         _state.update { s ->
             if (s.events.any { it.id == event.id }) s else s.copy(events = s.events + event)
         }
+    }
+
+    private fun applyPendingPrompts(msg: JsonObject) {
+        val approval = (msg["approvals"] as? JsonArray)
+            .orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .mapNotNull { parseApprovalPrompt(it) }
+            .firstOrNull()
+        val userInput = (msg["user_inputs"] as? JsonArray)
+            .orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .mapNotNull { parseUserInputPrompt(it) }
+            .firstOrNull()
+        _state.update {
+            it.copy(
+                pendingApproval = approval,
+                pendingUserInput = userInput,
+            )
+        }
+    }
+
+    private fun parseApprovalPrompt(data: JsonObject): ApprovalPrompt? {
+        val approvalId = data.string("approval_id") ?: return null
+        val decisions = (data["decisions"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            ?: listOf("accept", "acceptForSession", "decline", "cancel")
+        return ApprovalPrompt(
+            approvalId = approvalId,
+            kind = data.string("kind") ?: "command",
+            reason = data.string("reason"),
+            command = data.string("command"),
+            cwd = data.string("cwd"),
+            permissions = data["permissions"],
+            decisions = decisions,
+        )
+    }
+
+    private fun parseUserInputPrompt(data: JsonObject): UserInputPrompt? {
+        val callId = data.string("call_id") ?: return null
+        val questionsArr = data["questions"] as? JsonArray ?: return null
+        val questions = questionsArr.mapNotNull { qe ->
+            val qo = qe as? JsonObject ?: return@mapNotNull null
+            val qid = qo.string("id") ?: return@mapNotNull null
+            val opts = (qo["options"] as? JsonArray).orEmpty().mapNotNull { oe ->
+                val oo = oe as? JsonObject ?: return@mapNotNull null
+                val label = oo.string("label") ?: return@mapNotNull null
+                UserInputQuestionOption(label, oo.string("description").orEmpty())
+            }
+            UserInputQuestion(
+                id = qid,
+                header = qo.string("header").orEmpty(),
+                question = qo.string("question").orEmpty(),
+                isOther = qo["isOther"]?.jsonPrimitive?.contentOrNull == "true",
+                isSecret = qo["isSecret"]?.jsonPrimitive?.contentOrNull == "true",
+                options = opts,
+            )
+        }
+        return UserInputPrompt(
+            callId = callId,
+            turnId = data.string("turn_id"),
+            questions = questions,
+        )
     }
 
     private fun applyEvent(kind: String, data: JsonObject) {
@@ -1269,34 +1357,25 @@ class RemotexViewModel(
                 val replayed = data["replayed"]?.let {
                     (it as? JsonPrimitive)?.contentOrNull == "true" || it.toString() == "true"
                 } ?: false
-                val next: UiEvent = when (itemType) {
-                    "agent_reasoning" -> UiEvent.Reasoning(
-                        id = itemId,
-                        text = data.string("text") ?: "",
-                        completed = replayed,
-                        replayed = replayed,
-                    )
-                    "agent_message" -> UiEvent.Agent(
-                        id = itemId,
-                        text = data.string("text") ?: "",
-                        completed = replayed,
-                    )
-                    "tool_call" -> UiEvent.Tool(
-                        id = itemId,
-                        tool = data.string("tool") ?: "tool",
-                        command = data.obj("args")?.string("command") ?: "",
-                        output = data.string("output") ?: "",
-                        completed = replayed,
-                    )
-                    "user_message" -> UiEvent.User(
-                        id = itemId,
-                        text = data.string("text") ?: "",
-                        imageCount = data["image_count"]?.jsonPrimitive?.contentOrNull
-                            ?.toIntOrNull() ?: 0,
-                    )
-                    else -> UiEvent.System(id = itemId, label = itemType, detail = "")
-                }
+                val next = buildUiEvent(data, itemId, itemType, replayed)
                 appendEventOnce(next)
+                if (
+                    itemType == "collab_agent_tool_call" &&
+                    data.string("_orchestrator_role") == "brain"
+                ) {
+                    val event = normalizeSubagentEvent(data, "item-started")
+                    _state.update { s ->
+                        s.copy(
+                            orchestrator = s.orchestrator.copy(
+                                active = true,
+                                brainSubagents = upsertSubagentEvent(
+                                    s.orchestrator.brainSubagents,
+                                    event,
+                                ),
+                            ),
+                        )
+                    }
+                }
                 if (itemType == "user_message" && !replayed) {
                     _state.update { it.copy(pending = true) }
                 }
@@ -1332,12 +1411,33 @@ class RemotexViewModel(
                                 completed = true,
                             )
                             is UiEvent.Tool -> e.copy(
-                                output = data.string("output") ?: e.output,
+                                output = completedToolOutput(data, e.output),
+                                status = data.string("status") ?: e.status,
+                                durationMs = data.long("duration_ms") ?: e.durationMs,
+                                error = data.string("error") ?: e.error,
+                                rawResult = rawToolResult(data).ifBlank { e.rawResult },
                                 completed = true,
                             )
                             else -> e
                         }
                     })
+                }
+                if (
+                    data.string("item_type") == "collab_agent_tool_call" &&
+                    data.string("_orchestrator_role") == "brain"
+                ) {
+                    val event = normalizeSubagentEvent(data, "item-completed")
+                    _state.update { s ->
+                        s.copy(
+                            orchestrator = s.orchestrator.copy(
+                                active = true,
+                                brainSubagents = upsertSubagentEvent(
+                                    s.orchestrator.brainSubagents,
+                                    event,
+                                ),
+                            ),
+                        )
+                    }
                 }
             }
 
@@ -1414,6 +1514,17 @@ class RemotexViewModel(
                 }
             }
 
+            "orchestrator-agent-event" -> {
+                _state.update { s ->
+                    s.copy(
+                        orchestrator = s.orchestrator.copy(
+                            active = true,
+                            agents = upsertAgentTranscript(s.orchestrator.agents, data),
+                        ),
+                    )
+                }
+            }
+
             "orchestrator-step-event" -> {
                 val stepId = data.string("step_id") ?: return
                 val evKind = data.string("kind") ?: return
@@ -1430,6 +1541,7 @@ class RemotexViewModel(
                     var text = if (itemBoundary) "" else prevLive.text
                     var label = prevLive.label
                     var completed = prevLive.completed
+                    var subagents = prevLive.subagents
                     when (evKind) {
                         "item-delta" -> {
                             val delta = data.string("delta") ?: ""
@@ -1448,10 +1560,22 @@ class RemotexViewModel(
                                 "agent_message" -> "replying…"
                                 else -> itemType?.replace('_', ' ')
                             }
+                            if (itemType == "collab_agent_tool_call") {
+                                subagents = upsertSubagentEvent(
+                                    subagents,
+                                    normalizeSubagentEvent(data, evKind),
+                                )
+                            }
                         }
                         "item-completed" -> {
                             completed = true
                             if (labelExplicit != null) label = labelExplicit
+                            if (itemType == "collab_agent_tool_call") {
+                                subagents = upsertSubagentEvent(
+                                    subagents,
+                                    normalizeSubagentEvent(data, evKind),
+                                )
+                            }
                         }
                         "turn-started" -> {
                             text = ""
@@ -1466,6 +1590,7 @@ class RemotexViewModel(
                         itemId = itemId ?: prevLive.itemId,
                         itemType = itemType ?: prevLive.itemType,
                         completed = completed,
+                        subagents = subagents,
                     )
                     val nextSteps = existing.toMutableList().apply {
                         this[idx] = prev.copy(live = nextLive)
@@ -1506,52 +1631,13 @@ class RemotexViewModel(
             }
 
             "approval-request" -> {
-                val approvalId = data.string("approval_id") ?: return
-                val kind = data.string("kind") ?: "command"
-                val decisions = (data["decisions"] as? JsonArray)
-                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                    ?: listOf("accept", "acceptForSession", "decline", "cancel")
-                _state.update {
-                    it.copy(
-                        pendingApproval = ApprovalPrompt(
-                            approvalId = approvalId,
-                            kind = kind,
-                            reason = data.string("reason"),
-                            command = data.string("command"),
-                            cwd = data.string("cwd"),
-                            decisions = decisions,
-                        )
-                    )
-                }
+                val prompt = parseApprovalPrompt(data) ?: return
+                _state.update { it.copy(pendingApproval = prompt) }
             }
 
             "user-input-request" -> {
-                val callId = data.string("call_id") ?: return
-                val questionsArr = data["questions"] as? JsonArray ?: return
-                val questions = questionsArr.mapNotNull { qe ->
-                    val qo = qe as? JsonObject ?: return@mapNotNull null
-                    val qid = qo.string("id") ?: return@mapNotNull null
-                    val opts = (qo["options"] as? JsonArray).orEmpty().mapNotNull { oe ->
-                        val oo = oe as? JsonObject ?: return@mapNotNull null
-                        val label = oo.string("label") ?: return@mapNotNull null
-                        UserInputQuestionOption(label, oo.string("description").orEmpty())
-                    }
-                    UserInputQuestion(
-                        id = qid,
-                        header = qo.string("header").orEmpty(),
-                        question = qo.string("question").orEmpty(),
-                        isOther = qo["isOther"]?.jsonPrimitive?.contentOrNull == "true",
-                        isSecret = qo["isSecret"]?.jsonPrimitive?.contentOrNull == "true",
-                        options = opts,
-                    )
-                }
-                _state.update {
-                    it.copy(pendingUserInput = UserInputPrompt(
-                        callId = callId,
-                        turnId = data.string("turn_id"),
-                        questions = questions,
-                    ))
-                }
+                val prompt = parseUserInputPrompt(data) ?: return
+                _state.update { it.copy(pendingUserInput = prompt) }
             }
 
             "slash-ack" -> {
@@ -1605,8 +1691,408 @@ class RemotexViewModel(
 private fun JsonObject.string(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull
 
+private fun JsonObject.long(key: String): Long? =
+    (this[key] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+
 private fun JsonObject.obj(key: String): JsonObject? =
     (this[key] as? JsonElement) as? JsonObject
+
+private const val SUBAGENT_ACTIVITY_MAX = 24
+
+private fun buildUiEvent(
+    data: JsonObject,
+    itemId: String,
+    itemType: String,
+    replayed: Boolean,
+): UiEvent = when (itemType) {
+    "agent_reasoning" -> UiEvent.Reasoning(
+        id = itemId,
+        text = data.string("text") ?: "",
+        completed = replayed,
+        replayed = replayed,
+    )
+    "agent_message" -> UiEvent.Agent(
+        id = itemId,
+        text = data.string("text") ?: "",
+        completed = replayed,
+    )
+    "tool_call" -> UiEvent.Tool(
+        id = itemId,
+        tool = data.string("tool") ?: "tool",
+        command = data.obj("args")?.string("command") ?: "",
+        output = data.string("output") ?: "",
+        completed = replayed,
+    )
+    "mcp_tool_call" -> UiEvent.Tool(
+        id = itemId,
+        tool = formatMcpTool(data),
+        command = jsonText(data["arguments"]),
+        output = formatMcpOutput(data),
+        completed = replayed ||
+            data.string("status") == "completed" ||
+            data.string("status") == "failed",
+        toolKind = "mcp",
+        status = data.string("status") ?: "",
+        durationMs = data.long("duration_ms"),
+        error = data.string("error") ?: "",
+        rawArguments = jsonText(data["arguments"]),
+        rawResult = rawToolResult(data),
+    )
+    "dynamic_tool_call" -> UiEvent.Tool(
+        id = itemId,
+        tool = formatDynamicTool(data),
+        command = jsonText(data["arguments"]),
+        output = formatDynamicOutput(data),
+        completed = replayed ||
+            data.string("status") == "completed" ||
+            data.string("status") == "failed",
+        toolKind = "dynamic",
+        status = data.string("status") ?: "",
+        durationMs = data.long("duration_ms"),
+        error = data.string("error") ?: "",
+        rawArguments = jsonText(data["arguments"]),
+        rawResult = rawToolResult(data),
+    )
+    "collab_agent_tool_call" -> UiEvent.Tool(
+        id = itemId,
+        tool = formatCollabTool(data.string("tool")),
+        command = data.string("prompt") ?: "",
+        output = formatCollabStatus(data),
+        completed = replayed ||
+            data.string("status") == "completed" ||
+            data.string("status") == "failed",
+    )
+    "user_message" -> UiEvent.User(
+        id = itemId,
+        text = data.string("text") ?: "",
+        imageCount = data["image_count"]?.jsonPrimitive?.contentOrNull
+            ?.toIntOrNull() ?: 0,
+    )
+    else -> UiEvent.System(id = itemId, label = itemType, detail = "")
+}
+
+private fun formatCollabTool(tool: String?): String =
+    when (tool) {
+        "spawnAgent" -> "spawn agent"
+        "sendInput" -> "send input"
+        "resumeAgent" -> "resume agent"
+        "wait" -> "wait agents"
+        "closeAgent" -> "close agent"
+        else -> tool ?: "subagent"
+    }
+
+private fun formatCollabStatus(data: JsonObject): String {
+    val status = data.string("status") ?: "inProgress"
+    val receivers = (data["receiver_thread_ids"] as? JsonArray)?.size ?: 0
+    val model = data.string("model")?.let { " · $it" } ?: ""
+    val receiverText = if (receivers > 0) {
+        " · $receivers thread${if (receivers == 1) "" else "s"}"
+    } else {
+        ""
+    }
+    return status + model + receiverText
+}
+
+private fun formatMcpTool(data: JsonObject): String {
+    val server = data.string("server")
+    val tool = data.string("tool")
+    val name = listOfNotNull(server, tool).joinToString(".").ifBlank { "tool" }
+    return "MCP · $name"
+}
+
+private fun formatDynamicTool(data: JsonObject): String {
+    val namespace = data.string("namespace")
+    val tool = data.string("tool")
+    val name = listOfNotNull(namespace, tool).joinToString(".").ifBlank { tool ?: "dynamic" }
+    return "TOOL · $name"
+}
+
+private fun formatMcpOutput(data: JsonObject): String {
+    val parts = mutableListOf(data.string("status") ?: "inProgress")
+    data.long("duration_ms")?.let { parts += "${it}ms" }
+    data.string("error")?.let { parts += "error: $it" }
+    extractMcpResultText(data["result"]).takeIf { it.isNotBlank() }?.let { parts += it }
+    return parts.joinToString("\n")
+}
+
+private fun formatDynamicOutput(data: JsonObject): String {
+    val parts = mutableListOf(data.string("status") ?: "inProgress")
+    data.long("duration_ms")?.let { parts += "${it}ms" }
+    data["success"]?.jsonPrimitive?.contentOrNull?.let { parts += if (it == "true") "success" else "failed" }
+    jsonText(data["content_items"]).takeIf { it.isNotBlank() }?.let { parts += it }
+    return parts.joinToString("\n")
+}
+
+private fun completedToolOutput(data: JsonObject, fallback: String): String =
+    when (data.string("item_type")) {
+        "collab_agent_tool_call" -> formatCollabStatus(data)
+        "mcp_tool_call" -> formatMcpOutput(data)
+        "dynamic_tool_call" -> formatDynamicOutput(data)
+        else -> data.string("output") ?: fallback
+    }
+
+private fun rawToolResult(data: JsonObject): String =
+    when (data.string("item_type")) {
+        "mcp_tool_call" -> jsonText(data["result"])
+        "dynamic_tool_call" -> jsonText(data["content_items"])
+        else -> ""
+    }
+
+private fun extractMcpResultText(raw: JsonElement?): String {
+    val obj = raw as? JsonObject ?: return ""
+    val content = obj["content"] as? JsonArray
+    val texts = content
+        ?.mapNotNull { item ->
+            when (item) {
+                is JsonPrimitive -> item.contentOrNull
+                is JsonObject -> item.string("text")
+                else -> null
+            }
+        }
+        ?.filter { it.isNotBlank() }
+        ?: emptyList()
+    if (texts.isNotEmpty()) return texts.joinToString("\n")
+    return jsonText(obj["structuredContent"])
+}
+
+private fun jsonText(raw: JsonElement?): String {
+    if (raw == null) return ""
+    return (raw as? JsonPrimitive)?.contentOrNull ?: raw.toString()
+}
+
+private fun normalizeSubagentEvent(data: JsonObject, evKind: String): OrchSubagentEvent =
+    OrchSubagentEvent(
+        id = data.string("item_id") ?: "$evKind:${data.string("tool") ?: "subagent"}",
+        agentId = data.string("agent_id")
+            ?: (data["receiver_thread_ids"] as? JsonArray)
+                ?.firstOrNull()
+                ?.jsonPrimitive
+                ?.contentOrNull
+            ?: data.string("sender_thread_id")
+            ?: "",
+        kind = data.string("kind") ?: evKind,
+        tool = data.string("tool") ?: "",
+        label = data.string("label") ?: formatCollabTool(data.string("tool")),
+        status = subagentEventStatus(data, evKind),
+        prompt = data.string("prompt") ?: "",
+        model = data.string("model") ?: "",
+        reasoningEffort = data.string("reasoning_effort") ?: "",
+        senderThreadId = data.string("sender_thread_id") ?: "",
+        receiverThreadIds = (data["receiver_thread_ids"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            ?: emptyList(),
+        agentStates = normalizeAgentStates(data["agents_states"]),
+    )
+
+private fun subagentEventStatus(data: JsonObject, evKind: String): String =
+    data.string("status") ?: when (evKind) {
+        "item-completed" -> "completed"
+        else -> "inProgress"
+    }
+
+private fun normalizeAgentStates(raw: JsonElement?): List<OrchSubagentState> {
+    if (raw == null) return emptyList()
+    return when (raw) {
+        is JsonObject -> raw.mapNotNull { (threadId, value) ->
+            val obj = value as? JsonObject ?: return@mapNotNull null
+            OrchSubagentState(
+                threadId = threadId,
+                status = obj.string("status") ?: obj.string("state") ?: "running",
+                message = obj.string("message")
+                    ?: obj.string("summary")
+                    ?: obj.string("error")
+                    ?: "",
+            )
+        }
+        is JsonArray -> raw.mapIndexedNotNull { idx, value ->
+            val obj = value as? JsonObject ?: return@mapIndexedNotNull null
+            val threadId = obj.string("thread_id")
+                ?: obj.string("threadId")
+                ?: obj.string("id")
+                ?: idx.toString()
+            OrchSubagentState(
+                threadId = threadId,
+                status = obj.string("status") ?: obj.string("state") ?: "running",
+                message = obj.string("message")
+                    ?: obj.string("summary")
+                    ?: obj.string("error")
+                    ?: "",
+            )
+        }
+        else -> emptyList()
+    }
+}
+
+private fun upsertSubagentEvent(
+    existing: List<OrchSubagentEvent>,
+    incoming: OrchSubagentEvent,
+): List<OrchSubagentEvent> {
+    val idx = existing.indexOfFirst { it.id == incoming.id }
+    val next = if (idx >= 0) {
+        existing.toMutableList().apply {
+            this[idx] = mergeSubagentEvent(this[idx], incoming)
+        }
+    } else {
+        existing + incoming
+    }
+    return assignSubagentDepths(next.takeLast(SUBAGENT_ACTIVITY_MAX))
+}
+
+private fun mergeSubagentEvent(
+    prev: OrchSubagentEvent,
+    incoming: OrchSubagentEvent,
+): OrchSubagentEvent =
+    prev.copy(
+        kind = incoming.kind.ifBlank { prev.kind },
+        tool = incoming.tool.ifBlank { prev.tool },
+        label = incoming.label.ifBlank { prev.label },
+        status = incoming.status.ifBlank { prev.status },
+        prompt = incoming.prompt.ifBlank { prev.prompt },
+        model = incoming.model.ifBlank { prev.model },
+        reasoningEffort = incoming.reasoningEffort.ifBlank { prev.reasoningEffort },
+        senderThreadId = incoming.senderThreadId.ifBlank { prev.senderThreadId },
+        receiverThreadIds = if (incoming.receiverThreadIds.isNotEmpty()) {
+            incoming.receiverThreadIds
+        } else {
+            prev.receiverThreadIds
+        },
+        agentStates = if (incoming.agentStates.isNotEmpty()) {
+            incoming.agentStates
+        } else {
+            prev.agentStates
+        },
+    )
+
+private fun assignSubagentDepths(events: List<OrchSubagentEvent>): List<OrchSubagentEvent> {
+    val receiverDepth = mutableMapOf<String, Int>()
+    return events.map { event ->
+        val depth = receiverDepth[event.senderThreadId]?.plus(1) ?: 1
+        val boundedDepth = depth.coerceIn(1, 4)
+        event.receiverThreadIds.forEach { receiverId ->
+            receiverDepth[receiverId] = boundedDepth
+        }
+        val states = event.agentStates.map { state ->
+            state.copy(depth = (receiverDepth[state.threadId] ?: boundedDepth).coerceIn(1, 4))
+        }
+        event.copy(depth = boundedDepth, agentStates = states)
+    }
+}
+
+private fun upsertAgentTranscript(
+    agents: Map<String, OrchAgentTranscript>,
+    data: JsonObject,
+): Map<String, OrchAgentTranscript> {
+    val agentId = data.string("agent_id") ?: return agents
+    val prev = agents[agentId] ?: OrchAgentTranscript(
+        id = agentId,
+        label = data.string("label") ?: agentId,
+        parentAgentId = data.string("parent_agent_id"),
+        stepId = data.string("step_id"),
+        threadId = data.string("thread_id"),
+        depth = data.long("depth")?.toInt() ?: 0,
+    )
+    val next = prev.copy(
+        label = data.string("label") ?: prev.label,
+        parentAgentId = data.string("parent_agent_id") ?: prev.parentAgentId,
+        stepId = data.string("step_id") ?: prev.stepId,
+        threadId = data.string("thread_id") ?: prev.threadId,
+        depth = data.long("depth")?.toInt() ?: prev.depth,
+        status = agentStatusFromPayload(data, prev.status),
+        events = applyTranscriptEvent(prev.events, data),
+    )
+    return agents + (agentId to next)
+}
+
+private fun agentStatusFromPayload(data: JsonObject, previous: String): String =
+    when (data.string("kind")) {
+        "turn-completed" -> if (data.string("error") != null) "failed" else "completed"
+        "turn-started", "item-started", "item-delta" -> "running"
+        else -> previous
+    }
+
+private fun applyTranscriptEvent(events: List<UiEvent>, data: JsonObject): List<UiEvent> =
+    when (data.string("kind")) {
+        "item-started" -> {
+            val id = data.string("item_id") ?: return events
+            upsertTranscriptItem(
+                events,
+                buildUiEvent(data, id, data.string("item_type") ?: "item", replayed = false),
+            )
+        }
+        "item-delta" -> appendTranscriptDelta(events, data)
+        "item-completed" -> {
+            val id = data.string("item_id") ?: return events
+            val item = buildUiEvent(data, id, data.string("item_type") ?: "item", replayed = false)
+            val completed = when (item) {
+                is UiEvent.Agent -> item.copy(text = data.string("text") ?: item.text, completed = true)
+                is UiEvent.Reasoning -> item.copy(text = data.string("text") ?: item.text, completed = true)
+                is UiEvent.Tool -> item.copy(
+                    output = completedToolOutput(data, item.output),
+                    status = data.string("status") ?: item.status,
+                    durationMs = data.long("duration_ms") ?: item.durationMs,
+                    error = data.string("error") ?: item.error,
+                    rawResult = rawToolResult(data).ifBlank { item.rawResult },
+                    completed = true,
+                )
+                else -> item
+            }
+            upsertTranscriptItem(events, completed)
+        }
+        "approval-request" -> upsertTranscriptItem(
+            events,
+            UiEvent.System(
+                id = data.string("approval_id") ?: "approval-${events.size}",
+                label = "approval",
+                detail = data.string("reason") ?: data.string("command") ?: "approval requested",
+            ),
+        )
+        "user-input-request" -> upsertTranscriptItem(
+            events,
+            UiEvent.System(
+                id = data.string("call_id") ?: "input-${events.size}",
+                label = "prompt",
+                detail = "agent requested input",
+            ),
+        )
+        else -> events
+    }
+
+private fun upsertTranscriptItem(events: List<UiEvent>, item: UiEvent): List<UiEvent> {
+    val idx = events.indexOfFirst { it.id == item.id }
+    if (idx < 0) return events + item
+    return events.toMutableList().apply { this[idx] = item }
+}
+
+private fun appendTranscriptDelta(events: List<UiEvent>, data: JsonObject): List<UiEvent> {
+    val id = data.string("item_id") ?: return events
+    val delta = data.string("delta") ?: ""
+    val idx = events.indexOfFirst { it.id == id }
+    if (idx < 0) {
+        val itemType = data.string("item_type") ?: "agent_message"
+        val seeded = buildUiEvent(
+            buildJsonObject {
+                data.forEach { (key, value) -> put(key, value) }
+                if (itemType == "mcp_tool_call" || itemType == "dynamic_tool_call") {
+                    put("output", delta)
+                } else {
+                    put("text", delta)
+                }
+            },
+            id,
+            itemType,
+            replayed = false,
+        )
+        return events + seeded
+    }
+    return events.mapIndexed { i, event ->
+        if (i != idx) event else when (event) {
+            is UiEvent.Agent -> event.copy(text = event.text + delta)
+            is UiEvent.Reasoning -> event.copy(text = event.text + delta)
+            is UiEvent.Tool -> event.copy(output = event.output + delta)
+            else -> event
+        }
+    }
+}
 
 /** Parse one orchestrator step record. Step ids are required;
  *  everything else has sane defaults so partial updates from

@@ -54,6 +54,7 @@ export function Composer({
   const [slashIdx, setSlashIdx] = useState(0);
   const fileInputRef = useRef(null);
   const enabled = connected && !pending;
+  const isOrchestrator = sessionKind === 'orchestrator';
   const canSend = enabled && (text.trim().length > 0 || pendingImages.length > 0);
 
   // Slash-autocomplete: when the input starts with "/" and has no
@@ -179,22 +180,31 @@ export function Composer({
           lockedReason=""
         />
       </div>
-      {/* Plan-mode toggle chip — same hue as the kind picker but
-          single-state, so a quick way to flip plan on/off without
-          typing /plan. Shows persistent state via the amber border. */}
-      <div className="plan-row">
-        <button
-          type="button"
-          className={`plan-chip ${planMode ? 'on' : ''}`}
-          onClick={() => onSlashCommand?.(planMode ? 'default' : 'plan', '')}
-          title={planMode
-            ? 'Plan mode is on — codex will plan before acting on the next turn'
-            : 'Toggle plan mode for the next turn (codex /plan)'}
-        >
-          <span className="plan-chip-dot" />
-          {planMode ? 'plan mode active — tap to clear' : 'plan mode (tap to enable for next turn)'}
-        </button>
-      </div>
+      {isOrchestrator ? (
+        <div className="plan-row">
+          <span
+            className="orchestrator-role-chip"
+            title="This brain should only use orchestrator MCP tools and delegate concrete work to child agents."
+          >
+            <span className="plan-chip-dot" />
+            orchestrator role: plan · delegate · await · finish
+          </span>
+        </div>
+      ) : (
+        <div className="plan-row">
+          <button
+            type="button"
+            className={`plan-chip ${planMode ? 'on' : ''}`}
+            onClick={() => onSlashCommand?.(planMode ? 'default' : 'plan', '')}
+            title={planMode
+              ? 'Plan mode is on — codex will plan before acting on the next turn'
+              : 'Toggle plan mode for the next turn (codex /plan)'}
+          >
+            <span className="plan-chip-dot" />
+            {planMode ? 'plan mode active — tap to clear' : 'plan mode (tap to enable for next turn)'}
+          </button>
+        </div>
+      )}
       {slashOpen && slashMatches.length > 0 && (
         <div className="slash-popover" role="listbox">
           {slashMatches.map((cmd, i) => (
@@ -233,7 +243,13 @@ export function Composer({
         <textarea
           className="prompt"
           rows={1}
-          placeholder={pending ? '' : 'ask codex'}
+          placeholder={
+            pending
+              ? ''
+              : isOrchestrator
+                ? 'tell the orchestrator what to delegate'
+                : 'ask codex'
+          }
           value={text}
           onChange={(e) => enabled && setText(e.target.value)}
           onKeyDown={onKeyDown}

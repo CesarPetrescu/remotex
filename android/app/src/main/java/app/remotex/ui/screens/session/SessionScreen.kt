@@ -35,6 +35,7 @@ import app.remotex.ui.PermissionsMode
 import app.remotex.ui.Status
 import app.remotex.ui.UiState
 import app.remotex.ui.screens.session.composer.ComposerBar
+import app.remotex.ui.screens.session.composer.SessionKind
 import app.remotex.ui.screens.session.events.EventList
 import app.remotex.ui.screens.session.files.WorkspaceFilesPanel
 import app.remotex.ui.screens.session.files.decodeBase64
@@ -149,10 +150,7 @@ fun SessionScreen(
             onAttachImage = onAttachImage,
             onRemoveImage = onRemoveImage,
             preferredKind = state.preferredKind,
-            sessionKind = state.session?.kind?.let { kindStr ->
-                app.remotex.ui.screens.session.composer.SessionKind.entries
-                    .firstOrNull { it.wire == kindStr }
-            },
+            sessionKind = sessionKindFromWire(state.session?.kind),
             onPreferredKindChange = onPreferredKindChange,
             onSwitchToCoder = onSwitchToCoder,
             onSwitchToOrchestrator = onSwitchToOrchestrator,
@@ -172,6 +170,11 @@ fun SessionScreen(
             },
         )
     }
+}
+
+private fun sessionKindFromWire(kind: String?): SessionKind? {
+    if (kind == null) return null
+    return if (kind == "orchestrator") SessionKind.Orchestrator else SessionKind.Coder
 }
 
 @Composable

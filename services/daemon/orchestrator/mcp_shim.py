@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 import traceback
 
@@ -121,7 +120,9 @@ TOOLS = [
         "name": "finish",
         "description": (
             "Mark the orchestrator session complete with a final "
-            "summary. After calling, no more tool calls will be made."
+            "summary. All submitted steps must already be completed, "
+            "failed, or cancelled. After calling, no more tool calls "
+            "will be made."
         ),
         "inputSchema": {
             "type": "object",

@@ -37,9 +37,10 @@ export function OrchestratorLauncher({ open, defaults, models, onCancel, onLaunc
       >
         <div className="orch-launcher-title">Orchestrate a long task</div>
         <div className="orch-launcher-hint">
-          The orchestrator brain will plan a DAG of subtasks, fan them out to
-          child Codex agents on this host, and synthesize a final result.
-          Children all use the policy you pick below.
+          This opens an orchestrator brain, not a coder. It uses the
+          orchestrator MCP tools to plan a DAG, delegate concrete work to
+          child Codex agents on this host, await them, and synthesize the
+          final result. Children all use the policy you pick below.
         </div>
         <label className="orch-launcher-field">
           <span>Task</span>
