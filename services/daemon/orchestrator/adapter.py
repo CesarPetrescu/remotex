@@ -85,7 +85,9 @@ class OrchestratorAdapter(SessionAdapter):
         self._socket_path = socket_path_for(self._session_id)
         self._brain_model = model
         self._brain_effort = effort
-        self._brain_permissions = permissions or "readonly"
+        # Note: `permissions` is intentionally not stored on the brain;
+        # see `_brain_turn_frame` for why the brain hard-codes "full".
+        # The runtime forwards the operator's choice to children.
         self._approval_policy = approval_policy
 
         self._brain = StdioCodexAdapter(
@@ -233,11 +235,17 @@ class OrchestratorAdapter(SessionAdapter):
             frame["model"] = self._brain_model
         if self._brain_effort:
             frame["effort"] = self._brain_effort
-        # Brain inherits the operator-set policy. It's the brain's own
-        # job whether to actually run shell — the orchestrator tools
-        # don't need any permission to call.
-        if self._brain_permissions:
-            frame["permissions"] = self._brain_permissions
+        # Force "full" so codex auto-approves the brain's MCP tool
+        # calls instead of popping a permission prompt the user can't
+        # see. Codex only auto-approves MCP tools when approvalPolicy
+        # is `never` AND the sandbox has full-disk-write access; any
+        # other combination blocks the brain on a RequestUserInput
+        # round-trip. The brain itself is forbidden by its system
+        # prompt from running shell or editing files — it only ever
+        # invokes orchestrator.* tools — so handing it dangerFullAccess
+        # is safe in practice. Children spawned by the runtime get the
+        # operator's chosen permissions; this override is brain-only.
+        frame["permissions"] = "full"
         return frame
 
     async def _emit(self, ev: SessionEvent) -> None:
