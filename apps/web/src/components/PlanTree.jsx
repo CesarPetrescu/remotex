@@ -38,6 +38,18 @@ export function PlanTree({ orchestrator }) {
             {(s.deps || []).length > 0 && (
               <div className="plan-step-deps">← {s.deps.join(', ')}</div>
             )}
+            {s.status === 'running' && s.live && (s.live.label || s.live.text) && (
+              <div className="plan-step-live">
+                {s.live.label && (
+                  <div className="plan-step-live-label">
+                    <span className="plan-step-live-spinner" /> {s.live.label}
+                  </div>
+                )}
+                {s.live.text && (
+                  <pre className="plan-step-live-text">{s.live.text}</pre>
+                )}
+              </div>
+            )}
             {s.summary && (
               <div className="plan-step-summary" title={s.summary}>
                 {s.summary.length > 240 ? s.summary.slice(0, 240) + '…' : s.summary}

@@ -3352,6 +3352,44 @@ main.screen-host {
   font-size: 11px;
   white-space: pre-wrap;
 }
+.plan-step-live {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(58, 160, 232, 0.05);
+  border-left: 1px dashed var(--accent);
+  border-radius: 0 3px 3px 0;
+}
+.plan-step-live-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.plan-step-live-spinner {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: plan-step-pulse 1.2s ease-in-out infinite;
+}
+@keyframes plan-step-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+.plan-step-live-text {
+  margin: 4px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 96px;
+  overflow: hidden;
+}
 .plan-tree-finished {
   margin-top: 8px;
   padding: 6px 8px;

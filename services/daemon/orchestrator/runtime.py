@@ -306,6 +306,61 @@ class OrchestratorRuntime:
                 step._adapter = None
                 await self._emit_step_status(step.step_id)
 
+    @staticmethod
+    def _build_step_event_payload(
+        step_id: str, kind: str, data: dict,
+    ) -> dict | None:
+        """Translate one child SessionEvent into the compact shape the
+        orchestrator UI consumes. Returns None for events we don't want
+        to forward (most chatter)."""
+        item_type = data.get("item_type")
+        # Streaming text: agent reasoning + agent message deltas. We
+        # forward the raw delta — the client appends until item-completed.
+        if kind == "item-delta" and item_type in ("agent_message", "agent_reasoning"):
+            delta = data.get("delta") or ""
+            if not delta:
+                return None
+            return {
+                "step_id": step_id,
+                "kind": kind,
+                "item_id": data.get("item_id"),
+                "item_type": item_type,
+                "delta": delta,
+            }
+        if kind in ("item-started", "item-completed"):
+            payload: dict = {
+                "step_id": step_id,
+                "kind": kind,
+                "item_id": data.get("item_id"),
+                "item_type": item_type,
+            }
+            # Pull the most useful descriptor for tool / file change
+            # so the client doesn't need to re-implement the mapping.
+            if item_type == "tool_call":
+                args = data.get("args") or {}
+                cmd = args.get("command") if isinstance(args, dict) else None
+                if isinstance(cmd, str):
+                    payload["label"] = "$ " + cmd
+                elif isinstance(cmd, list):
+                    payload["label"] = "$ " + " ".join(map(str, cmd))
+                if "exit_code" in data:
+                    payload["exit_code"] = data["exit_code"]
+            elif item_type == "file_change":
+                changes = data.get("changes") or []
+                if isinstance(changes, list) and changes:
+                    paths = [c.get("path") for c in changes if isinstance(c, dict) and c.get("path")]
+                    if paths:
+                        head = paths[0] + (f" (+{len(paths) - 1})" if len(paths) > 1 else "")
+                        payload["label"] = "edit: " + head
+            elif item_type == "agent_message" and kind == "item-completed":
+                text = data.get("text") or ""
+                if text:
+                    payload["text"] = text[:400]
+            return payload
+        if kind == "turn-started":
+            return {"step_id": step_id, "kind": kind}
+        return None
+
     async def _consume_child_events(
         self, step: _Step, adapter: StdioCodexAdapter,
     ) -> None:
@@ -342,18 +397,15 @@ class OrchestratorRuntime:
                     "child requested approval; declined automatically. "
                     "Use a more permissive approval policy when launching."
                 )
-            # Forward selected tame events to the parent UI (lightweight
-            # progress signal — title + first 200 chars of agent text).
-            if ev.kind in ("item-completed", "item-started", "turn-started"):
-                payload = {
-                    "step_id": step.step_id,
-                    "kind": ev.kind,
-                    "item_type": data.get("item_type"),
-                }
-                text = data.get("text")
-                if isinstance(text, str) and text:
-                    payload["text_preview"] = text[:200]
-                await self._emit(SessionEvent("orchestrator-step-event", payload))
+            # Forward live progress to the UI so the user can see what
+            # each child is actually doing (not just a "running" pill).
+            # Three categories:
+            #   - item-delta on agent_message / agent_reasoning → text stream
+            #   - item-started for tool_call / file_change → "what tool now"
+            #   - item-completed for the same → mark the action done
+            forwarded = self._build_step_event_payload(step.step_id, ev.kind, data)
+            if forwarded is not None:
+                await self._emit(SessionEvent("orchestrator-step-event", forwarded))
 
 
 def _has_cycle(steps: list[_Step]) -> bool:

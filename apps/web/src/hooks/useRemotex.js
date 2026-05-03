@@ -239,6 +239,41 @@ function reducer(state, action) {
         orchestrator: { ...state.orchestrator, active: true, steps: nextSteps },
       };
     }
+    case 'ORCHESTRATOR_STEP_LIVE': {
+      // Live progress for one child step: appends streaming text or
+      // sets the current "what's running" label. Cap accumulated text
+      // so a chatty child doesn't bloat the React state.
+      const { step_id, patch } = action;
+      if (!step_id || !patch) return state;
+      const existing = state.orchestrator.steps;
+      const idx = existing.findIndex((s) => s.step_id === step_id);
+      if (idx < 0) return state;
+      const prev = existing[idx];
+      const prevLive = prev.live || { text: '', label: null, item_id: null };
+      const nextLive = { ...prevLive };
+      // Item boundary: a new item_id wipes the running text buffer so
+      // we don't bleed one step's reasoning into the next message.
+      if (patch.item_id && patch.item_id !== prevLive.item_id) {
+        nextLive.text = '';
+      }
+      if (patch.reset_text) nextLive.text = '';
+      if (patch.delta) {
+        nextLive.text = (nextLive.text || '') + patch.delta;
+        if (nextLive.text.length > 800) {
+          nextLive.text = '…' + nextLive.text.slice(-800);
+        }
+      }
+      if ('label' in patch) nextLive.label = patch.label;
+      if ('item_id' in patch) nextLive.item_id = patch.item_id;
+      if ('item_type' in patch) nextLive.item_type = patch.item_type;
+      if ('completed' in patch) nextLive.completed = patch.completed;
+      const nextSteps = existing.slice();
+      nextSteps[idx] = { ...prev, live: nextLive };
+      return {
+        ...state,
+        orchestrator: { ...state.orchestrator, active: true, steps: nextSteps },
+      };
+    }
     case 'ORCHESTRATOR_FINISHED':
       return {
         ...state,
@@ -607,11 +642,52 @@ export function useRemotex() {
       case 'orchestrator-step-status':
         dispatch({ type: 'ORCHESTRATOR_STEP_STATUS', step: data });
         return;
-      case 'orchestrator-step-event':
-        // Lightweight progress signal — no-op in state for now; the
-        // brain's own agent_message stream already tells the user what's
-        // happening at a higher level. Reserved for future drill-in UI.
+      case 'orchestrator-step-event': {
+        // Per-step live progress — text deltas, current tool/file
+        // label, and completion markers. The reducer accumulates a
+        // bounded `live.text` per step so the UI can show what the
+        // child is doing right now without re-rendering the brain's
+        // own event stream.
+        const stepId = data.step_id;
+        if (!stepId) return;
+        const kind = data.kind;
+        const itemType = data.item_type;
+        const patch = {};
+        if (kind === 'item-delta') {
+          patch.item_id = data.item_id;
+          patch.item_type = itemType;
+          patch.delta = data.delta || '';
+          // A new item replaces the previous live text. Detect via
+          // item_id boundary: if the daemon sent a different item_id,
+          // start fresh.
+          patch._maybeReset = true;
+        } else if (kind === 'item-started') {
+          patch.item_id = data.item_id;
+          patch.item_type = itemType;
+          patch.completed = false;
+          patch.reset_text = true;
+          if (data.label) patch.label = data.label;
+          else if (itemType === 'agent_message' || itemType === 'agent_reasoning') {
+            patch.label = itemType === 'agent_reasoning' ? 'thinking…' : 'replying…';
+          } else if (itemType) {
+            patch.label = itemType.replace(/_/g, ' ');
+          }
+        } else if (kind === 'item-completed') {
+          patch.item_id = data.item_id;
+          patch.item_type = itemType;
+          patch.completed = true;
+          if (data.label) patch.label = data.label;
+          if (data.text) patch.delta = ''; // text already streamed
+        } else if (kind === 'turn-started') {
+          patch.label = 'starting…';
+          patch.reset_text = true;
+        } else {
+          return;
+        }
+        delete patch._maybeReset;
+        dispatch({ type: 'ORCHESTRATOR_STEP_LIVE', step_id: stepId, patch });
         return;
+      }
       case 'orchestrator-finished':
         dispatch({
           type: 'ORCHESTRATOR_FINISHED',
