@@ -10,6 +10,10 @@ import app.remotex.model.FsEntry
 import app.remotex.model.Host
 import app.remotex.model.HostTelemetryData
 import app.remotex.model.HostTelemetrySnapshot
+import app.remotex.model.OrchFinished
+import app.remotex.model.OrchStep
+import app.remotex.model.OrchStepLive
+import app.remotex.model.OrchestratorState
 import app.remotex.model.SearchResult
 import app.remotex.model.SearchStage
 import app.remotex.model.TelemetryHistory
@@ -37,6 +41,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -158,6 +163,27 @@ data class UiState(
     // Picker list. Falls back to the embedded MODEL_OPTIONS list below
     // until GET /api/models replaces it on first load.
     val modelOptions: List<ModelOption> = MODEL_OPTIONS,
+    /** Plan + per-step status + live progress for an orchestrator session.
+     *  Empty for plain coder sessions. */
+    val orchestrator: OrchestratorState = OrchestratorState(),
+    /** When non-null, render the orchestrator launcher modal pre-filled
+     *  with this draft. Set by `prepareOrchestratorLaunch`, cleared by
+     *  `cancelOrchestratorLaunch` or `launchOrchestratorWith`. */
+    val orchestratorDraft: OrchestratorDraft? = null,
+)
+
+/** Pre-launch staging for an orchestrator session. The user picks
+ *  model/effort/permissions in the launcher dialog before we POST
+ *  /api/sessions, since the brain inherits these on its first turn. */
+data class OrchestratorDraft(
+    val hostId: String,
+    val cwd: String?,
+    val task: String = "",
+    val model: String = "",
+    val effort: String = "medium",
+    /** Permissions for child agents (the brain itself is always full). */
+    val childPermissions: String = "readonly",
+    val approvalPolicy: String = "on-failure",
 )
 
 /**
@@ -736,7 +762,61 @@ class RemotexViewModel(
 
     fun startSessionInCurrentPath() {
         val path = _state.value.browsePath.ifEmpty { null }
+        if (_state.value.preferredKind == app.remotex.ui.screens.session.composer.SessionKind.Orchestrator) {
+            prepareOrchestratorLaunch(cwd = path)
+            return
+        }
         openSession(resumeThreadId = null, cwd = path)
+    }
+
+    /** Build a draft for the launcher modal. The user fills in the
+     *  task + policy in the dialog, then [launchOrchestratorWith]
+     *  POSTs /api/sessions and attaches. */
+    fun prepareOrchestratorLaunch(cwd: String?) {
+        val target = _state.value.selectedHostId ?: run {
+            _state.update { it.copy(error = "pick a host first") }
+            return
+        }
+        val current = _state.value
+        _state.update {
+            it.copy(orchestratorDraft = OrchestratorDraft(
+                hostId = target,
+                cwd = cwd,
+                model = current.model,
+                effort = current.effort.ifEmpty { "medium" },
+                childPermissions = current.permissions.wire,
+            ))
+        }
+    }
+
+    fun updateOrchestratorDraft(transform: (OrchestratorDraft) -> OrchestratorDraft) {
+        _state.update { s ->
+            val draft = s.orchestratorDraft ?: return@update s
+            s.copy(orchestratorDraft = transform(draft))
+        }
+    }
+
+    fun cancelOrchestratorLaunch() {
+        _state.update { it.copy(orchestratorDraft = null) }
+    }
+
+    fun launchOrchestratorWith(draft: OrchestratorDraft) {
+        if (draft.task.isBlank()) {
+            _state.update { it.copy(error = "orchestrator: task is required") }
+            return
+        }
+        _state.update { it.copy(orchestratorDraft = null) }
+        openSession(
+            resumeThreadId = null,
+            cwd = draft.cwd,
+            hostId = draft.hostId,
+            kind = "orchestrator",
+            task = draft.task,
+            model = draft.model.ifBlank { null },
+            effort = draft.effort.ifBlank { null },
+            permissions = draft.childPermissions.ifBlank { null },
+            approvalPolicy = draft.approvalPolicy.ifBlank { null },
+        )
     }
 
     fun refresh() {
@@ -802,7 +882,17 @@ class RemotexViewModel(
         }
     }
 
-    fun openSession(resumeThreadId: String? = null, cwd: String? = null, hostId: String? = null) {
+    fun openSession(
+        resumeThreadId: String? = null,
+        cwd: String? = null,
+        hostId: String? = null,
+        kind: String? = null,
+        task: String? = null,
+        model: String? = null,
+        effort: String? = null,
+        permissions: String? = null,
+        approvalPolicy: String? = null,
+    ) {
         val target = hostId ?: _state.value.selectedHostId ?: return
         closeSession()
         userClosed = false
@@ -832,6 +922,7 @@ class RemotexViewModel(
                 tokensOutput = 0L,
                 tokensCached = 0L,
                 tokensReasoning = 0L,
+                orchestrator = OrchestratorState(),
             )
         }
         viewModelScope.launch {
@@ -841,6 +932,12 @@ class RemotexViewModel(
                     target,
                     resumeThreadId = resumeThreadId,
                     cwd = cwd,
+                    kind = kind,
+                    task = task,
+                    model = model,
+                    effort = effort,
+                    permissions = permissions,
+                    approvalPolicy = approvalPolicy,
                 )
             } catch (t: Throwable) {
                 _state.update {
@@ -850,7 +947,11 @@ class RemotexViewModel(
             }
             _state.update {
                 it.copy(
-                    session = SessionInfo(sessionId = sid, hostId = target),
+                    session = SessionInfo(
+                        sessionId = sid,
+                        hostId = target,
+                        kind = kind ?: "coder",
+                    ),
                     status = Status.Connecting,
                 )
             }
@@ -1280,6 +1381,111 @@ class RemotexViewModel(
                 // informational markers — consumers can render a divider later
             }
 
+            "orchestrator-plan" -> {
+                val rawSteps = (data["steps"] as? JsonArray) ?: return
+                val parsed = rawSteps.mapNotNull { (it as? JsonObject)?.let(::parseOrchStep) }
+                _state.update { s ->
+                    val keepLive = s.orchestrator.steps.associateBy { it.stepId }
+                    val merged = parsed.map { step ->
+                        keepLive[step.stepId]?.let { step.copy(live = it.live) } ?: step
+                    }
+                    s.copy(orchestrator = s.orchestrator.copy(active = true, steps = merged))
+                }
+            }
+
+            "orchestrator-step-status" -> {
+                val incoming = parseOrchStep(data) ?: return
+                _state.update { s ->
+                    val existing = s.orchestrator.steps
+                    val idx = existing.indexOfFirst { it.stepId == incoming.stepId }
+                    val nextSteps = if (idx >= 0) {
+                        existing.toMutableList().apply {
+                            this[idx] = mergeOrchStep(this[idx], incoming)
+                        }
+                    } else {
+                        existing + incoming
+                    }
+                    s.copy(orchestrator = s.orchestrator.copy(active = true, steps = nextSteps))
+                }
+            }
+
+            "orchestrator-step-event" -> {
+                val stepId = data.string("step_id") ?: return
+                val evKind = data.string("kind") ?: return
+                val itemType = data.string("item_type")
+                val itemId = data.string("item_id")
+                val labelExplicit = data.string("label")
+                _state.update { s ->
+                    val existing = s.orchestrator.steps
+                    val idx = existing.indexOfFirst { it.stepId == stepId }
+                    if (idx < 0) return@update s
+                    val prev = existing[idx]
+                    val prevLive = prev.live ?: OrchStepLive()
+                    val itemBoundary = itemId != null && itemId != prevLive.itemId
+                    var text = if (itemBoundary) "" else prevLive.text
+                    var label = prevLive.label
+                    var completed = prevLive.completed
+                    when (evKind) {
+                        "item-delta" -> {
+                            val delta = data.string("delta") ?: ""
+                            if (delta.isNotEmpty()) {
+                                text = (text + delta).let {
+                                    if (it.length > 800) "…" + it.takeLast(800) else it
+                                }
+                            }
+                            completed = false
+                        }
+                        "item-started" -> {
+                            text = ""
+                            completed = false
+                            label = labelExplicit ?: when (itemType) {
+                                "agent_reasoning" -> "thinking…"
+                                "agent_message" -> "replying…"
+                                else -> itemType?.replace('_', ' ')
+                            }
+                        }
+                        "item-completed" -> {
+                            completed = true
+                            if (labelExplicit != null) label = labelExplicit
+                        }
+                        "turn-started" -> {
+                            text = ""
+                            label = "starting…"
+                            completed = false
+                        }
+                        else -> return@update s
+                    }
+                    val nextLive = prevLive.copy(
+                        text = text,
+                        label = label,
+                        itemId = itemId ?: prevLive.itemId,
+                        itemType = itemType ?: prevLive.itemType,
+                        completed = completed,
+                    )
+                    val nextSteps = existing.toMutableList().apply {
+                        this[idx] = prev.copy(live = nextLive)
+                    }
+                    s.copy(orchestrator = s.orchestrator.copy(active = true, steps = nextSteps))
+                }
+            }
+
+            "orchestrator-finished" -> {
+                val ok = (data["ok"] as? JsonPrimitive)?.contentOrNull?.let {
+                    it != "false" && it != "False"
+                } ?: true
+                val finished = OrchFinished(
+                    ok = ok,
+                    summary = data.string("summary"),
+                    error = data.string("error"),
+                )
+                _state.update { s ->
+                    s.copy(
+                        orchestrator = s.orchestrator.copy(active = true, finished = finished),
+                        pending = false,
+                    )
+                }
+            }
+
             "token-usage" -> {
                 // Daemon flattens codex's payload to top-level fields.
                 fun pickLong(key: String): Long? =
@@ -1396,3 +1602,35 @@ private fun JsonObject.string(key: String): String? =
 
 private fun JsonObject.obj(key: String): JsonObject? =
     (this[key] as? JsonElement) as? JsonObject
+
+/** Parse one orchestrator step record. Step ids are required;
+ *  everything else has sane defaults so partial updates from
+ *  orchestrator-step-status (which omits unchanged fields) work. */
+internal fun parseOrchStep(o: JsonObject): OrchStep? {
+    val id = o.string("step_id") ?: return null
+    val deps = (o["deps"] as? JsonArray)?.mapNotNull {
+        (it as? JsonPrimitive)?.contentOrNull
+    } ?: emptyList()
+    return OrchStep(
+        stepId = id,
+        title = o.string("title") ?: id,
+        deps = deps,
+        status = o.string("status") ?: "pending",
+        summary = o.string("summary") ?: "",
+        childSessionId = o.string("child_session_id"),
+    )
+}
+
+/** Merge an incoming step-status patch onto an existing step,
+ *  preserving the local `live` block (which only the step-event
+ *  channel manages). */
+internal fun mergeOrchStep(prev: OrchStep, incoming: OrchStep): OrchStep =
+    OrchStep(
+        stepId = incoming.stepId,
+        title = incoming.title.ifBlank { prev.title },
+        deps = if (incoming.deps.isNotEmpty()) incoming.deps else prev.deps,
+        status = incoming.status,
+        summary = incoming.summary.ifBlank { prev.summary },
+        childSessionId = incoming.childSessionId ?: prev.childSessionId,
+        live = prev.live,
+    )

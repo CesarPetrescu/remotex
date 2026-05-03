@@ -34,6 +34,7 @@ import app.remotex.ui.screens.files.FilesScreen
 import app.remotex.ui.screens.hosts.HostsScreen
 import app.remotex.ui.screens.search.SearchScreen
 import app.remotex.ui.screens.session.ApprovalDialog
+import app.remotex.ui.screens.session.OrchestratorLauncherDialog
 import app.remotex.ui.screens.session.SessionScreen
 import app.remotex.ui.screens.session.UserInputDialog
 import app.remotex.ui.screens.threads.ThreadsScreen
@@ -107,7 +108,14 @@ fun RemotexApp(relayUrl: String) {
                     Screen.Threads -> ThreadsScreen(
                         state = state,
                         onRefresh = vm::refreshThreads,
-                        onNewSession = { vm.goToFiles() },
+                        onNewSession = {
+                            vm.setPreferredKind(app.remotex.ui.screens.session.composer.SessionKind.Coder)
+                            vm.goToFiles()
+                        },
+                        onNewOrchestratorSession = {
+                            vm.setPreferredKind(app.remotex.ui.screens.session.composer.SessionKind.Orchestrator)
+                            vm.goToFiles()
+                        },
                         onResumeThread = { vm.openSession(it.id) },
                     )
                     Screen.Files -> FilesScreen(
@@ -149,6 +157,15 @@ fun RemotexApp(relayUrl: String) {
                         prompt = ui,
                         onSubmit = { vm.resolveUserInput(it) },
                         onCancel = { vm.cancelUserInput() },
+                    )
+                }
+                state.orchestratorDraft?.let { draft ->
+                    OrchestratorLauncherDialog(
+                        draft = draft,
+                        modelOptions = state.modelOptions.map { it.id },
+                        onUpdate = { transform -> vm.updateOrchestratorDraft(transform) },
+                        onCancel = { vm.cancelOrchestratorLaunch() },
+                        onLaunch = { vm.launchOrchestratorWith(it) },
                     )
                 }
                 state.slashFeedback?.let { msg ->

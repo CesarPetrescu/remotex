@@ -45,6 +45,7 @@ fun ThreadsScreen(
     state: UiState,
     onRefresh: () -> Unit,
     onNewSession: () -> Unit,
+    onNewOrchestratorSession: () -> Unit,
     onResumeThread: (ThreadInfo) -> Unit,
 ) {
     val selectedHost = state.hosts.firstOrNull { it.id == state.selectedHostId }
@@ -129,6 +130,41 @@ fun ThreadsScreen(
                         )
                     }
                 }
+            }
+        }
+
+        // Secondary action: orchestrate a long task. Shown as a thin
+        // amber-bordered tile under the primary "New session" so it's
+        // discoverable without competing visually.
+        Surface(
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, Amber),
+            shape = RectangleShape,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onNewOrchestratorSession),
+        ) {
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("⌬", color = Amber, fontFamily = FontFamily.Monospace, fontSize = 16.sp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Orchestrate a long task",
+                        color = Amber,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        "plan a DAG, fan out child agents, get a synthesized result",
+                        color = Amber.copy(alpha = 0.7f),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                }
+                Text("→", color = Amber, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
             }
         }
 

@@ -111,6 +111,9 @@ fun SessionScreen(
             onOpenFiles = { filesPanelOpen = true },
             onUpload = { uploadLauncher.launch(arrayOf("*/*")) },
         )
+        if (state.session?.kind == "orchestrator" || state.orchestrator.active) {
+            PlanTreePanel(state.orchestrator)
+        }
         // SelectionContainer wrapped around a weight(1f) LazyColumn breaks
         // vertical sizing (the LazyColumn ends up with unbounded max
         // height and pushes the composer off-screen). Each event row

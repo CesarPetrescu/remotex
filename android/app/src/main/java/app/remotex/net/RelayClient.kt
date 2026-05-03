@@ -73,21 +73,33 @@ class RelayClient(
         hostId: String,
         resumeThreadId: String? = null,
         cwd: String? = null,
+        kind: String? = null,
+        task: String? = null,
+        model: String? = null,
+        effort: String? = null,
+        permissions: String? = null,
+        approvalPolicy: String? = null,
     ): String = withContext(Dispatchers.IO) {
         // Hand-build the JSON so optional fields are only present when
         // set — relay treats empty strings as null and expects missing
         // keys for non-overrides.
+        fun StringBuilder.kv(key: String, value: String?) {
+            if (value.isNullOrBlank()) return
+            append(",\"").append(key).append("\":\"")
+            append(value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"))
+            append('"')
+        }
         val body = buildString {
             append('{')
             append("\"host_id\":\"").append(hostId).append('"')
-            if (!resumeThreadId.isNullOrBlank()) {
-                append(",\"thread_id\":\"").append(resumeThreadId).append('"')
-            }
-            if (!cwd.isNullOrBlank()) {
-                append(",\"cwd\":\"")
-                append(cwd.replace("\\", "\\\\").replace("\"", "\\\""))
-                append('"')
-            }
+            kv("thread_id", resumeThreadId)
+            kv("cwd", cwd)
+            kv("kind", kind)
+            kv("task", task)
+            kv("model", model)
+            kv("effort", effort)
+            kv("permissions", permissions)
+            kv("approval_policy", approvalPolicy)
             append('}')
         }
         val req = Request.Builder()
