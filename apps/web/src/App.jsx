@@ -10,10 +10,31 @@ import { SearchScreen } from './screens/SearchScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
-import { TelemetrySidebar } from './components/TelemetrySidebar';
+import { RightSidebar } from './components/RightSidebar';
 import { FolderPickerModal } from './components/FolderPickerModal';
 import { OrchestratorLauncher } from './components/OrchestratorLauncher';
 import { shortenCwd } from './util/path';
+
+const RIGHT_VIEWS = ['plan', 'telemetry', 'off'];
+const RIGHT_VIEW_KEY = 'remotex.rightView';
+const LEFT_COLLAPSED_KEY = 'remotex.leftCollapsed';
+
+function readPersisted(key, allowed, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    if (allowed && !allowed.includes(v)) return fallback;
+    return v ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writePersisted(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
 
 export default function App() {
   const r = useRemotex();
@@ -25,6 +46,21 @@ export default function App() {
   const [rightOpen, setRightOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [orchLauncherOpen, setOrchLauncherOpen] = useState(false);
+  // Right sidebar: tabs PLAN | TELEMETRY | off. Persists across
+  // reloads so the user's last choice sticks.
+  const [rightView, setRightViewState] = useState(() =>
+    readPersisted(RIGHT_VIEW_KEY, RIGHT_VIEWS, 'telemetry'),
+  );
+  const setRightView = (v) => { writePersisted(RIGHT_VIEW_KEY, v); setRightViewState(v); };
+  // Left hosts sidebar: collapsed mode (desktop). The mobile drawer
+  // is controlled by leftOpen above; this is the desktop on/off.
+  const [leftCollapsed, setLeftCollapsedState] = useState(() =>
+    readPersisted(LEFT_COLLAPSED_KEY, ['true', 'false'], 'false') === 'true',
+  );
+  const setLeftCollapsed = (v) => {
+    writePersisted(LEFT_COLLAPSED_KEY, String(v));
+    setLeftCollapsedState(v);
+  };
 
   const selectedHost = state.hosts.find((h) => h.id === state.selectedHostId);
   const telemetry = state.selectedHostId
@@ -56,6 +92,9 @@ export default function App() {
     'dashboard-layout',
     leftOpen ? 'left-open' : '',
     rightOpen ? 'right-open' : '',
+    leftCollapsed ? 'left-collapsed' : '',
+    rightView === 'off' ? 'right-off' : '',
+    `right-view-${rightView}`,
   ]
     .filter(Boolean)
     .join(' ');
@@ -66,6 +105,11 @@ export default function App() {
         state={state}
         onMenuClick={() => setLeftOpen((v) => !v)}
         onToggleTelemetry={() => setRightOpen((v) => !v)}
+        rightView={rightView}
+        onRightView={setRightView}
+        leftCollapsed={leftCollapsed}
+        onToggleLeftCollapsed={() => setLeftCollapsed(!leftCollapsed)}
+        hasOrchestrator={!!state.orchestrator?.active}
         onDashboard={() => {
           r.goToDashboard();
           closeDrawers();
@@ -162,10 +206,14 @@ export default function App() {
         {onFilesScreen && !onSessionScreen && !onSearchScreen && null}
       </main>
 
-      <TelemetrySidebar
+      <RightSidebar
+        view={rightView}
+        onView={setRightView}
+        onClose={() => setRightView('off')}
         telemetry={telemetry}
         selectedHost={selectedHost}
-        onClose={() => setRightOpen(false)}
+        orchestrator={state.orchestrator}
+        hasOrchestrator={!!state.orchestrator?.active}
       />
 
       <footer className="dashboard-footer">

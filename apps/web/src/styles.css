@@ -1506,7 +1506,7 @@ main.screen-host {
 .dashboard-layout {
   position: relative;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 300px;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
   grid-template-rows: 56px minmax(0, 1fr) 36px;
   grid-template-areas:
     'header header header'
@@ -1518,6 +1518,21 @@ main.screen-host {
   background: var(--bg);
   isolation: isolate;
 }
+/* Desktop sidebar collapse modes — column shrinks to 0 when the user
+ * hides the panel via the header buttons. The grid itself still has
+ * the area, which keeps grid-area: hosts/telemetry assignments valid
+ * even when the actual panel is display:none. */
+.dashboard-layout.left-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) 320px;
+}
+.dashboard-layout.right-off {
+  grid-template-columns: 280px minmax(0, 1fr) 0;
+}
+.dashboard-layout.left-collapsed.right-off {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+.dashboard-layout.left-collapsed .hosts-sidebar { display: none; }
+.dashboard-layout.right-off .right-sidebar { display: none; }
 
 .dashboard-layout::before {
   content: '';
@@ -1540,7 +1555,131 @@ main.screen-host {
 .hosts-sidebar { grid-area: hosts; }
 .dashboard-main { grid-area: main; }
 .telemetry-sidebar { grid-area: telemetry; }
+.right-sidebar { grid-area: telemetry; }
 .dashboard-footer { grid-area: footer; }
+
+/* --- right sidebar tab strip + body --------------------------------- */
+.right-sidebar {
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, rgba(10, 17, 32, 0.92), rgba(10, 17, 32, 0.8));
+  border-left: 1px solid var(--line);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.right-sidebar-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 36px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.right-sidebar-tab {
+  flex: 1 1 0;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--line);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.right-sidebar-tab:hover { color: var(--ink); }
+.right-sidebar-tab.active {
+  color: var(--amber);
+  background: rgba(94, 225, 255, 0.06);
+  border-bottom: 2px solid var(--amber);
+}
+.right-sidebar-tab-badge {
+  color: var(--ok);
+  font-size: 10px;
+}
+.right-sidebar-close {
+  background: transparent;
+  border: 0;
+  color: var(--ink-dim);
+  font-size: 18px;
+  width: 36px;
+  cursor: pointer;
+}
+.right-sidebar-close:hover { color: var(--warn); }
+.right-sidebar-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.right-sidebar-body > .telemetry-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  border-left: 0;
+  flex: 1 1 auto;
+}
+.right-sidebar-empty {
+  padding: 14px 16px;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.right-sidebar-empty .hl { color: var(--amber); }
+
+/* --- header tab strip (desktop) ------------------------------------- */
+.right-view-tabs {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.right-view-tab {
+  background: transparent;
+  border: 0;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-right: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.right-view-tab:last-child { border-right: 0; }
+.right-view-tab:hover { color: var(--ink); }
+.right-view-tab.active {
+  color: var(--amber);
+  background: rgba(94, 225, 255, 0.08);
+}
+.right-view-tab-badge {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.hosts-collapse-button {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.desktop-only { display: inline-flex; }
+.mobile-only { display: none; }
+@media (max-width: 1023px) {
+  .desktop-only { display: none; }
+  .mobile-only { display: inline-flex; }
+}
 
 /* --- header ------------------------------------------------------------ */
 
@@ -3282,55 +3421,35 @@ main.screen-host {
 /* --- Orchestrator plan tree + launcher --- */
 
 .plan-tree {
-  margin: 8px 12px 0;
-  padding: 10px 12px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  padding: 12px 14px;
   font-family: var(--mono);
   font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.plan-tree.empty .plan-tree-hint {
+.plan-tree-hint {
   color: var(--ink-dim);
   font-style: italic;
-  margin-top: 4px;
 }
-.plan-tree.collapsed {
-  padding-bottom: 6px;
-}
-.plan-tree-header {
-  width: 100%;
+.plan-tree-summary-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  background: transparent;
-  border: 0;
-  padding: 0 0 6px;
-  margin: 0;
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
-  font: inherit;
-}
-.plan-tree-header:hover .plan-tree-label {
-  color: var(--amber);
-}
-.plan-tree-chevron {
+  flex-wrap: wrap;
   color: var(--ink-dim);
   font-size: 10px;
-  width: 10px;
-  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
-.plan-tree-label {
+.plan-tag {
+  padding: 1px 6px;
+  border-radius: 3px;
   font-size: 10px;
-  letter-spacing: 0.12em;
-  color: var(--accent);
 }
-.plan-tree-summary {
-  color: var(--ink-dim);
-  font-size: 10px;
-  flex: 1;
-}
+.plan-tag-running { background: rgba(58, 160, 232, 0.16); color: var(--accent); }
+.plan-tag-done    { background: rgba(106, 224, 194, 0.14); color: var(--ok); }
+.plan-tag-failed  { background: rgba(255, 112, 112, 0.16); color: var(--warn); }
 .plan-tree-steps {
   list-style: none;
   margin: 0;

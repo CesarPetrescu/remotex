@@ -3,7 +3,6 @@ import { EventStream } from '../components/EventStream';
 import { Composer } from '../components/Composer';
 import { ResumingBanner } from '../components/ResumingBanner';
 import { WorkspaceFilesDrawer } from '../components/WorkspaceFilesDrawer';
-import { PlanTree } from '../components/PlanTree';
 import { STATUS } from '../config';
 
 function formatK(n) {
@@ -115,9 +114,8 @@ export function SessionScreen({
         </div>
       </div>
       {state.resuming && <ResumingBanner sinceMs={state.resumingSinceMs} />}
-      {state.orchestrator?.active && (
-        <PlanTree orchestrator={state.orchestrator} />
-      )}
+      {/* PLAN moved to the right sidebar tab — see App.jsx → RightSidebar.
+          The chat surface stays focused on the conversation. */}
       <EventStream
         events={state.events}
         pending={state.pending}
