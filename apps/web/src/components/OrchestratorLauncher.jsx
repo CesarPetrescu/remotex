@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 
 // Modal launcher for a long-horizon task: collects the task description
 // plus the policy snapshot every child Codex inherits. The user picks
@@ -27,7 +28,7 @@ export function OrchestratorLauncher({ open, defaults, models, onCancel, onLaunc
     });
   };
 
-  return (
+  const node = (
     <div className="orch-launcher-scrim" onClick={onCancel}>
       <form
         className="orch-launcher"
@@ -101,4 +102,5 @@ export function OrchestratorLauncher({ open, defaults, models, onCancel, onLaunc
       </form>
     </div>
   );
+  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }

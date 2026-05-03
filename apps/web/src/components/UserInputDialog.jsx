@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 /**
  * Renders codex's request_user_input prompt as a modal dialog.
@@ -57,7 +58,9 @@ export function UserInputDialog({ prompt, onSubmit, onCancel }) {
   const opt = answers[current.id]?.option || current.options?.[0]?.label || '';
   const notes = answers[current.id]?.notes?.[opt] || '';
 
-  return (
+  // Portal to body so the dashboard grid layout can't kick the
+  // fixed-position scrim into a stray bottom-row cell.
+  const node = (
     <div className="ui-input-scrim" onClick={onCancel}>
       <form
         className="ui-input-dialog"
@@ -129,6 +132,7 @@ export function UserInputDialog({ prompt, onSubmit, onCancel }) {
       </form>
     </div>
   );
+  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }
 
 function initialAnswers(questions) {

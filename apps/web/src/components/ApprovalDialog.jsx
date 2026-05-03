@@ -1,12 +1,19 @@
+import { createPortal } from 'react-dom';
+
 // Server-initiated approval modal — fires when codex asks to run a
 // command or edit files under the Default / Read Only permissions
 // modes. Three buttons: decline, accept, always (acceptForSession).
 // Matches the Android AlertDialog shape 1:1.
+//
+// Rendered through a portal directly into document.body so the
+// dashboard's grid layout (`.dashboard-layout > * { position: relative }`)
+// can't kick the scrim out of viewport-fixed positioning into a
+// stray grid cell at the bottom-left of the screen.
 export function ApprovalDialog({ prompt, onDecision }) {
   if (!prompt) return null;
   const title =
     prompt.kind === 'command' ? 'COMMAND APPROVAL' : 'FILE CHANGE APPROVAL';
-  return (
+  const node = (
     <div className="modal-scrim" onClick={() => onDecision('cancel')}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">{title}</div>
@@ -29,4 +36,5 @@ export function ApprovalDialog({ prompt, onDecision }) {
       </div>
     </div>
   );
+  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }

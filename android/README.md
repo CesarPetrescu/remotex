@@ -54,24 +54,44 @@ without needing a local toolchain.
 
 The debug build defaults to `http://10.0.2.2:8080` — the magic
 address the Android emulator uses to reach the host machine's
-loopback. So:
+loopback. **For a real phone on your LAN this default is wrong** —
+the device can't resolve `10.0.2.2`, so the app shows "connecting…"
+forever.
+
+The wrapper script `./build.sh` figures out the right URL for you
+by reading the host's first non-loopback IPv4 address and the relay
+port from `deploy/.env`:
 
 ```bash
-# Terminal 1 (on the host)
-cd services
-pip install -r requirements.txt
-python3 relay/app.py    # 127.0.0.1:8080
-
-# Then Android Studio → Run `app` on an emulator.
+cd android
+./build.sh              # build only — prints the chosen URL
+./build.sh install      # also `adb install -r` to the connected device
+./build.sh install 192.168.10.50    # override the IP
+RELAY_URL=https://relay.example.com ./build.sh    # full URL override
 ```
 
-For a real device on your LAN or a deployed relay:
+If you'd rather drive Gradle directly:
 
 ```bash
-./gradlew assembleDebug -PrelayUrl=https://relay.example.com
+# Find your LAN IP:
+ip -4 addr show scope global | awk '/inet / {print $2}' | cut -d/ -f1
+# Find the relay port (default 8080, our deploy/.env pins 18080):
+grep RELAY_HOST_PORT deploy/.env
+
+./gradlew assembleDebug -PrelayUrl=http://192.168.x.y:18080
 ```
 
-The value is baked into `BuildConfig.RELAY_URL`.
+The value is baked into `BuildConfig.RELAY_URL` at compile time —
+there's no runtime relay-picker, so you have to rebuild + reinstall
+to point at a different server.
+
+#### Connecting ADB to a phone over Wi-Fi
+
+```bash
+adb connect 192.168.x.y:PORT     # PORT is shown in Wireless debugging on the phone
+adb devices                      # confirm the device shows up
+./build.sh install
+```
 
 ## Project layout
 

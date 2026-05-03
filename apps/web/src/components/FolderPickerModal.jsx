@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { joinPath, parentPath } from '../util/path';
 
 // Modal folder browser: breadcrumb path, directory list, "New folder"
@@ -99,7 +100,7 @@ export function FolderPickerModal({
 
   if (!open) return null;
 
-  return (
+  const node = (
     <div className="fp-scrim" onClick={onClose}>
       <div
         className="fp-modal"
@@ -270,4 +271,5 @@ export function FolderPickerModal({
       </div>
     </div>
   );
+  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }
