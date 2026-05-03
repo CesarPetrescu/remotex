@@ -46,6 +46,7 @@ export function Composer({
   preferredKind = 'coder',
   sessionKind = null,
   onPreferredKindChange,
+  onOpenOrchestrator,
   onSlashCommand,
 }) {
   const [text, setText] = useState('');
@@ -157,8 +158,21 @@ export function Composer({
         <PermissionsPicker value={permissions} onChange={onPermissionsChange} />
         <KindPicker
           value={sessionKind || preferredKind}
-          onChange={onPreferredKindChange || (() => {})}
-          locked={!!sessionKind}
+          onChange={(kind) => {
+            // In a live coder session the chip used to be locked, which
+            // looked broken: tapping "orchestrator" did nothing because
+            // you can't switch a running session's kind in place. Now
+            // picking orchestrator from a coder session opens the
+            // launcher modal so the user actually gets a new
+            // orchestrator session instead of a silent no-op. The
+            // current coder session keeps running in the background.
+            if (sessionKind && sessionKind !== kind && kind === 'orchestrator') {
+              onOpenOrchestrator?.();
+              return;
+            }
+            onPreferredKindChange?.(kind);
+          }}
+          locked={!!sessionKind && !onOpenOrchestrator}
           lockedReason={sessionKind ? `current session is ${sessionKind}` : ''}
         />
       </div>

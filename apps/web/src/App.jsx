@@ -119,6 +119,7 @@ export default function App() {
               upload: r.workspaceUploadFile,
               setPreferredKind: r.setPreferredKind,
               sendSlash: r.sendSlash,
+              openOrchestrator: () => setOrchLauncherOpen(true),
             }}
           />
         ) : (
