@@ -125,6 +125,7 @@ jobs:
           --health-retries=10
     env:
       E2E_DATABASE_URL: postgresql://remotex:remotex-test@127.0.0.1:5432/remotex
+      E2E_ALLOW_DESTRUCTIVE_RESET: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

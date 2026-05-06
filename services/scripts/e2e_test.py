@@ -6,11 +6,10 @@ then plays the role of a web client: lists hosts, opens a session,
 sends a turn, and asserts the streamed events arrive in the expected
 order.
 
-Set ``E2E_DATABASE_URL`` (or ``SEARCH_DATABASE_URL``) to a Postgres
-instance the test can write to. The test creates ``inventory_*`` tables
-on first run; pgvector and ``search_*`` tables are created lazily by
-the search service if the URL points at a pgvector image, but the e2e
-test only exercises inventory + routing.
+Set ``E2E_DATABASE_URL`` to a disposable Postgres instance the test can
+write to. This test resets ``inventory_*`` tables before it starts, so
+it also requires ``E2E_ALLOW_DESTRUCTIVE_RESET=1`` as a guardrail against
+accidentally pointing it at a live relay database.
 
 Run: python3 scripts/e2e_test.py
 """
@@ -64,11 +63,18 @@ async def _reset_inventory(database_url: str) -> None:
 
 
 async def run_test() -> int:
-    database_url = os.getenv("E2E_DATABASE_URL") or os.getenv("SEARCH_DATABASE_URL")
+    database_url = os.getenv("E2E_DATABASE_URL")
     if not database_url:
         log.error(
-            "set E2E_DATABASE_URL or SEARCH_DATABASE_URL to a writable Postgres DSN; "
+            "set E2E_DATABASE_URL to a disposable writable Postgres DSN; "
             "e.g. postgres://remotex:remotex-search@127.0.0.1:5432/remotex"
+        )
+        return 2
+    if os.getenv("E2E_ALLOW_DESTRUCTIVE_RESET") not in {"1", "true", "TRUE", "yes", "YES"}:
+        log.error(
+            "scripts/e2e_test.py drops inventory_* tables before running. "
+            "Set E2E_ALLOW_DESTRUCTIVE_RESET=1 only when E2E_DATABASE_URL points "
+            "at a disposable test database."
         )
         return 2
 

@@ -55,6 +55,8 @@ open http://127.0.0.1:8080/
 ## Run the e2e test
 
 ```bash
+E2E_DATABASE_URL=postgresql://remotex:remotex-test@127.0.0.1:5432/remotex \
+E2E_ALLOW_DESTRUCTIVE_RESET=1 \
 python3 scripts/e2e_test.py
 ```
 
@@ -62,6 +64,9 @@ Expected output ends with `E2E: OK - full flow exercised relay <-> daemon <-> cl
 The test boots relay + daemon in-process, drives the REST API and a
 client WebSocket, and asserts the scripted sequence of session events
 arrives in order.
+
+Use a disposable database. The e2e test drops and recreates the
+`inventory_*` tables before running.
 
 ## Demo credentials
 

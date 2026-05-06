@@ -43,7 +43,6 @@ export function useBackgroundCompletionAlert(state) {
       document.removeEventListener('visibilitychange', onVis);
       clearAlert();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Watch state.pending edges to drive the alert.

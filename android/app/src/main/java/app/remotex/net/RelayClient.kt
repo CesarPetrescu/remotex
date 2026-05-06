@@ -7,7 +7,6 @@ import app.remotex.model.HostTelemetryResponse
 import app.remotex.model.HostsResponse
 import app.remotex.model.ModelInfo
 import app.remotex.model.ModelsResponse
-import app.remotex.model.OpenSessionRequest
 import app.remotex.model.OpenSessionResponse
 import app.remotex.model.SearchResponse
 import app.remotex.model.SearchResult
@@ -22,10 +21,12 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -80,32 +81,24 @@ class RelayClient(
         permissions: String? = null,
         approvalPolicy: String? = null,
     ): String = withContext(Dispatchers.IO) {
-        // Hand-build the JSON so optional fields are only present when
-        // set — relay treats empty strings as null and expects missing
-        // keys for non-overrides.
-        fun StringBuilder.kv(key: String, value: String?) {
-            if (value.isNullOrBlank()) return
-            append(",\"").append(key).append("\":\"")
-            append(value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"))
-            append('"')
-        }
-        val body = buildString {
-            append('{')
-            append("\"host_id\":\"").append(hostId).append('"')
-            kv("thread_id", resumeThreadId)
-            kv("cwd", cwd)
-            kv("kind", kind)
-            kv("task", task)
-            kv("model", model)
-            kv("effort", effort)
-            kv("permissions", permissions)
-            kv("approval_policy", approvalPolicy)
-            append('}')
+        val body = buildJsonObject {
+            put("host_id", hostId)
+            fun putIfSet(key: String, value: String?) {
+                if (!value.isNullOrBlank()) put(key, value)
+            }
+            putIfSet("thread_id", resumeThreadId)
+            putIfSet("cwd", cwd)
+            putIfSet("kind", kind)
+            putIfSet("task", task)
+            putIfSet("model", model)
+            putIfSet("effort", effort)
+            putIfSet("permissions", permissions)
+            putIfSet("approval_policy", approvalPolicy)
         }
         val req = Request.Builder()
             .url("$baseUrl/api/sessions")
             .header("Authorization", "Bearer $userToken")
-            .post(body.toRequestBody(jsonMedia))
+            .post(body.toString().toRequestBody(jsonMedia))
             .build()
         http.newCall(req).execute().use { resp ->
             check(resp.isSuccessful) { "openSession: ${resp.code} ${resp.message}" }

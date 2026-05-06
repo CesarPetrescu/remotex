@@ -1657,6 +1657,7 @@ export function useRemotex() {
       clearFeedback: () => dispatch({ type: 'CLEAR_FEEDBACK' }),
       clearError: () => dispatch({ type: 'SET_ERROR', error: null }),
       goToHosts,
+      goToDashboard,
       goToThreads,
       goToSearch,
       goToSession,
@@ -1697,9 +1698,7 @@ export function useRemotex() {
     [
       state,
       goToHosts,
-      // goToDashboard is stable (useCallback with no deps) so it never
-      // changes; including it in this list does nothing useful.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      goToDashboard,
       goToThreads,
       goToSearch,
       goToSession,

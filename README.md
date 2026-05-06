@@ -317,7 +317,7 @@ npm ci && npm run lint && npm run build
 
 # Python
 (cd services && pip install -r requirements-dev.txt && ruff check .)
-(cd services && python scripts/e2e_test.py)
+(cd services && E2E_DATABASE_URL=postgresql://remotex:remotex-test@127.0.0.1:5432/remotex E2E_ALLOW_DESTRUCTIVE_RESET=1 python scripts/e2e_test.py)
 
 # Android
 (cd android && ./gradlew assembleDebug)

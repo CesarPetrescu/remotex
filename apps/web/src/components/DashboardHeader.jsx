@@ -1,4 +1,4 @@
-import { SCREENS, STATUS } from '../config';
+import { STATUS } from '../config';
 
 const STATUS_LABELS = {
   [STATUS.Idle]: 'idle',
@@ -111,6 +111,7 @@ export function DashboardHeader({
 function RightHeaderTab({ id, label, active, onClick, badge }) {
   return (
     <button
+      id={`right-tab-${id}`}
       type="button"
       className={`right-view-tab${active ? ' active' : ''}`}
       onClick={onClick}
