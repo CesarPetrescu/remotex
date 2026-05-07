@@ -36,12 +36,9 @@ from pathlib import Path
 
 import asyncpg  # type: ignore[import-not-found]
 
-from relay.search import (
-    SearchConfig,
-    _chunks_from_items,
-    _estimate_tokens,
-    _snippet,
-)
+from relay.search import SearchConfig
+from relay.search.chunking import _chunks_from_items
+from relay.search.text import _estimate_tokens, _snippet
 
 log = logging.getLogger("relay.backfill")
 

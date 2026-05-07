@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -159,16 +162,50 @@ private fun MetricsRow(data: HostTelemetryData?) {
 
 @Composable
 private fun MetricCell(label: String, value: String, accent: Color, sub: String?) {
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    Column(
+        modifier = Modifier
+            .widthIn(min = 58.dp, max = 88.dp)
+            .defaultMinSize(minHeight = 44.dp),
+        verticalArrangement = Arrangement.Top,
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Row(
+            modifier = Modifier.height(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Box(Modifier.size(5.dp).background(accent))
             Spacer(Modifier.width(4.dp))
-            Text(label, color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            Text(
+                label,
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Spacer(Modifier.size(2.dp))
-        Text(value, color = Ink, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-        if (sub != null) {
-            Text(sub, color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+        Text(
+            value,
+            color = Ink,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 14.sp,
+            lineHeight = 16.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+        )
+        if (sub == null) {
+            Spacer(Modifier.height(10.dp))
+        } else {
+            Text(
+                text = sub,
+                color = InkDim,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                lineHeight = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
