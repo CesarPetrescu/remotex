@@ -46,9 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import coil.compose.AsyncImage
-import app.remotex.ui.ModelOption
 import app.remotex.ui.PendingImage
-import app.remotex.ui.PermissionsMode
 import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
@@ -59,15 +57,8 @@ import app.remotex.ui.theme.Line
 internal fun ComposerBar(
     connected: Boolean,
     pending: Boolean,
-    model: String,
-    effort: String,
-    permissions: PermissionsMode,
     planMode: Boolean,
     pendingImages: List<PendingImage>,
-    modelOptions: List<ModelOption>,
-    onModelChange: (String) -> Unit,
-    onEffortChange: (String) -> Unit,
-    onPermissionsChange: (PermissionsMode) -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
@@ -123,61 +114,33 @@ internal fun ComposerBar(
                     }
                 }
             }
-            // A8: horizontal scroll instead of weighted Row so the chips
-            // never wrap to a second line on narrow phones. Each chip
-            // sizes to its content; users swipe sideways if all three
-            // don't fit, which is way better than a 2-row composer.
+            // One horizontal rail for composer modes only. Model/effort
+            // live in the top bar; permissions live beside the path.
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 item {
-                    CompactModelPicker(
-                        selected = model,
-                        options = modelOptions,
-                        onSelect = onModelChange,
+                    PlanChip(
+                        planMode = planMode,
+                        onClick = {
+                            if (!planMode && goalMode) {
+                                text = removeGoalCommand(text)
+                            }
+                            onSlashCommand(if (planMode) "default" else "plan", "")
+                        },
                     )
                 }
                 item {
-                    CompactEffortPicker(
-                        model = model,
-                        selected = effort,
-                        options = modelOptions,
-                        onSelect = onEffortChange,
+                    GoalSlashChip(
+                        goalMode = goalMode,
+                        onClick = {
+                            if (goalMode) {
+                                text = removeGoalCommand(text)
+                            } else {
+                                if (planMode) onSlashCommand("default", "")
+                                text = addGoalCommand(text)
+                            }
+                        },
                     )
                 }
-                item {
-                    CompactPermissionsPicker(
-                        selected = permissions,
-                        onSelect = onPermissionsChange,
-                    )
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                // Goal is a compact slash shortcut beside /plan, not a
-                // separate panel above the chat.
-                PlanChip(
-                    planMode = planMode,
-                    modifier = Modifier.weight(2f),
-                    onClick = {
-                        if (!planMode && goalMode) {
-                            text = removeGoalCommand(text)
-                        }
-                        onSlashCommand(if (planMode) "default" else "plan", "")
-                    },
-                )
-                GoalSlashChip(
-                    goalMode = goalMode,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        if (goalMode) {
-                            text = removeGoalCommand(text)
-                        } else {
-                            if (planMode) onSlashCommand("default", "")
-                            text = addGoalCommand(text)
-                        }
-                    },
-                )
             }
             if (text.startsWith("/") && !text.contains(' ')) {
                 SlashAutocomplete(

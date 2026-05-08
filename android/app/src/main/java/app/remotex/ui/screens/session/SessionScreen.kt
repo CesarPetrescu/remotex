@@ -30,8 +30,6 @@ fun SessionScreen(
     state: UiState,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
-    onModelChange: (String) -> Unit,
-    onEffortChange: (String) -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
     onPermissionsChange: (PermissionsMode) -> Unit,
@@ -78,6 +76,7 @@ fun SessionScreen(
     ) {
         MetaBar(
             state = state,
+            onPermissionsChange = onPermissionsChange,
             onOpenFiles = { filesPanelOpen = true },
             onUpload = { uploadLauncher.launch(arrayOf("*/*")) },
         )
@@ -103,15 +102,8 @@ fun SessionScreen(
             // while resume is in flight makes the app feel hung.
             connected = state.status == Status.Connected,
             pending = state.pending,
-            model = state.model,
-            effort = state.effort,
-            permissions = state.permissions,
             planMode = state.planMode,
             pendingImages = state.pendingImages,
-            modelOptions = state.modelOptions,
-            onModelChange = onModelChange,
-            onEffortChange = onEffortChange,
-            onPermissionsChange = onPermissionsChange,
             onSend = onSend,
             onStop = onStop,
             onAttachImage = onAttachImage,

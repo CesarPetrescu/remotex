@@ -18,7 +18,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.remotex.ui.PermissionsMode
 import app.remotex.ui.UiState
+import app.remotex.ui.screens.session.composer.CompactPermissionsPicker
 import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.InkDim
 import app.remotex.ui.theme.Line
@@ -26,16 +28,14 @@ import app.remotex.ui.theme.Line
 @Composable
 internal fun MetaBar(
     state: UiState,
+    onPermissionsChange: (PermissionsMode) -> Unit,
     onOpenFiles: () -> Unit,
     onUpload: () -> Unit,
 ) {
     val info = state.session
     val text = when {
         info == null -> "no session"
-        else -> buildString {
-            append(info.model ?: "codex")
-            info.cwd?.let { append(" · $it") }
-        }
+        else -> info.cwd ?: "/"
     }
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -51,6 +51,11 @@ internal fun MetaBar(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            CompactPermissionsPicker(
+                selected = state.permissions,
+                onSelect = onPermissionsChange,
+            )
+            Spacer(Modifier.width(6.dp))
             MetaButton("▤", InkDim, onOpenFiles)
             Spacer(Modifier.width(6.dp))
             MetaButton("+", AccentDeep, onUpload)

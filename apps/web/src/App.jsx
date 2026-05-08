@@ -11,7 +11,7 @@ import { HostsSidebar } from './components/HostsSidebar';
 import { RightSidebar } from './components/RightSidebar';
 import { FolderPickerModal } from './components/FolderPickerModal';
 
-const RIGHT_VIEWS = ['goal', 'telemetry', 'off'];
+const RIGHT_VIEWS = ['prompts', 'telemetry', 'off'];
 const RIGHT_VIEW_KEY = 'remotex.rightView';
 const LEFT_COLLAPSED_KEY = 'remotex.leftCollapsed';
 
@@ -48,8 +48,8 @@ export default function App() {
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-  // Right sidebar: tabs GOAL | TELEMETRY | off. Persists across
-  // reloads so the user's last choice sticks.
+  // Right sidebar: prompts | telemetry | off. Goal lives in the
+  // composer now, so stale persisted "goal" values fall back to off.
   const [rightView, setRightViewState] = useState(() =>
     readPersisted(RIGHT_VIEW_KEY, RIGHT_VIEWS, 'off'),
   );
@@ -79,12 +79,18 @@ export default function App() {
   }, [setRightView]);
 
   useEffect(() => {
-    if (!pendingPromptKey) return;
-    setRightView('goal');
+    if (!pendingPromptKey) {
+      if (rightView === 'prompts') {
+        setRightView('off');
+        setRightOpen(false);
+      }
+      return;
+    }
+    setRightView('prompts');
     if (!isCompactLayout()) {
       setRightOpen(true);
     }
-  }, [pendingPromptKey, setRightView]);
+  }, [pendingPromptKey, rightView, setRightView]);
 
   // Left hosts sidebar: collapsed mode (desktop). The mobile drawer
   // is controlled by leftOpen above; this is the desktop on/off.
@@ -137,7 +143,7 @@ export default function App() {
         onRightView={openRightView}
         leftCollapsed={leftCollapsed}
         onToggleLeftCollapsed={() => setLeftCollapsed(!leftCollapsed)}
-        hasGoal={!!state.goal || hasPendingPrompt}
+        hasPendingPrompt={hasPendingPrompt}
         pendingPromptCount={pendingPromptCount}
         onDashboard={() => {
           r.goToDashboard();
@@ -235,14 +241,6 @@ export default function App() {
         onClose={closeRightView}
         telemetry={telemetry}
         selectedHost={selectedHost}
-        goal={state.goal}
-        hasGoal={!!state.goal}
-        connected={state.status === STATUS.Connected && !state.resuming}
-        onSetGoal={r.setGoal}
-        onPauseGoal={r.pauseGoal}
-        onResumeGoal={r.resumeGoal}
-        onClearGoal={r.clearGoal}
-        onRefreshGoal={r.refreshGoal}
         pendingApproval={state.pendingApproval}
         pendingUserInput={state.pendingUserInput}
         onResolveApproval={r.resolveApproval}

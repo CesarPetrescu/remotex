@@ -51,18 +51,18 @@ internal fun CompactModelPicker(
         modifier = modifier.clickable { expanded = true },
     ) {
         Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "model",
+                "◈",
                 color = InkDim,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 9.sp,
+                fontSize = 11.sp,
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(5.dp))
             Text(
-                current.label,
+                compactModelLabel(current),
                 color = Amber,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
@@ -108,13 +108,13 @@ internal fun CompactPermissionsPicker(
         modifier = modifier.clickable { expanded = true },
     ) {
         Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("perms", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
-            Spacer(Modifier.width(6.dp))
+            Text(permissionSymbol(selected), color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+            Spacer(Modifier.width(5.dp))
             Text(
-                selected.label.lowercase(),
+                compactPermissionLabel(selected),
                 color = if (selected == PermissionsMode.Full) Warn else Amber,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
@@ -174,18 +174,18 @@ internal fun CompactEffortPicker(
         modifier = modifier.clickable { expanded = true },
     ) {
         Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "effort",
+                "↯",
                 color = InkDim,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 9.sp,
+                fontSize = 11.sp,
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(5.dp))
             Text(
-                if (effectiveSelected.isEmpty()) "default" else effectiveSelected,
+                compactEffortLabel(effectiveSelected),
                 color = Amber,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
@@ -218,3 +218,23 @@ internal fun CompactEffortPicker(
         }
     }
 }
+
+private fun compactModelLabel(option: ModelOption): String {
+    if (option.id.isBlank()) return "auto"
+    return option.label
+        .removePrefix("gpt-")
+        .replace(" · ", " ")
+        .replace("codex spark", "spark")
+        .replace("codex mini", "mini")
+        .replace("codex max", "max")
+        .replace("codex", "code")
+}
+
+private fun compactEffortLabel(effort: String): String =
+    if (effort.isEmpty()) "auto" else effort
+
+private fun compactPermissionLabel(mode: PermissionsMode): String =
+    mode.label.lowercase()
+
+private fun permissionSymbol(mode: PermissionsMode): String =
+    if (mode == PermissionsMode.Full) "!" else "▣"

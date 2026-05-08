@@ -88,6 +88,8 @@ fun RemotexApp(relayUrl: String) {
                         Screen.Hosts -> ({})
                     },
                     onSearch = { vm.goToSearch() },
+                    onModelChange = vm::setModel,
+                    onEffortChange = vm::setEffort,
                 )
             },
             containerColor = Color.Transparent,
@@ -127,8 +129,6 @@ fun RemotexApp(relayUrl: String) {
                         state = state,
                         onSend = vm::sendTurn,
                         onStop = vm::interruptTurn,
-                        onModelChange = vm::setModel,
-                        onEffortChange = vm::setEffort,
                         onAttachImage = vm::attachImage,
                         onRemoveImage = vm::removeImage,
                         onPermissionsChange = vm::setPermissions,

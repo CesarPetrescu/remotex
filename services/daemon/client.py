@@ -409,10 +409,11 @@ class DaemonClient:
             })
         except Exception as exc:  # noqa: BLE001
             log.exception("thread/list failed")
+            error = str(exc) or type(exc).__name__
             await send({
                 "type": "threads-list-response",
                 "request_id": request_id,
-                "error": str(exc),
+                "error": error,
             })
 
 

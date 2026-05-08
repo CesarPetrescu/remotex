@@ -34,7 +34,7 @@ async def list_host_threads(request: web.Request) -> web.Response:
             "limit": limit,
         })
         try:
-            payload = await asyncio.wait_for(fut, timeout=15.0)
+            payload = await asyncio.wait_for(fut, timeout=30.0)
         except asyncio.TimeoutError as exc:
             raise web.HTTPGatewayTimeout(reason="daemon did not respond in time") from exc
     finally:

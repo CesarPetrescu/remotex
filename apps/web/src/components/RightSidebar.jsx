@@ -1,9 +1,8 @@
 import { TelemetrySidebar } from './TelemetrySidebar';
 import { PendingPromptsPanel } from './PendingPromptsPanel';
-import { GoalPanel } from './GoalPanel';
 
 const TAB_LABELS = {
-  goal: 'Goal',
+  prompts: 'Prompts',
   telemetry: 'Telemetry',
 };
 
@@ -17,14 +16,6 @@ export function RightSidebar({
   onClose,
   telemetry,
   selectedHost,
-  goal,
-  hasGoal,
-  connected,
-  onSetGoal,
-  onPauseGoal,
-  onResumeGoal,
-  onClearGoal,
-  onRefreshGoal,
   pendingApproval,
   pendingUserInput,
   onResolveApproval,
@@ -37,10 +28,10 @@ export function RightSidebar({
     <aside className="right-sidebar" aria-label="Right sidebar">
       <div className="right-sidebar-tabs">
         <RightTab
-          id="goal"
-          active={view === 'goal'}
-          onClick={() => onView('goal')}
-          badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasGoal ? '●' : null}
+          id="prompts"
+          active={view === 'prompts'}
+          onClick={() => onView('prompts')}
+          badge={pendingPromptCount > 0 ? String(pendingPromptCount) : null}
         />
         <RightTab
           id="telemetry"
@@ -56,8 +47,8 @@ export function RightSidebar({
         >×</button>
       </div>
       <div className="right-sidebar-body">
-        {view === 'goal' ? (
-          <div className="goal-sidebar-stack">
+        {view === 'prompts' ? (
+          pendingPromptCount > 0 ? (
             <PendingPromptsPanel
               approval={pendingApproval}
               userInput={pendingUserInput}
@@ -65,16 +56,9 @@ export function RightSidebar({
               onUserInputSubmit={onResolveUserInput}
               onUserInputCancel={onCancelUserInput}
             />
-            <GoalPanel
-              goal={goal}
-              connected={connected}
-              onSetGoal={onSetGoal}
-              onPauseGoal={onPauseGoal}
-              onResumeGoal={onResumeGoal}
-              onClearGoal={onClearGoal}
-              onRefreshGoal={onRefreshGoal}
-            />
-          </div>
+          ) : (
+            <div className="right-sidebar-empty">No pending prompts.</div>
+          )
         ) : (
           <TelemetrySidebar telemetry={telemetry} selectedHost={selectedHost} />
         )}

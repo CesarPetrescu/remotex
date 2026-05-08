@@ -16,7 +16,7 @@ export function DashboardHeader({
   onRightView,
   leftCollapsed = false,
   onToggleLeftCollapsed,
-  hasGoal = false,
+  hasPendingPrompt = false,
   pendingPromptCount = 0,
   onDashboard,
 }) {
@@ -70,14 +70,14 @@ export function DashboardHeader({
       <div className="dashboard-header-right">
         {onRightView && (
           <div className="header-tools" aria-label="Tools">
-            {(hasGoal || pendingPromptCount > 0) && (
+            {hasPendingPrompt && (
               <HeaderTool
-                id="goal"
-                label="Goal"
-                icon="◎"
-                active={rightView === 'goal'}
-                onClick={() => onRightView(rightView === 'goal' ? 'off' : 'goal')}
-                badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasGoal}
+                id="prompts"
+                label="Pending prompts"
+                icon="!"
+                active={rightView === 'prompts'}
+                onClick={() => onRightView(rightView === 'prompts' ? 'off' : 'prompts')}
+                badge={String(pendingPromptCount)}
               />
             )}
             <HeaderTool

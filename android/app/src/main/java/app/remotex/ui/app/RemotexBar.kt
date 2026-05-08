@@ -3,6 +3,7 @@ package app.remotex.ui.app
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
@@ -21,12 +22,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.ui.Screen
 import app.remotex.ui.UiState
+import app.remotex.ui.screens.session.composer.CompactEffortPicker
+import app.remotex.ui.screens.session.composer.CompactModelPicker
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RemotexBar(state: UiState, onBack: () -> Unit, onSearch: () -> Unit) {
+fun RemotexBar(
+    state: UiState,
+    onBack: () -> Unit,
+    onSearch: () -> Unit,
+    onModelChange: (String) -> Unit,
+    onEffortChange: (String) -> Unit,
+) {
     TopAppBar(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -38,6 +47,21 @@ fun RemotexBar(state: UiState, onBack: () -> Unit, onSearch: () -> Unit) {
                 )
                 Spacer(Modifier.width(10.dp))
                 StatusBadge(state)
+                Spacer(Modifier.width(8.dp))
+                CompactModelPicker(
+                    selected = state.model,
+                    options = state.modelOptions,
+                    onSelect = onModelChange,
+                    modifier = Modifier.widthIn(max = 94.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                CompactEffortPicker(
+                    model = state.model,
+                    selected = state.effort,
+                    options = state.modelOptions,
+                    onSelect = onEffortChange,
+                    modifier = Modifier.widthIn(max = 78.dp),
+                )
             }
         },
         navigationIcon = {
