@@ -8,7 +8,10 @@ from daemon.adapters.permissions import (
     _permissions_to_codex,
 )
 from daemon.adapters.reasoning import _summarize_reasoning
+from daemon.adapters.codex_config import ensure_codex_goals_feature_enabled
 from daemon.adapters.stdio import (
+    StdioCodexAdapter,
+    _codex_thread_config,
     _format_goal_message,
     _normalize_goal,
     _normalize_goal_status,
@@ -24,6 +27,55 @@ def test_snake_item_type_translates_known_codex_names():
     assert _snake_item_type("collabAgentToolCall") == "collab_agent_tool_call"
     # Unknown types pass through unchanged.
     assert _snake_item_type("widgetThing") == "widgetThing"
+
+
+def test_thread_start_enables_codex_goals_feature():
+    adapter = StdioCodexAdapter(default_cwd="/tmp")
+
+    params = adapter._thread_start_params()
+
+    assert params["config"]["features.goals"] is True
+    assert _codex_thread_config()["features.goals"] is True
+
+
+def test_codex_config_goals_feature_is_created(tmp_path):
+    path = tmp_path / "config.toml"
+
+    changed = ensure_codex_goals_feature_enabled(path)
+
+    assert changed is True
+    assert path.read_text(encoding="utf-8") == "[features]\ngoals = true\n"
+
+
+def test_codex_config_goals_feature_is_added_to_existing_features(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('model = "gpt-5.5"\n\n[features]\npersonality = true\n', encoding="utf-8")
+
+    changed = ensure_codex_goals_feature_enabled(path)
+
+    assert changed is True
+    assert "[features]\ngoals = true\npersonality = true\n" in path.read_text(encoding="utf-8")
+
+
+def test_codex_config_goals_feature_flips_false_to_true(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[features]\ngoals = false\n", encoding="utf-8")
+
+    changed = ensure_codex_goals_feature_enabled(path)
+
+    assert changed is True
+    assert path.read_text(encoding="utf-8") == "[features]\ngoals = true\n"
+
+
+def test_codex_config_goals_feature_noops_when_enabled(tmp_path):
+    path = tmp_path / "config.toml"
+    original = 'model = "gpt-5.5"\n\n[features]\ngoals = true\n'
+    path.write_text(original, encoding="utf-8")
+
+    changed = ensure_codex_goals_feature_enabled(path)
+
+    assert changed is False
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_join_input_concatenates_text_parts_only():

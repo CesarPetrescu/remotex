@@ -875,7 +875,7 @@ main.screen-host {
   padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
@@ -902,21 +902,24 @@ main.screen-host {
 .item-user {
   display: flex;
   justify-content: flex-end;
+  align-self: stretch;
 }
 .user-bubble {
-  max-width: 72%;
+  max-width: min(76%, 760px);
   background: rgba(58, 160, 232, 0.08);
   border: 1px solid rgba(58, 160, 232, 0.28);
   border-right: 2px solid var(--user-accent, #8fb4ff);
-  padding: 8px 12px;
+  border-radius: 6px 0 0 6px;
+  padding: 9px 12px;
   color: var(--ink);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
 }
 .user-bubble .item-label {
   color: var(--user-accent, #8fb4ff);
   text-align: right;
 }
 .user-bubble .item-body {
-  text-align: right;
+  text-align: left;
 }
 
 /* Agent group: one label + one continuous 2px left stripe covering all
@@ -925,6 +928,13 @@ main.screen-host {
   display: grid;
   grid-template-columns: 12px 1fr;
   column-gap: 10px;
+  align-self: flex-start;
+  width: min(82%, 900px);
+  background: rgba(94, 225, 255, 0.035);
+  border: 1px solid rgba(94, 225, 255, 0.12);
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  padding: 9px 12px 10px 0;
 }
 .agent-group::before {
   content: '';
@@ -943,7 +953,7 @@ main.screen-host {
   text-transform: uppercase;
   color: var(--accent);
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
 }
 .agent-group-body {
   grid-column: 2;
@@ -1433,6 +1443,14 @@ main.screen-host {
 
   .stream {
     padding: 12px;
+  }
+
+  .user-bubble {
+    max-width: 88%;
+  }
+
+  .agent-group {
+    width: 92%;
   }
 
   .composer {

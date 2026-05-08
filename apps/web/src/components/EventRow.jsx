@@ -3,7 +3,7 @@ import { MarkdownText } from '../util/markdown';
 import { CopyButton } from './CopyButton';
 
 // One row in the streaming event list. Inside an agent-group (grouped=true)
-// the top-level "AGENT" label is rendered by the parent; rows render only
+// the top-level "CODEX" label is rendered by the parent; rows render only
 // a small sub-label ("REASONING", "TOOL · …") plus body.
 export function EventRow({ event, pending, grouped }) {
   const isStreaming = pending && !event.completed;
@@ -17,7 +17,7 @@ export function EventRow({ event, pending, grouped }) {
     return (
       <div className="item item-user">
         <div className="user-bubble">
-          <div className="item-label">USER</div>
+          <div className="item-label">YOU</div>
           <div className="item-body">{body}</div>
           {event.imageUrls?.length > 0 && (
             <div className="item-images">
@@ -47,7 +47,7 @@ export function EventRow({ event, pending, grouped }) {
   if (event.role === 'agent') {
     return (
       <div className={`sub sub-agent${grouped ? '' : ' standalone'}`}>
-        {!grouped && <div className="sub-label">AGENT</div>}
+        {!grouped && <div className="sub-label">CODEX</div>}
         <MarkdownText text={event.text || ''} trailingCursor={isStreaming} />
       </div>
     );

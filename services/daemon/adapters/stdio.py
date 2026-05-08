@@ -12,6 +12,7 @@ import uuid
 from typing import AsyncIterator
 
 from .base import SessionAdapter, SessionEvent
+from .codex_config import ensure_codex_goals_feature_enabled
 from .items import _item_extras, _join_input, _snake_item_type
 from .permissions import (
     _approval_policy_to_codex,
@@ -60,6 +61,16 @@ class _Missing:
 
 
 _MISSING = _Missing()
+_CODEX_THREAD_CONFIG = {
+    # Codex 0.129 gates thread/goal/* behind the experimental `goals`
+    # feature, whose default is false in config.toml. Remotex exposes
+    # `/goal` as a first-class session control, so enable it per thread.
+    "features.goals": True,
+}
+
+
+def _codex_thread_config() -> dict:
+    return dict(_CODEX_THREAD_CONFIG)
 
 
 class StdioCodexAdapter(SessionAdapter):
@@ -127,6 +138,13 @@ class StdioCodexAdapter(SessionAdapter):
     # --- lifecycle -------------------------------------------------------
 
     async def start(self) -> None:
+        try:
+            changed = ensure_codex_goals_feature_enabled()
+            if changed:
+                log.info("enabled Codex goals feature in config.toml")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not enable Codex goals feature in config.toml: %s", exc)
+
         resume_meta: dict = {}
         if self._resume_thread_id:
             resume_meta = _load_rollout_metadata(self._resume_thread_id)
@@ -201,6 +219,7 @@ class StdioCodexAdapter(SessionAdapter):
         thread_params: dict = {
             "cwd": self._cwd,
             "ephemeral": self._ephemeral,
+            "config": _codex_thread_config(),
         }
         return thread_params
 
@@ -449,6 +468,7 @@ class StdioCodexAdapter(SessionAdapter):
             # working" vs "codex is wedged."
             resp = await self._request("thread/resume", {
                 "threadId": self._resume_thread_id,
+                "config": _codex_thread_config(),
             }, timeout=600.0)
         except asyncio.CancelledError:
             raise

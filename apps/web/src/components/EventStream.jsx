@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { EventRow } from './EventRow';
 
-// Groups consecutive non-user events into a single "AGENT" block so a
+// Groups consecutive non-user events into a single "CODEX" block so a
 // chain of reasoning / agent / tool steps reads as one turn under one
 // header, with a continuous left accent stripe rendered by CSS.
 function groupEvents(events) {
@@ -43,7 +43,7 @@ export function EventStream({ events, pending, placeholder }) {
         }
         return (
           <div className="agent-group" key={`g-${gi}-${g.events[0].id}`}>
-            <div className="agent-group-label">AGENT</div>
+            <div className="agent-group-label">CODEX</div>
             <div className="agent-group-body">
               {g.events.map((e) => (
                 <EventRow key={e.id} event={e} pending={pending} grouped />
