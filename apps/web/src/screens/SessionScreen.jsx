@@ -5,13 +5,6 @@ import { ResumingBanner } from '../components/ResumingBanner';
 import { WorkspaceFilesDrawer } from '../components/WorkspaceFilesDrawer';
 import { STATUS } from '../config';
 
-function formatK(n) {
-  if (n < 1000) return String(n);
-  if (n < 100000) return (n / 1000).toFixed(1) + 'K';
-  if (n < 1000000) return Math.round(n / 1000) + 'K';
-  return (n / 1000000).toFixed(1) + 'M';
-}
-
 function shortenCwdLeft(cwd, max = 36) {
   if (!cwd) return '';
   if (cwd.length <= max) return cwd;
@@ -19,15 +12,6 @@ function shortenCwdLeft(cwd, max = 36) {
   const tail = cwd.slice(-(max - 1));
   const slash = tail.indexOf('/');
   return '…' + (slash > 0 ? tail.slice(slash) : tail);
-}
-
-function goalStatusLabel(goal) {
-  if (!goal) return '';
-  const status = goal.status || 'active';
-  const used = Number.isFinite(goal.tokens_used) ? goal.tokens_used : 0;
-  const budget = Number.isFinite(goal.token_budget) ? goal.token_budget : 0;
-  const usage = budget > 0 ? ` ${formatK(used)}/${formatK(budget)}` : '';
-  return `goal ${status}${usage}`;
 }
 
 export function SessionScreen({
@@ -44,9 +28,6 @@ export function SessionScreen({
   const info = state.session;
   const hostId = info?.hostId;
   const cwd = info?.cwd || '/';
-  const totalIn = state.tokensInput + state.tokensCached;
-  const totalOut = state.tokensOutput + state.tokensReasoning;
-  const haveTokens = totalIn > 0 || totalOut > 0;
   // W4: derive a real chat title from the threads list when we have one,
   // so the meta block shows something humans can scan instead of a
   // session UUID prefix.
@@ -84,23 +65,6 @@ export function SessionScreen({
       <div className="session-meta">
         <div className="session-meta-row1">
           <span className="session-meta-title" title={chatTitle}>{chatTitle}</span>
-          {state.goal && (
-            <span
-              className={`goal-badge goal-badge-${String(state.goal.status || 'active').toLowerCase()}`}
-              title={state.goal.objective || 'Codex goal'}
-            >
-              {goalStatusLabel(state.goal)}
-            </span>
-          )}
-          {haveTokens && (
-            <span
-              className="token-chip"
-              title={`input ${state.tokensInput} (+${state.tokensCached} cached) · output ${state.tokensOutput} (+${state.tokensReasoning} reasoning)`}
-            >
-              🪙 <span className="token-up">{formatK(totalIn)}↑</span>{' '}
-              <span className="token-down">{formatK(totalOut)}↓</span>
-            </span>
-          )}
           <button
             type="button"
             className="meta-icon-btn"
@@ -146,6 +110,7 @@ export function SessionScreen({
         model={state.model}
         effort={state.effort}
         permissions={state.permissions}
+        goal={state.goal}
         models={state.modelOptions}
         planMode={state.planMode}
         pendingImages={state.pendingImages}

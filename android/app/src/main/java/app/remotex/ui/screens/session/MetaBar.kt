@@ -1,7 +1,6 @@
 package app.remotex.ui.screens.session
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,26 +19,27 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.ui.UiState
-import app.remotex.ui.theme.Amber
-import app.remotex.ui.theme.Ink
+import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.InkDim
 import app.remotex.ui.theme.Line
 
 @Composable
-internal fun MetaBar(state: UiState) {
+internal fun MetaBar(
+    state: UiState,
+    onOpenFiles: () -> Unit,
+    onUpload: () -> Unit,
+) {
     val info = state.session
     val text = when {
         info == null -> "no session"
         else -> buildString {
-            append("session ${info.sessionId.take(12)}… on ${info.hostId.take(12)}…")
-            info.model?.let { append(" · $it") }
+            append(info.model ?: "codex")
             info.cwd?.let { append(" · $it") }
         }
     }
-    val haveTokens = state.tokensInput > 0L || state.tokensOutput > 0L
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -47,69 +47,35 @@ internal fun MetaBar(state: UiState) {
                 color = InkDim,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            state.goal?.let {
-                GoalBadge(it.status)
-            }
-            if (haveTokens) {
-                Spacer(Modifier.width(8.dp))
-                TokenChip(state)
-            }
+            MetaButton("▤", InkDim, onOpenFiles)
+            Spacer(Modifier.width(6.dp))
+            MetaButton("+", AccentDeep, onUpload)
         }
     }
 }
 
 @Composable
-private fun GoalBadge(status: String) {
-    val active = status == "active"
+private fun MetaButton(
+    label: String,
+    accent: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
     Surface(
-        color = if (active) Amber.copy(alpha = 0.07f) else Color.Transparent,
-        border = BorderStroke(1.dp, if (active) Amber.copy(alpha = 0.72f) else Line),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, Line),
         shape = RectangleShape,
+        onClick = onClick,
     ) {
         Text(
-            "GOAL ${status.uppercase()}",
-            color = if (active) Amber else InkDim,
+            label,
+            color = accent,
             fontFamily = FontFamily.Monospace,
-            fontSize = 9.sp,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
         )
     }
-}
-
-@Composable
-private fun TokenChip(state: UiState) {
-    val totalIn = state.tokensInput + state.tokensCached
-    val totalOut = state.tokensOutput + state.tokensReasoning
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(
-            "🪙",
-            fontSize = 10.sp,
-        )
-        Text(
-            "${formatK(totalIn)}↑",
-            color = Ink,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-        )
-        Text(
-            "${formatK(totalOut)}↓",
-            color = Amber,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-        )
-    }
-}
-
-private fun formatK(n: Long): String = when {
-    n < 1_000 -> n.toString()
-    n < 100_000 -> String.format("%.1fK", n / 1000.0)
-    n < 1_000_000 -> "${n / 1000}K"
-    else -> String.format("%.1fM", n / 1_000_000.0)
 }

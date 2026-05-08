@@ -10,7 +10,6 @@ import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
 import { RightSidebar } from './components/RightSidebar';
 import { FolderPickerModal } from './components/FolderPickerModal';
-import { shortenCwd } from './util/path';
 
 const RIGHT_VIEWS = ['goal', 'telemetry', 'off'];
 const RIGHT_VIEW_KEY = 'remotex.rightView';
@@ -52,7 +51,7 @@ export default function App() {
   // Right sidebar: tabs GOAL | TELEMETRY | off. Persists across
   // reloads so the user's last choice sticks.
   const [rightView, setRightViewState] = useState(() =>
-    readPersisted(RIGHT_VIEW_KEY, RIGHT_VIEWS, 'telemetry'),
+    readPersisted(RIGHT_VIEW_KEY, RIGHT_VIEWS, 'off'),
   );
   const setRightView = useCallback((v) => {
     writePersisted(RIGHT_VIEW_KEY, v);
@@ -78,17 +77,6 @@ export default function App() {
     setRightView('off');
     setRightOpen(false);
   }, [setRightView]);
-
-  const toggleRightDrawer = useCallback(() => {
-    if (rightOpen) {
-      setRightOpen(false);
-      return;
-    }
-    if (rightView === 'off') {
-      setRightView(hasPendingPrompt ? 'goal' : 'telemetry');
-    }
-    setRightOpen(true);
-  }, [hasPendingPrompt, rightOpen, rightView, setRightView]);
 
   useEffect(() => {
     if (!pendingPromptKey) return;
@@ -145,7 +133,6 @@ export default function App() {
       <DashboardHeader
         state={state}
         onMenuClick={() => setLeftOpen((v) => !v)}
-        onToggleTelemetry={toggleRightDrawer}
         rightView={rightView}
         onRightView={openRightView}
         leftCollapsed={leftCollapsed}
@@ -209,11 +196,10 @@ export default function App() {
             }}
           />
         ) : (
-          <DashboardScreen
-            state={state}
-            selectedHost={selectedHost}
-            telemetry={telemetry}
-            onOpenSession={() => {
+            <DashboardScreen
+              state={state}
+              selectedHost={selectedHost}
+              onOpenSession={() => {
               if (isSessionActive) {
                 r.goToSession();
               } else {
@@ -264,21 +250,6 @@ export default function App() {
         onCancelUserInput={r.cancelUserInput}
       />
 
-      <footer className="dashboard-footer">
-        <FooterStat label="Workspace" value={shortenCwd(state.browsePath || '~')} />
-        <FooterStat label="Permissions" value={state.permissions} />
-        <FooterStat
-          label="Auto-save"
-          value={<span className="footer-on">● on</span>}
-        />
-        <FooterStat label="Host" value={selectedHost?.nickname || '—'} />
-        <FooterStat label="Terminal" value="zsh" />
-        <FooterStat
-          label="Last sync"
-          value={formatSync(telemetry?.lastUpdate)}
-        />
-      </footer>
-
       <FolderPickerModal
         open={folderPickerOpen}
         initialPath={state.browsePath || '/'}
@@ -297,21 +268,4 @@ export default function App() {
       <Toast message={state.slashFeedback} tone="info" onDismiss={r.clearFeedback} />
     </div>
   );
-}
-
-function FooterStat({ label, value }) {
-  return (
-    <div className="footer-stat">
-      <span className="footer-stat-label">{label}</span>
-      <span className="footer-stat-value">{value}</span>
-    </div>
-  );
-}
-
-function formatSync(ts) {
-  if (!ts) return '—';
-  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  return `${Math.floor(s / 3600)}h ago`;
 }

@@ -18,6 +18,22 @@ function matchSlashes(text) {
   return KNOWN_SLASHES.filter((s) => s.id.startsWith(q));
 }
 
+function isGoalCommand(text) {
+  return text === '/goal' || text.startsWith('/goal ');
+}
+
+function removeGoalCommand(text) {
+  if (text === '/goal') return '';
+  if (text.startsWith('/goal ')) return text.slice('/goal '.length);
+  return text;
+}
+
+function addGoalCommand(text) {
+  if (!text.trim()) return '/goal ';
+  if (text.startsWith('/')) return '/goal ';
+  return `/goal ${text.trimStart()}`;
+}
+
 // Bottom dock with three rows:
 //   1. pending image thumbnails (only when we have any)
 //   2. model + effort + permissions chips
@@ -31,6 +47,7 @@ export function Composer({
   model,
   effort,
   permissions,
+  goal,
   models,
   planMode,
   pendingImages,
@@ -48,6 +65,7 @@ export function Composer({
   const fileInputRef = useRef(null);
   const enabled = connected && !pending;
   const canSend = enabled && (text.trim().length > 0 || pendingImages.length > 0);
+  const goalMode = isGoalCommand(text);
 
   // Slash-autocomplete: when the input starts with "/" and has no
   // space yet, show the matching commands. ENTER picks the first match
@@ -127,6 +145,25 @@ export function Composer({
     e.target.value = '';
   }
 
+  function togglePlan() {
+    if (!planMode && goalMode) {
+      setText(removeGoalCommand(text));
+    }
+    onSlashCommand?.(planMode ? 'default' : 'plan', '');
+  }
+
+  function toggleGoal() {
+    setSlashIdx(0);
+    if (goalMode) {
+      setText(removeGoalCommand(text));
+      return;
+    }
+    if (planMode) {
+      onSlashCommand?.('default', '');
+    }
+    setText(addGoalCommand(text));
+  }
+
   return (
     <div className="composer">
       {pendingImages.length > 0 && (
@@ -155,13 +192,22 @@ export function Composer({
         <button
           type="button"
           className={`plan-chip ${planMode ? 'on' : ''}`}
-          onClick={() => onSlashCommand?.(planMode ? 'default' : 'plan', '')}
+          onClick={togglePlan}
           title={planMode
             ? 'Plan mode is on - codex will plan before acting on the next turn'
             : 'Toggle plan mode for the next turn (codex /plan)'}
         >
           <span className="plan-chip-dot" />
-          {planMode ? 'plan mode active - tap to clear' : 'plan mode (tap to enable for next turn)'}
+          {planMode ? 'plan on' : '/plan'}
+        </button>
+        <button
+          type="button"
+          className={`plan-chip goal-chip ${goalMode ? 'on' : ''}`}
+          onClick={toggleGoal}
+          title={goal?.objective || 'Set or inspect Codex goal'}
+        >
+          <span className="plan-chip-dot" />
+          {goalMode ? 'goal on' : '/goal'}
         </button>
       </div>
       {slashOpen && slashMatches.length > 0 && (

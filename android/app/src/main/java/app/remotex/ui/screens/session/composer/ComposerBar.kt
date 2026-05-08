@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
@@ -76,6 +77,7 @@ internal fun ComposerBar(
 ) {
     var text by remember { mutableStateOf("") }
     val textEnabled = connected && !pending
+    val goalMode = isGoalCommand(text)
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
@@ -88,8 +90,8 @@ internal fun ComposerBar(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             if (pendingImages.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -148,15 +150,35 @@ internal fun ComposerBar(
                     )
                 }
             }
-            // Plan-mode toggle chip. One tap flips it on/off without
-            // typing /plan. Sends the same slash so daemon state stays
-            // the source of truth.
-            PlanChip(
-                planMode = planMode,
-                onClick = {
-                    onSlashCommand(if (planMode) "default" else "plan", "")
-                },
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                // Goal is a compact slash shortcut beside /plan, not a
+                // separate panel above the chat.
+                PlanChip(
+                    planMode = planMode,
+                    modifier = Modifier.weight(2f),
+                    onClick = {
+                        if (!planMode && goalMode) {
+                            text = removeGoalCommand(text)
+                        }
+                        onSlashCommand(if (planMode) "default" else "plan", "")
+                    },
+                )
+                GoalSlashChip(
+                    goalMode = goalMode,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        if (goalMode) {
+                            text = removeGoalCommand(text)
+                        } else {
+                            if (planMode) onSlashCommand("default", "")
+                            text = addGoalCommand(text)
+                        }
+                    },
+                )
+            }
             if (text.startsWith("/") && !text.contains(' ')) {
                 SlashAutocomplete(
                     query = text,
@@ -275,15 +297,33 @@ internal val KNOWN_SLASHES = listOf(
     SlashSpec("compact", "have codex summarise + compact the thread"),
 )
 
+private fun isGoalCommand(text: String): Boolean =
+    text == "/goal" || text.startsWith("/goal ")
+
+private fun removeGoalCommand(text: String): String = when {
+    text == "/goal" -> ""
+    text.startsWith("/goal ") -> text.removePrefix("/goal ")
+    else -> text
+}
+
+private fun addGoalCommand(text: String): String {
+    if (text.isBlank()) return "/goal "
+    if (text.startsWith("/")) return "/goal "
+    return "/goal ${text.trimStart()}"
+}
+
 @Composable
-private fun PlanChip(planMode: Boolean, onClick: () -> Unit) {
+private fun PlanChip(
+    planMode: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val accent = if (planMode) Amber else InkDim
     Surface(
         color = if (planMode) Color(0x1A5EE1FF) else MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, if (planMode) Amber else Line),
         shape = RectangleShape,
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clickable(onClick = onClick),
     ) {
         Row(
@@ -293,13 +333,43 @@ private fun PlanChip(planMode: Boolean, onClick: () -> Unit) {
             Box(Modifier.size(6.dp).background(accent))
             Spacer(Modifier.width(6.dp))
             Text(
-                if (planMode)
-                    "plan mode active — tap to clear"
-                else
-                    "plan mode (tap to enable for next turn)",
+                if (planMode) "plan on" else "/plan",
                 color = accent,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun GoalSlashChip(
+    goalMode: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val accent = if (goalMode) Amber else InkDim
+    Surface(
+        color = if (goalMode) Amber.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, if (goalMode) Amber else Line),
+        shape = RectangleShape,
+        modifier = modifier.clickable(onClick = onClick),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(6.dp).background(accent))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (goalMode) "goal on" else "/goal",
+                color = accent,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

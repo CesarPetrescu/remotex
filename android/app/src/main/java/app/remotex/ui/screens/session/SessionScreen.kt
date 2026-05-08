@@ -3,52 +3,26 @@ package app.remotex.ui.screens.session
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.remotex.model.FsEntry
 import app.remotex.net.RelayClient
 import app.remotex.ui.PermissionsMode
 import app.remotex.ui.Status
-import app.remotex.ui.ThreadGoal
 import app.remotex.ui.UiState
 import app.remotex.ui.screens.session.composer.ComposerBar
 import app.remotex.ui.screens.session.events.EventList
 import app.remotex.ui.screens.session.files.WorkspaceFilesPanel
 import app.remotex.ui.screens.session.files.decodeBase64
-import app.remotex.ui.theme.AccentDeep
-import app.remotex.ui.theme.Amber
-import app.remotex.ui.theme.Ink
-import app.remotex.ui.theme.InkDim
-import app.remotex.ui.theme.Line
 import kotlinx.coroutines.launch
 
 @Composable
@@ -62,11 +36,6 @@ fun SessionScreen(
     onRemoveImage: (Int) -> Unit,
     onPermissionsChange: (PermissionsMode) -> Unit,
     onSlashCommand: (cmd: String, args: String) -> Unit,
-    onSetGoal: (String, Long?) -> Unit,
-    onPauseGoal: () -> Unit,
-    onResumeGoal: () -> Unit,
-    onClearGoal: () -> Unit,
-    onRefreshGoal: () -> Unit,
     onListWorkspace: suspend (path: String) -> List<FsEntry>,
     onDeleteWorkspaceFile: suspend (path: String) -> Unit,
     onRenameWorkspaceFile: suspend (from: String, to: String) -> Unit,
@@ -107,29 +76,14 @@ fun SessionScreen(
             .fillMaxSize()
             .imePadding(),
     ) {
-        MetaBar(state)
-        if (state.resuming) {
-            ResumingBanner(sinceMs = state.resumingSinceMs)
-        }
-        // Workspace toolbar — sits between MetaBar and the chat events.
-        // Two affordances:
-        //   📁  open the workspace files panel (rename/delete/download)
-        //   +   upload a file into the chat's cwd (NOT image attach;
-        //       image attach lives in the composer paperclip)
-        WorkspaceToolbar(
-            cwd = workspaceCwd,
+        MetaBar(
+            state = state,
             onOpenFiles = { filesPanelOpen = true },
             onUpload = { uploadLauncher.launch(arrayOf("*/*")) },
         )
-        GoalPanel(
-            goal = state.goal,
-            connected = state.status == Status.Connected && !state.resuming,
-            onSetGoal = onSetGoal,
-            onPauseGoal = onPauseGoal,
-            onResumeGoal = onResumeGoal,
-            onClearGoal = onClearGoal,
-            onRefreshGoal = onRefreshGoal,
-        )
+        if (state.resuming) {
+            ResumingBanner(sinceMs = state.resumingSinceMs)
+        }
         // SelectionContainer wrapped around a weight(1f) LazyColumn breaks
         // vertical sizing (the LazyColumn ends up with unbounded max
         // height and pushes the composer off-screen). Each event row
@@ -176,190 +130,6 @@ fun SessionScreen(
                 val f = onReadWorkspaceFile(path)
                 f.name to decodeBase64(f.base64)
             },
-        )
-    }
-}
-
-@Composable
-private fun GoalPanel(
-    goal: ThreadGoal?,
-    connected: Boolean,
-    onSetGoal: (String, Long?) -> Unit,
-    onPauseGoal: () -> Unit,
-    onResumeGoal: () -> Unit,
-    onClearGoal: () -> Unit,
-    onRefreshGoal: () -> Unit,
-) {
-    var draft by remember(goal?.objective) { mutableStateOf(goal?.objective.orEmpty()) }
-    val status = goal?.status.orEmpty()
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, Line),
-        shape = RectangleShape,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-    ) {
-        Column(
-            Modifier.padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    goal?.let { "GOAL ${formatGoalStatus(status)} - ${formatGoalUsage(it)}" } ?: "NO GOAL SET",
-                    color = if (goal?.status == "active") Amber else InkDim,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                GoalAction("refresh", enabled = connected, onClick = onRefreshGoal)
-            }
-            if (goal != null) {
-                Text(
-                    goal.objective,
-                    color = Ink,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    maxLines = 2,
-                )
-            }
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, Line),
-                shape = RectangleShape,
-            ) {
-                BasicTextField(
-                    value = draft,
-                    onValueChange = { if (connected) draft = it },
-                    enabled = connected,
-                    textStyle = TextStyle(
-                        color = if (connected) Ink else InkDim,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                    ),
-                    cursorBrush = SolidColor(Amber),
-                    decorationBox = { inner ->
-                        Box(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                            if (draft.isEmpty()) {
-                                Text(
-                                    "native Codex goal objective",
-                                    color = InkDim,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                )
-                            }
-                            inner()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                GoalAction(
-                    label = "set",
-                    enabled = connected && draft.isNotBlank(),
-                    accent = Amber,
-                    onClick = { onSetGoal(draft, null) },
-                )
-                GoalAction(
-                    label = if (status == "active") "pause" else "resume",
-                    enabled = connected && goal != null,
-                    accent = AccentDeep,
-                    onClick = { if (status == "active") onPauseGoal() else onResumeGoal() },
-                )
-                GoalAction(
-                    label = "clear",
-                    enabled = connected && goal != null,
-                    accent = Amber,
-                    onClick = onClearGoal,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun GoalAction(
-    label: String,
-    enabled: Boolean,
-    accent: androidx.compose.ui.graphics.Color = InkDim,
-    onClick: () -> Unit,
-) {
-    Surface(
-        color = Color.Transparent,
-        border = BorderStroke(1.dp, if (enabled) accent.copy(alpha = 0.72f) else Line),
-        shape = RectangleShape,
-        onClick = { if (enabled) onClick() },
-    ) {
-        Text(
-            label,
-            color = if (enabled) accent else InkDim.copy(alpha = 0.55f),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        )
-    }
-}
-
-private fun formatGoalStatus(status: String): String =
-    if (status == "budgetLimited") "budget limited" else status.ifBlank { "active" }
-
-private fun formatGoalUsage(goal: ThreadGoal): String {
-    val used = formatK(goal.tokensUsed)
-    val budget = goal.tokenBudget?.let { formatK(it) }
-    return if (budget != null) "$used/$budget" else used
-}
-
-private fun formatK(n: Long): String = when {
-    n < 1_000 -> n.toString()
-    n < 100_000 -> String.format("%.1fK", n / 1000.0)
-    n < 1_000_000 -> "${n / 1000}K"
-    else -> String.format("%.1fM", n / 1_000_000.0)
-}
-
-@Composable
-private fun WorkspaceToolbar(
-    cwd: String,
-    onOpenFiles: () -> Unit,
-    onUpload: () -> Unit,
-) {
-    // A7: match the new sidebar-action style — flat bg, thin border that
-    // brightens on press, no padding on the wrapper. The surfaceVariant
-    // surface earlier read as "card", which made the buttons feel like
-    // decoration rather than controls.
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        ToolbarButton("📁 Files", InkDim, onClick = onOpenFiles)
-        ToolbarButton("+ Add", AccentDeep, onClick = onUpload)
-        Text(
-            cwd,
-            color = InkDim,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
-private fun ToolbarButton(label: String, accent: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
-    Surface(
-        color = androidx.compose.ui.graphics.Color.Transparent,
-        border = BorderStroke(1.dp, Line),
-        shape = RectangleShape,
-        onClick = onClick,
-    ) {
-        Text(
-            text = label,
-            color = accent,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         )
     }
 }

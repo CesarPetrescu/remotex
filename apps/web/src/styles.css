@@ -261,9 +261,7 @@ pre { margin: 0; font-family: var(--mono); }
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background:
-    linear-gradient(180deg, rgba(94, 225, 255, 0.025), transparent 180px),
-    var(--bg);
+  background: var(--bg);
 }
 
 .chat-main .screen {
@@ -1494,7 +1492,6 @@ main.screen-host {
  *   │ hosts     │  center      │  telemetry   │
  *   │ sidebar   │  session etc │  sidebar     │
  *   └───────────┴──────────────┴──────────────┘
- *   footer
  *
  * Aesthetic: boxy / terminal. No rounded corners on containers or
  * controls. Only dot indicators + the user avatar stay round.
@@ -1526,11 +1523,10 @@ main.screen-host {
   position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 320px;
-  grid-template-rows: 56px minmax(0, 1fr) 36px;
+  grid-template-rows: 52px minmax(0, 1fr);
   grid-template-areas:
     'header header header'
-    'hosts  main   telemetry'
-    'footer footer footer';
+    'hosts  main   telemetry';
   height: 100vh;
   min-height: 0;
   overflow: hidden;
@@ -1554,15 +1550,7 @@ main.screen-host {
 .dashboard-layout.right-off .right-sidebar { display: none; }
 
 .dashboard-layout::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    radial-gradient(900px 600px at 12% -10%, rgba(94, 225, 255, 0.10), transparent 60%),
-    radial-gradient(900px 600px at 95% 110%, rgba(106, 224, 194, 0.08), transparent 60%),
-    radial-gradient(600px 400px at 50% 50%, rgba(58, 160, 232, 0.04), transparent 70%);
+  display: none;
 }
 
 .dashboard-layout > * {
@@ -1575,14 +1563,12 @@ main.screen-host {
 .dashboard-main { grid-area: main; }
 .telemetry-sidebar { grid-area: telemetry; }
 .right-sidebar { grid-area: telemetry; }
-.dashboard-footer { grid-area: footer; }
 
 /* --- right sidebar tab strip + body --------------------------------- */
 .right-sidebar {
   display: flex;
   flex-direction: column;
-  background:
-    linear-gradient(180deg, rgba(10, 17, 32, 0.92), rgba(10, 17, 32, 0.8));
+  background: var(--panel);
   border-left: 1px solid var(--line);
   min-width: 0;
   min-height: 0;
@@ -1660,34 +1646,34 @@ main.screen-host {
 }
 
 /* --- header tab strip (desktop) ------------------------------------- */
-.right-view-tabs {
+.header-tools {
   display: inline-flex;
   border: 1px solid var(--line);
   border-radius: 4px;
   overflow: hidden;
 }
-.right-view-tab {
+.header-tool {
   background: transparent;
   border: 0;
   color: var(--ink-dim);
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 14px;
   cursor: pointer;
-  padding: 5px 10px;
+  padding: 5px 9px;
   border-right: 1px solid var(--line);
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: 34px;
+  justify-content: center;
 }
-.right-view-tab:last-child { border-right: 0; }
-.right-view-tab:hover { color: var(--ink); }
-.right-view-tab.active {
+.header-tool:last-child { border-right: 0; }
+.header-tool:hover { color: var(--ink); }
+.header-tool.active {
   color: var(--amber);
   background: rgba(94, 225, 255, 0.08);
 }
-.right-view-tab-badge {
+.header-tool-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1696,7 +1682,7 @@ main.screen-host {
   border-radius: 50%;
   background: var(--ok);
 }
-.right-view-tab-badge:not(:empty) {
+.header-tool-badge:not(:empty) {
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
@@ -1726,8 +1712,7 @@ main.screen-host {
   padding: 0 16px;
   gap: 16px;
   border-bottom: 1px solid var(--line);
-  background:
-    linear-gradient(180deg, rgba(10, 17, 32, 0.96) 0%, rgba(5, 9, 16, 0.88) 120%);
+  background: var(--panel);
   min-width: 0;
 }
 
@@ -2018,10 +2003,12 @@ main.screen-host {
 }
 
 .dashboard-center {
-  padding: 18px;
+  width: min(920px, 100%);
+  margin: 0 auto;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -2029,10 +2016,10 @@ main.screen-host {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 16px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 9px;
   min-width: 0;
 }
 
@@ -2131,8 +2118,8 @@ main.screen-host {
 
 .dashboard-row {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
-  gap: 14px;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 @media (max-width: 1100px) {
   .dashboard-row { grid-template-columns: 1fr; }
@@ -2180,7 +2167,7 @@ main.screen-host {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -2204,8 +2191,8 @@ main.screen-host {
   color: var(--ink-dim);
 }
 .action-tile-icon {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   border: 1px solid var(--line);
@@ -2507,15 +2494,7 @@ main.screen-host {
 
 /* --- footer ---------------------------------------------------------- */
 
-.dashboard-footer {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  padding: 0 16px;
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  overflow-x: auto;
-}
+.dashboard-footer { display: none; }
 .footer-stat {
   display: flex;
   flex-direction: column;
@@ -2552,18 +2531,17 @@ main.screen-host {
 @media (max-width: 1000px) {
   .dashboard-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 56px minmax(0, 1fr) 36px;
+    grid-template-rows: 52px minmax(0, 1fr);
     grid-template-areas:
       'header'
-      'main'
-      'footer';
+      'main';
   }
   .hosts-sidebar,
   .telemetry-sidebar,
   .right-sidebar {
     position: fixed;
-    top: 56px;
-    bottom: 36px;
+    top: 52px;
+    bottom: 0;
     width: 320px;
     z-index: 20;
     transform: translateX(-105%);
@@ -2588,7 +2566,7 @@ main.screen-host {
   .dashboard-layout.right-open .sidebar-scrim {
     display: block;
     position: fixed;
-    inset: 56px 0 36px 0;
+    inset: 52px 0 0 0;
     background: rgba(5, 9, 16, 0.7);
     z-index: 15;
     border: none;
@@ -2610,32 +2588,20 @@ main.screen-host {
     min-width: 0;
     gap: 8px;
   }
-  .right-view-tabs {
+  .header-tools {
     flex: 1 1 auto;
-    max-width: min(56vw, 250px);
+    max-width: min(34vw, 120px);
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .right-view-tabs::-webkit-scrollbar {
+  .header-tools::-webkit-scrollbar {
     display: none;
-  }
-  .right-view-tab {
-    flex: 0 0 auto;
-    min-width: 64px;
-    padding: 5px 8px;
-    white-space: nowrap;
-  }
-  .header-telemetry-toggle {
-    flex: 0 0 auto;
   }
 }
 
 @media (min-width: 1001px) {
   .dashboard-layout .icon-button.menu-button { display: none; }
-  .dashboard-layout .dashboard-header-right .icon-button[aria-label='Toggle telemetry'] {
-    display: none;
-  }
   .dashboard-layout .sidebar-close { display: none; }
 }
 
@@ -3321,7 +3287,7 @@ main.screen-host {
 
 /* ── W4 + W6: two-line session meta with inline workspace icons ── */
 .session-meta {
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   font-family: var(--mono);
@@ -3329,13 +3295,13 @@ main.screen-host {
 .session-meta-row1 {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 .session-meta-title {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--ink);
   font-weight: 600;
   overflow: hidden;
@@ -3368,7 +3334,7 @@ main.screen-host {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 2px;
   font-size: 10px;
   color: var(--ink-dim);
   overflow: hidden;
@@ -3477,22 +3443,6 @@ main.screen-host {
    font-metric differences. */
 .md-inline-code, .md-code, .md-code code {
   font-family: var(--mono);
-}
-
-/* ── W1: telemetry toggle gets a label below ~900px so the icon
-       isn't an unmarked dot for new users ── */
-.header-telemetry-label {
-  display: none;
-  margin-left: 6px;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-}
-.header-telemetry-toggle:hover .header-telemetry-label { color: var(--amber); }
-@media (max-width: 900px) {
-  .header-telemetry-label { display: inline; }
 }
 
 /* ── W5: search "show more" pager ── */
@@ -3871,10 +3821,16 @@ main.screen-host {
 }
 
 /* ── Phase C: plan-mode chip + slash autocomplete ── */
-.plan-row { padding: 0 12px; }
+.plan-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(78px, 1fr);
+  gap: 6px;
+  padding: 0;
+}
 .plan-chip {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 4px 10px;
   background: var(--panel-2);
@@ -3884,6 +3840,7 @@ main.screen-host {
   font-size: 11px;
   cursor: pointer;
   border-radius: 0;
+  min-width: 0;
 }
 .plan-chip:hover { color: var(--amber); border-color: var(--amber); }
 .plan-chip.on {
@@ -3896,6 +3853,9 @@ main.screen-host {
   background: var(--ink-dim);
 }
 .plan-chip.on .plan-chip-dot { background: var(--amber); }
+.goal-chip {
+  color: var(--ink-dim);
+}
 
 .slash-popover {
   display: flex;

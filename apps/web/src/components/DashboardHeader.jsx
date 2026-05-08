@@ -12,7 +12,6 @@ const STATUS_LABELS = {
 export function DashboardHeader({
   state,
   onMenuClick,
-  onToggleTelemetry,
   rightView = 'telemetry',
   onRightView,
   leftCollapsed = false,
@@ -70,57 +69,45 @@ export function DashboardHeader({
 
       <div className="dashboard-header-right">
         {onRightView && (
-          <div className="right-view-tabs" role="tablist" aria-label="Right sidebar">
-            <RightHeaderTab
-              id="goal"
-              label="Goal"
-              active={rightView === 'goal'}
-              onClick={() => onRightView('goal')}
-              badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasGoal}
-            />
-            <RightHeaderTab
+          <div className="header-tools" aria-label="Tools">
+            {(hasGoal || pendingPromptCount > 0) && (
+              <HeaderTool
+                id="goal"
+                label="Goal"
+                icon="◎"
+                active={rightView === 'goal'}
+                onClick={() => onRightView(rightView === 'goal' ? 'off' : 'goal')}
+                badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasGoal}
+              />
+            )}
+            <HeaderTool
               id="telemetry"
               label="Telemetry"
+              icon="▥"
               active={rightView === 'telemetry'}
-              onClick={() => onRightView('telemetry')}
-            />
-            <RightHeaderTab
-              id="off"
-              label="Hide"
-              active={rightView === 'off'}
-              onClick={() => onRightView('off')}
+              onClick={() => onRightView(rightView === 'telemetry' ? 'off' : 'telemetry')}
             />
           </div>
-        )}
-        {onToggleTelemetry && (
-          <button
-            type="button"
-            className="icon-button header-telemetry-toggle mobile-only"
-            onClick={onToggleTelemetry}
-            aria-label="Toggle right sidebar"
-            title="Right sidebar"
-          >
-            <span aria-hidden="true">◔</span>
-          </button>
         )}
       </div>
     </header>
   );
 }
 
-function RightHeaderTab({ id, label, active, onClick, badge }) {
+function HeaderTool({ id, label, icon, active, onClick, badge }) {
   return (
     <button
-      id={`right-tab-${id}`}
+      id={`header-tool-${id}`}
       type="button"
-      className={`right-view-tab${active ? ' active' : ''}`}
+      className={`header-tool${active ? ' active' : ''}`}
       onClick={onClick}
-      aria-selected={active}
-      role="tab"
+      aria-pressed={active}
+      aria-label={label}
+      title={label}
     >
-      {label}
+      <span aria-hidden="true">{icon}</span>
       {badge && (
-        <span className="right-view-tab-badge" aria-label="active">
+        <span className="header-tool-badge" aria-label="active">
           {typeof badge === 'string' ? badge : ''}
         </span>
       )}

@@ -7,19 +7,9 @@ import { STATUS } from '../config';
 // Middle-column view when no session or search screen is active.
 // Active Session card + Semantic Search + Quick Actions + Folder Selection.
 
-const SEARCH_SUGGESTIONS = [
-  'game of life',
-  'rust interpreter',
-  'relay architecture',
-  'wasm',
-  'sql',
-  'codex flow',
-];
-
 export function DashboardScreen({
   state,
   selectedHost,
-  telemetry,
   onOpenSession,
   onEndSession,
   onNewSession,
@@ -37,17 +27,10 @@ export function DashboardScreen({
       <ActiveSessionCard
         state={state}
         selectedHost={selectedHost}
-        telemetry={telemetry}
         onOpenSession={onOpenSession}
         onEndSession={onEndSession}
       />
       <div className="dashboard-row">
-        <SemanticSearchPanel
-          query={state.searchQuery}
-          onChange={onSearchChange}
-          onSubmit={onRunSearch}
-          onOpenSearch={onOpenSearch}
-        />
         <QuickActionsPanel
           canStart={!!selectedHost?.online}
           onNewSession={onNewSession}
@@ -55,6 +38,12 @@ export function DashboardScreen({
           onRefreshThreads={onRefreshThreads}
           onOpenManageHosts={onOpenManageHosts}
           threadCount={state.threads.length}
+        />
+        <SemanticSearchPanel
+          query={state.searchQuery}
+          onChange={onSearchChange}
+          onSubmit={onRunSearch}
+          onOpenSearch={onOpenSearch}
         />
       </div>
       <FolderSelectionPanel
@@ -67,7 +56,7 @@ export function DashboardScreen({
   );
 }
 
-function ActiveSessionCard({ state, selectedHost, telemetry, onOpenSession, onEndSession }) {
+function ActiveSessionCard({ state, selectedHost, onOpenSession, onEndSession }) {
   const info = state.session;
   const hasSession = !!info && state.status !== STATUS.Idle;
   const agentTitle = deriveSessionTitle(state);
@@ -111,21 +100,12 @@ function ActiveSessionCard({ state, selectedHost, telemetry, onOpenSession, onEn
         />
         <SessionFact label="Model" value={info?.model || state.model || 'default'} mono />
         <SessionFact label="State" value={statusLabel} tone={hasSession ? 'live' : 'idle'} />
-        <SessionFact
-          label="Started"
-          value={
-            startedAt
-              ? relativeAge(Math.floor(startedAt / 1000))
-              : hasSession
-                ? 'just now'
-                : '—'
-          }
-        />
-        <SessionFact
-          label="Host info"
-          value={formatHostIdent(selectedHost, telemetry) || '—'}
-          mono
-        />
+        {hasSession && (
+          <SessionFact
+            label="Started"
+            value={startedAt ? relativeAge(Math.floor(startedAt / 1000)) : 'just now'}
+          />
+        )}
       </div>
       <div className="card-actions">
         <button
@@ -203,25 +183,6 @@ function SemanticSearchPanel({ query, onChange, onSubmit, onOpenSearch }) {
           Search chats
         </button>
       </form>
-      <div className="search-try">
-        <span className="search-try-label">Try searches like:</span>
-        <div className="search-chips">
-          {SEARCH_SUGGESTIONS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              className="search-chip"
-              onClick={() => {
-                setLocalQuery(s);
-                onChange?.(s);
-                onSubmit?.(s);
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      </div>
       <button type="button" className="link-button" onClick={onOpenSearch}>
         Open full search →
       </button>
@@ -246,28 +207,25 @@ function QuickActionsPanel({
         <ActionTile
           icon="+"
           title="New session"
-          subtitle="Start a fresh codex thread"
           onClick={onNewSession}
           disabled={!canStart}
         />
         <ActionTile
           icon="▤"
           title="Select folder"
-          subtitle="Choose working directory"
           onClick={onBrowseFiles}
           disabled={!canStart}
         />
         <ActionTile
           icon="↻"
           title="Load session"
-          subtitle={`${threadCount} previous session${threadCount === 1 ? '' : 's'}`}
+          detail={`${threadCount}`}
           onClick={onRefreshThreads}
           disabled={!canStart}
         />
         <ActionTile
           icon="◈"
           title="Manage hosts"
-          subtitle="Add or switch hosts"
           onClick={onOpenManageHosts}
         />
       </div>
@@ -275,7 +233,7 @@ function QuickActionsPanel({
   );
 }
 
-function ActionTile({ icon, title, subtitle, onClick, disabled }) {
+function ActionTile({ icon, title, detail, onClick, disabled }) {
   return (
     <button
       type="button"
@@ -285,7 +243,7 @@ function ActionTile({ icon, title, subtitle, onClick, disabled }) {
     >
       <span className="action-tile-body">
         <span className="action-tile-title">{title}</span>
-        <span className="action-tile-sub">{subtitle}</span>
+        {detail && <span className="action-tile-sub">{detail}</span>}
       </span>
       <span className="action-tile-icon" aria-hidden="true">
         {icon}
@@ -354,14 +312,4 @@ function deriveSessionTitle(state) {
     return `session ${state.session.sessionId.slice(0, 10)}…`;
   }
   return 'No active session';
-}
-
-function formatHostIdent(host, telemetry) {
-  if (!host) return null;
-  const cpu = telemetry?.current?.cpu;
-  const cpuBit = cpu?.cores ? `${cpu.cores}c` : null;
-  const gpu = telemetry?.current?.gpu?.name;
-  return [host.platform || null, cpuBit, gpu]
-    .filter(Boolean)
-    .join(' · ');
 }

@@ -29,7 +29,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.remotex.ui.app.RemotexBar
-import app.remotex.ui.app.WireMeshBackdrop
 import app.remotex.ui.screens.files.FilesScreen
 import app.remotex.ui.screens.hosts.HostsScreen
 import app.remotex.ui.screens.search.SearchScreen
@@ -77,7 +76,6 @@ fun RemotexApp(relayUrl: String) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        WireMeshBackdrop(Modifier.fillMaxSize())
         Scaffold(
             topBar = {
                 RemotexBar(
@@ -135,11 +133,6 @@ fun RemotexApp(relayUrl: String) {
                         onRemoveImage = vm::removeImage,
                         onPermissionsChange = vm::setPermissions,
                         onSlashCommand = vm::sendSlash,
-                        onSetGoal = vm::setGoal,
-                        onPauseGoal = vm::pauseGoal,
-                        onResumeGoal = vm::resumeGoal,
-                        onClearGoal = vm::clearGoal,
-                        onRefreshGoal = vm::refreshGoal,
                         onListWorkspace = vm::listWorkspace,
                         onDeleteWorkspaceFile = vm::deleteWorkspaceFile,
                         onRenameWorkspaceFile = vm::renameWorkspaceFile,
