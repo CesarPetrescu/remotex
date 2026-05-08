@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import copy
 import json
 import logging
 import os
@@ -56,6 +55,13 @@ async def _read_line_unbounded(stream: asyncio.StreamReader) -> bytes:
             return b"".join(parts) + exc.partial
 
 
+class _Missing:
+    pass
+
+
+_MISSING = _Missing()
+
+
 class StdioCodexAdapter(SessionAdapter):
     """Bridges `codex app-server` stdio JSON-RPC onto relay SessionEvents.
 
@@ -71,33 +77,16 @@ class StdioCodexAdapter(SessionAdapter):
         codex_binary: str = "codex",
         default_cwd: str | None = None,
         resume_thread_id: str | None = None,
-        extra_thread_config: dict | None = None,
         session_kind: str = "codex",
-        forced_collaboration_mode: str | None = None,
         ephemeral: bool = False,
     ) -> None:
         self.binary = codex_binary
         self._cwd = default_cwd or os.path.expanduser("~")
         self._resume_thread_id = resume_thread_id
         self._ephemeral = bool(ephemeral)
-        # Free-form override map merged into thread/start.config — used
-        # by the orchestrator to register an MCP server on the brain
-        # session without polluting the regular thread/start path.
-        self._extra_thread_config: dict | None = extra_thread_config or None
         # User-facing kind label echoed in session-started.data so the
-        # client UI can show what it's actually attached to (vs the
-        # user's preferred-kind chip). For an orchestrator brain this
-        # is "orchestrator" even though the underlying adapter is the
-        # same StdioCodexAdapter.
+        # client UI can show what it's actually attached to.
         self._session_kind = session_kind
-        # Optional baseline collaboration mode sent on every turn. Slash
-        # commands can still override it for plain sessions; orchestrator
-        # sessions use this to keep native subagent tools consistently loaded.
-        self._forced_collaboration_mode = (
-            forced_collaboration_mode.strip()
-            if isinstance(forced_collaboration_mode, str) and forced_collaboration_mode.strip()
-            else None
-        )
         # Mutable working directory: thread/start kicks off in
         # `default_cwd`, /cd swaps it, every turn/start rides with it.
         self._current_cwd = self._cwd
@@ -206,14 +195,13 @@ class StdioCodexAdapter(SessionAdapter):
             "transport": "stdio",
             "kind": self._session_kind,
         }))
+        await self._goal_get()
 
     def _thread_start_params(self) -> dict:
         thread_params: dict = {
             "cwd": self._cwd,
             "ephemeral": self._ephemeral,
         }
-        if self._extra_thread_config:
-            thread_params["config"] = copy.deepcopy(self._extra_thread_config)
         return thread_params
 
     async def stop(self) -> None:
@@ -252,6 +240,9 @@ class StdioCodexAdapter(SessionAdapter):
             return
         if ftype == "user-input-response":
             await self._resolve_user_input(frame)
+            return
+        if ftype in ("goal-get", "goal-set", "goal-clear"):
+            await self._handle_goal_frame(frame)
             return
         if ftype == "slash-command":
             await self._handle_slash(frame)
@@ -362,8 +353,6 @@ class StdioCodexAdapter(SessionAdapter):
                 collab_mode = explicit_collab.strip()
             elif self._next_collab_mode is not None:
                 collab_mode = self._next_collab_mode
-            elif self._forced_collaboration_mode is not None:
-                collab_mode = self._forced_collaboration_mode
 
             if collab_payload is None and collab_mode is not None:
                 collab_model = requested_model or self._current_model
@@ -499,12 +488,16 @@ class StdioCodexAdapter(SessionAdapter):
             "cwd": self._current_cwd,
             "thread_id": self._thread_id,
         }))
+        await self._goal_get()
 
     # --- slash commands + approvals ------------------------------------
 
     async def _handle_slash(self, frame: dict) -> None:
         command = (frame.get("command") or "").lower().strip()
         args = (frame.get("args") or "").strip()
+        if command == "goal":
+            await self._handle_goal_slash(args)
+            return
         if command == "cd":
             await self._handle_cd(args)
             return
@@ -554,6 +547,147 @@ class StdioCodexAdapter(SessionAdapter):
                 "ok": False,
                 "error": f"unknown slash command: /{command}",
             }))
+
+    async def _handle_goal_frame(self, frame: dict) -> None:
+        ftype = frame.get("type")
+        if ftype == "goal-get":
+            await self._goal_get(command="goal")
+        elif ftype == "goal-clear":
+            await self._goal_clear(command="goal")
+        elif ftype == "goal-set":
+            status = frame.get("status")
+            objective = frame.get("objective")
+            has_token_budget = "token_budget" in frame or "tokenBudget" in frame
+            token_budget = frame.get("token_budget", frame.get("tokenBudget"))
+            await self._goal_set(
+                objective=objective if isinstance(objective, str) else None,
+                status=status if isinstance(status, str) else None,
+                token_budget=token_budget if has_token_budget else _MISSING,
+                command="goal",
+            )
+
+    async def _handle_goal_slash(self, args: str) -> None:
+        if not args:
+            await self._goal_get(command="goal")
+            return
+        first, _, rest = args.partition(" ")
+        control = first.lower()
+        if control == "clear" and not rest.strip():
+            await self._goal_clear(command="goal")
+            return
+        if control == "pause" and not rest.strip():
+            await self._goal_set(objective=None, status="paused", command="goal")
+            return
+        if control == "resume" and not rest.strip():
+            await self._goal_set(objective=None, status="active", command="goal")
+            return
+        await self._goal_set(objective=args.strip(), status="active", command="goal")
+
+    async def _goal_get(self, *, command: str | None = None) -> None:
+        if not await self._goal_ready(command):
+            return
+        try:
+            resp = await self._request("thread/goal/get", {"threadId": self._thread_id})
+        except Exception as exc:  # noqa: BLE001
+            await self._goal_ack(command, ok=False, error=str(exc))
+            return
+        goal = _normalize_goal(resp.get("goal"))
+        await self._queue.put(SessionEvent("goal-snapshot", {"goal": goal}))
+        await self._goal_ack(
+            command,
+            ok=True,
+            message=_format_goal_message(goal) if goal else "no goal set",
+        )
+
+    async def _goal_set(
+        self,
+        *,
+        objective: str | None,
+        status: str | None,
+        token_budget=_MISSING,
+        command: str | None = None,
+    ) -> None:
+        if not await self._goal_ready(command):
+            return
+        params: dict = {"threadId": self._thread_id}
+        if objective is not None:
+            objective = objective.strip()
+            if not objective:
+                await self._goal_ack(command, ok=False, error="goal objective must not be empty")
+                return
+            params["objective"] = objective
+        if status is not None:
+            normalized_status = _normalize_goal_status(status)
+            if normalized_status is None:
+                await self._goal_ack(command, ok=False, error=f"unsupported goal status: {status}")
+                return
+            params["status"] = normalized_status
+        if token_budget is not _MISSING:
+            if token_budget in ("", None):
+                params["tokenBudget"] = None
+            else:
+                try:
+                    parsed_budget = int(token_budget)
+                except (TypeError, ValueError):
+                    await self._goal_ack(command, ok=False, error="goal token budget must be a number")
+                    return
+                if parsed_budget <= 0:
+                    await self._goal_ack(command, ok=False, error="goal token budget must be positive")
+                    return
+                params["tokenBudget"] = parsed_budget
+        try:
+            resp = await self._request("thread/goal/set", params)
+        except Exception as exc:  # noqa: BLE001
+            await self._goal_ack(command, ok=False, error=str(exc))
+            return
+        goal = _normalize_goal(resp.get("goal"))
+        if goal:
+            await self._queue.put(SessionEvent("goal-updated", {
+                "thread_id": goal.get("thread_id"),
+                "turn_id": None,
+                "goal": goal,
+            }))
+        await self._goal_ack(command, ok=True, message=_format_goal_message(goal))
+
+    async def _goal_clear(self, *, command: str | None = None) -> None:
+        if not await self._goal_ready(command):
+            return
+        try:
+            resp = await self._request("thread/goal/clear", {"threadId": self._thread_id})
+        except Exception as exc:  # noqa: BLE001
+            await self._goal_ack(command, ok=False, error=str(exc))
+            return
+        cleared = bool(resp.get("cleared"))
+        if cleared:
+            await self._queue.put(SessionEvent("goal-cleared", {"thread_id": self._thread_id}))
+        await self._goal_ack(
+            command,
+            ok=True,
+            message="goal cleared" if cleared else "no goal set",
+        )
+
+    async def _goal_ready(self, command: str | None) -> bool:
+        if not self._thread_id or not self._ready:
+            await self._goal_ack(command, ok=False, error="Codex thread is not ready yet")
+            return False
+        return True
+
+    async def _goal_ack(
+        self,
+        command: str | None,
+        *,
+        ok: bool,
+        message: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        if not command:
+            return
+        payload = {"command": command, "ok": ok}
+        if message:
+            payload["message"] = message
+        if error:
+            payload["error"] = error
+        await self._queue.put(SessionEvent("slash-ack", payload))
 
     async def _handle_cd(self, args: str) -> None:
         if not args:
@@ -1009,6 +1143,16 @@ class StdioCodexAdapter(SessionAdapter):
                 "context_window": usage.get("modelContextWindow"),
                 "raw_total": total,
             }))
+        elif method == "thread/goal/updated":
+            await self._queue.put(SessionEvent("goal-updated", {
+                "thread_id": params.get("threadId"),
+                "turn_id": params.get("turnId"),
+                "goal": _normalize_goal(params.get("goal")),
+            }))
+        elif method == "thread/goal/cleared":
+            await self._queue.put(SessionEvent("goal-cleared", {
+                "thread_id": params.get("threadId"),
+            }))
         else:
             # Drop mcpServer/*, account/*, etc.
             log.debug("ignored codex notification: %s", method)
@@ -1024,3 +1168,76 @@ class StdioCodexAdapter(SessionAdapter):
             },
         })
         await self._queue.put(SessionEvent("turn-completed", {"error": message}))
+
+def _normalize_goal_status(status: str) -> str | None:
+    compact = status.replace("_", "").replace("-", "").lower()
+    if compact == "active":
+        return "active"
+    if compact == "paused":
+        return "paused"
+    if compact == "budgetlimited":
+        return "budgetLimited"
+    if compact == "complete":
+        return "complete"
+    return None
+
+
+def _normalize_goal(goal: dict | None) -> dict | None:
+    if not isinstance(goal, dict):
+        return None
+    return {
+        "thread_id": goal.get("threadId") or goal.get("thread_id"),
+        "objective": goal.get("objective") or "",
+        "status": _normalize_goal_status(str(goal.get("status") or "")) or str(goal.get("status") or ""),
+        "token_budget": goal.get("tokenBudget", goal.get("token_budget")),
+        "tokens_used": int(goal.get("tokensUsed", goal.get("tokens_used", 0)) or 0),
+        "time_used_seconds": int(
+            goal.get("timeUsedSeconds", goal.get("time_used_seconds", 0)) or 0
+        ),
+        "created_at": goal.get("createdAt", goal.get("created_at")),
+        "updated_at": goal.get("updatedAt", goal.get("updated_at")),
+    }
+
+
+def _format_goal_message(goal: dict | None) -> str:
+    if not goal:
+        return "goal updated"
+    status = goal.get("status") or "unknown"
+    objective = (goal.get("objective") or "").strip()
+    usage = _format_goal_usage(goal)
+    parts = [f"goal {status}"]
+    if usage:
+        parts.append(f"({usage})")
+    if objective:
+        parts.append(f"- {objective}")
+    return " ".join(parts)
+
+
+def _format_goal_usage(goal: dict) -> str:
+    tokens_used = int(goal.get("tokens_used") or 0)
+    token_budget = goal.get("token_budget")
+    if isinstance(token_budget, int) and token_budget > 0:
+        return f"{_format_compact_number(tokens_used)} / {_format_compact_number(token_budget)}"
+    seconds = int(goal.get("time_used_seconds") or 0)
+    if seconds <= 0:
+        return ""
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    rem_minutes = minutes % 60
+    return f"{hours}h {rem_minutes}m" if rem_minutes else f"{hours}h"
+
+
+def _format_compact_number(n: int) -> str:
+    if n < 1_000:
+        return str(n)
+    if n < 100_000:
+        text = f"{n / 1_000:.1f}".rstrip("0").rstrip(".")
+        return f"{text}K"
+    if n < 1_000_000:
+        return f"{round(n / 1_000)}K"
+    text = f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".")
+    return f"{text}M"

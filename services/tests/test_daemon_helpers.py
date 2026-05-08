@@ -8,6 +8,11 @@ from daemon.adapters.permissions import (
     _permissions_to_codex,
 )
 from daemon.adapters.reasoning import _summarize_reasoning
+from daemon.adapters.stdio import (
+    _format_goal_message,
+    _normalize_goal,
+    _normalize_goal_status,
+)
 
 
 def test_snake_item_type_translates_known_codex_names():
@@ -77,9 +82,9 @@ def test_item_extras_for_collab_agent_tool_call():
 def test_item_extras_for_mcp_tool_call():
     extras = _item_extras({
         "type": "mcpToolCall",
-        "server": "orchestrator",
-        "tool": "submit_plan",
-        "arguments": {"steps": [{"step_id": "a"}]},
+        "server": "demo",
+        "tool": "lookup",
+        "arguments": {"q": "remotex"},
         "status": "completed",
         "result": {"content": [{"type": "text", "text": "ok"}]},
         "error": {"message": "bad"},
@@ -87,9 +92,9 @@ def test_item_extras_for_mcp_tool_call():
         "mcpAppResourceUri": "mcp://resource",
     })
     assert extras == {
-        "server": "orchestrator",
-        "tool": "submit_plan",
-        "arguments": {"steps": [{"step_id": "a"}]},
+        "server": "demo",
+        "tool": "lookup",
+        "arguments": {"q": "remotex"},
         "status": "completed",
         "result": {"content": [{"type": "text", "text": "ok"}]},
         "error": "bad",
@@ -154,3 +159,28 @@ def test_summarize_reasoning_joins_strings_and_dicts():
     assert _summarize_reasoning(["a", {"text": "b"}, {"summary": "c"}]) == "a b c"
     assert _summarize_reasoning("plain") == "plain"
     assert _summarize_reasoning(42) == ""
+
+
+def test_goal_normalization_accepts_codex_camel_case_shape():
+    goal = _normalize_goal({
+        "threadId": "thread-1",
+        "objective": "ship native goals",
+        "status": "budget_limited",
+        "tokenBudget": 12000,
+        "tokensUsed": "3456",
+        "timeUsedSeconds": "90",
+        "createdAt": 10,
+        "updatedAt": 20,
+    })
+    assert goal == {
+        "thread_id": "thread-1",
+        "objective": "ship native goals",
+        "status": "budgetLimited",
+        "token_budget": 12000,
+        "tokens_used": 3456,
+        "time_used_seconds": 90,
+        "created_at": 10,
+        "updated_at": 20,
+    }
+    assert _normalize_goal_status("budget-limited") == "budgetLimited"
+    assert _format_goal_message(goal) == "goal budgetLimited (3.5K / 12K) - ship native goals"

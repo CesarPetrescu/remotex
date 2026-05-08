@@ -10,10 +10,9 @@ import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
 import { RightSidebar } from './components/RightSidebar';
 import { FolderPickerModal } from './components/FolderPickerModal';
-import { OrchestratorLauncher } from './components/OrchestratorLauncher';
 import { shortenCwd } from './util/path';
 
-const RIGHT_VIEWS = ['plan', 'telemetry', 'off'];
+const RIGHT_VIEWS = ['goal', 'telemetry', 'off'];
 const RIGHT_VIEW_KEY = 'remotex.rightView';
 const LEFT_COLLAPSED_KEY = 'remotex.leftCollapsed';
 
@@ -50,8 +49,7 @@ export default function App() {
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-  const [orchLauncherOpen, setOrchLauncherOpen] = useState(false);
-  // Right sidebar: tabs PLAN | TELEMETRY | off. Persists across
+  // Right sidebar: tabs GOAL | TELEMETRY | off. Persists across
   // reloads so the user's last choice sticks.
   const [rightView, setRightViewState] = useState(() =>
     readPersisted(RIGHT_VIEW_KEY, RIGHT_VIEWS, 'telemetry'),
@@ -87,14 +85,14 @@ export default function App() {
       return;
     }
     if (rightView === 'off') {
-      setRightView(hasPendingPrompt ? 'plan' : 'telemetry');
+      setRightView(hasPendingPrompt ? 'goal' : 'telemetry');
     }
     setRightOpen(true);
   }, [hasPendingPrompt, rightOpen, rightView, setRightView]);
 
   useEffect(() => {
     if (!pendingPromptKey) return;
-    setRightView('plan');
+    setRightView('goal');
     if (!isCompactLayout()) {
       setRightOpen(true);
     }
@@ -120,11 +118,6 @@ export default function App() {
     setRightOpen(false);
   };
 
-  // "+ New session" always opens a coder. Orchestrator is started
-  // explicitly from the dashboard's Orchestrate tile or the in-session
-  // chip's "switch to orchestrator" affordance — that way there's no
-  // sticky preferredKind state silently routing future "+ New" taps
-  // to the orchestrator just because the user once tapped it.
   const openSession = ({ threadId, cwd, hostId } = {}) => {
     r.openSession({ threadId, cwd, hostId });
     closeDrawers();
@@ -157,7 +150,7 @@ export default function App() {
         onRightView={openRightView}
         leftCollapsed={leftCollapsed}
         onToggleLeftCollapsed={() => setLeftCollapsed(!leftCollapsed)}
-        hasOrchestrator={!!state.orchestrator?.active || hasPendingPrompt}
+        hasGoal={!!state.goal || hasPendingPrompt}
         pendingPromptCount={pendingPromptCount}
         onDashboard={() => {
           r.goToDashboard();
@@ -213,14 +206,6 @@ export default function App() {
               apiRef: r.apiRef,
               upload: r.workspaceUploadFile,
               sendSlash: r.sendSlash,
-              // In-session chip: "switch to orchestrator" opens the
-              // launcher; "switch to coder" opens the folder picker
-              // → that picks goes through openSession() above which
-              // is now always a coder. Both paths spawn a NEW
-              // session; the current one keeps running until the
-              // user navigates away.
-              openOrchestrator: () => setOrchLauncherOpen(true),
-              openCoder: () => setFolderPickerOpen(true),
             }}
           />
         ) : (
@@ -252,7 +237,6 @@ export default function App() {
             onStartInCwd={() => openSession({ cwd: state.browsePath || null })}
             onRefreshThreads={() => r.refreshThreads()}
             onOpenManageHosts={() => setLeftOpen(true)}
-            onOpenOrchestrator={() => setOrchLauncherOpen(true)}
           />
         )}
 
@@ -265,8 +249,14 @@ export default function App() {
         onClose={closeRightView}
         telemetry={telemetry}
         selectedHost={selectedHost}
-        orchestrator={state.orchestrator}
-        hasOrchestrator={!!state.orchestrator?.active}
+        goal={state.goal}
+        hasGoal={!!state.goal}
+        connected={state.status === STATUS.Connected && !state.resuming}
+        onSetGoal={r.setGoal}
+        onPauseGoal={r.pauseGoal}
+        onResumeGoal={r.resumeGoal}
+        onClearGoal={r.clearGoal}
+        onRefreshGoal={r.refreshGoal}
         pendingApproval={state.pendingApproval}
         pendingUserInput={state.pendingUserInput}
         onResolveApproval={r.resolveApproval}
@@ -305,25 +295,6 @@ export default function App() {
 
       <Toast message={state.error} tone="error" onDismiss={r.clearError} />
       <Toast message={state.slashFeedback} tone="info" onDismiss={r.clearFeedback} />
-
-      <OrchestratorLauncher
-        open={orchLauncherOpen}
-        defaults={{
-          model: state.model,
-          effort: state.effort,
-          permissions: state.permissions,
-        }}
-        models={state.modelOptions}
-        onCancel={() => setOrchLauncherOpen(false)}
-        onLaunch={(opts) => {
-          setOrchLauncherOpen(false);
-          r.openOrchestratorSession({
-            ...opts,
-            cwd: state.browsePath || null,
-          });
-          closeDrawers();
-        }}
-      />
     </div>
   );
 }

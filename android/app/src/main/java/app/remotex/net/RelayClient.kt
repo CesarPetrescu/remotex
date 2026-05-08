@@ -74,12 +74,6 @@ class RelayClient(
         hostId: String,
         resumeThreadId: String? = null,
         cwd: String? = null,
-        kind: String? = null,
-        task: String? = null,
-        model: String? = null,
-        effort: String? = null,
-        permissions: String? = null,
-        approvalPolicy: String? = null,
     ): String = withContext(Dispatchers.IO) {
         val body = buildJsonObject {
             put("host_id", hostId)
@@ -88,12 +82,6 @@ class RelayClient(
             }
             putIfSet("thread_id", resumeThreadId)
             putIfSet("cwd", cwd)
-            putIfSet("kind", kind)
-            putIfSet("task", task)
-            putIfSet("model", model)
-            putIfSet("effort", effort)
-            putIfSet("permissions", permissions)
-            putIfSet("approval_policy", approvalPolicy)
         }
         val req = Request.Builder()
             .url("$baseUrl/api/sessions")

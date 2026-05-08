@@ -10,13 +10,6 @@ import app.remotex.model.FsEntry
 import app.remotex.model.Host
 import app.remotex.model.HostTelemetryData
 import app.remotex.model.HostTelemetrySnapshot
-import app.remotex.model.OrchFinished
-import app.remotex.model.OrchAgentTranscript
-import app.remotex.model.OrchStep
-import app.remotex.model.OrchStepLive
-import app.remotex.model.OrchSubagentEvent
-import app.remotex.model.OrchSubagentState
-import app.remotex.model.OrchestratorState
 import app.remotex.model.SearchResult
 import app.remotex.model.SearchStage
 import app.remotex.model.TelemetryHistory
@@ -44,7 +37,6 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -67,8 +59,7 @@ data class SessionInfo(
     val hostId: String,
     val model: String? = null,
     val cwd: String? = null,
-    /** "coder" | "orchestrator" — set from session-started; defaults to coder. */
-    val kind: String = "coder",
+    val kind: String = "codex",
 )
 
 data class PendingImage(
@@ -107,6 +98,17 @@ data class UserInputPrompt(
     val callId: String,
     val turnId: String? = null,
     val questions: List<UserInputQuestion>,
+)
+
+data class ThreadGoal(
+    val threadId: String = "",
+    val objective: String = "",
+    val status: String = "",
+    val tokenBudget: Long? = null,
+    val tokensUsed: Long = 0L,
+    val timeUsedSeconds: Long = 0L,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
 )
 
 enum class PermissionsMode(val wire: String, val label: String, val hint: String) {
@@ -148,10 +150,7 @@ data class UiState(
     val pendingUserInput: UserInputPrompt? = null,
     val slashFeedback: String? = null,
     val planMode: Boolean = false,   // true after /plan, cleared on /default
-    /** Preferred kind for the next "+ New session" tap. Surfaced as the
-     *  4th composer chip; persisted via SharedPreferences when set. */
-    val preferredKind: app.remotex.ui.screens.session.composer.SessionKind =
-        app.remotex.ui.screens.session.composer.SessionKind.Coder,
+    val goal: ThreadGoal? = null,
     // True between thread-status:resuming and thread-status:resumed/resume-failed.
     // Codex can take a minute+ to re-hydrate large rollouts; the banner makes it
     // obvious the app isn't hung.
@@ -167,27 +166,6 @@ data class UiState(
     // Picker list. Falls back to the embedded MODEL_OPTIONS list below
     // until GET /api/models replaces it on first load.
     val modelOptions: List<ModelOption> = MODEL_OPTIONS,
-    /** Plan + per-step status + live progress for an orchestrator session.
-     *  Empty for plain coder sessions. */
-    val orchestrator: OrchestratorState = OrchestratorState(),
-    /** When non-null, render the orchestrator launcher modal pre-filled
-     *  with this draft. Set by `prepareOrchestratorLaunch`, cleared by
-     *  `cancelOrchestratorLaunch` or `launchOrchestratorWith`. */
-    val orchestratorDraft: OrchestratorDraft? = null,
-)
-
-/** Pre-launch staging for an orchestrator session. The user picks
- *  model/effort/permissions in the launcher dialog before we POST
- *  /api/sessions, since the brain inherits these on its first turn. */
-data class OrchestratorDraft(
-    val hostId: String,
-    val cwd: String?,
-    val task: String = "",
-    val model: String = "",
-    val effort: String = "medium",
-    /** Permissions for child agents (the brain itself is always full). */
-    val childPermissions: String = "readonly",
-    val approvalPolicy: String = "on-failure",
 )
 
 /**
@@ -382,10 +360,6 @@ class RemotexViewModel(
         }
     }
 
-    fun setPreferredKind(kind: app.remotex.ui.screens.session.composer.SessionKind) {
-        _state.update { it.copy(preferredKind = kind) }
-    }
-
     /** Public slash sender — used by composer's plan-chip + autocomplete. */
     fun sendSlash(cmd: String, args: String = "") {
         val sock = socket ?: return
@@ -403,6 +377,55 @@ class RemotexViewModel(
         }
         if (cmd == "plan") _state.update { it.copy(planMode = true) }
         if (cmd == "default") _state.update { it.copy(planMode = false) }
+    }
+
+    fun refreshGoal() {
+        sendGoalFrame(buildJsonObject { put("type", "goal-get") })
+    }
+
+    fun setGoal(objective: String, tokenBudget: Long? = null) {
+        val cleaned = objective.trim()
+        if (cleaned.isEmpty()) {
+            _state.update { it.copy(error = "goal objective is required") }
+            return
+        }
+        sendGoalFrame(
+            buildJsonObject {
+                put("type", "goal-set")
+                put("objective", cleaned)
+                put("status", "active")
+                tokenBudget?.takeIf { it > 0L }?.let { put("token_budget", it) }
+            },
+        )
+    }
+
+    fun pauseGoal() {
+        sendGoalFrame(buildJsonObject {
+            put("type", "goal-set")
+            put("status", "paused")
+        })
+    }
+
+    fun resumeGoal() {
+        sendGoalFrame(buildJsonObject {
+            put("type", "goal-set")
+            put("status", "active")
+        })
+    }
+
+    fun clearGoal() {
+        sendGoalFrame(buildJsonObject { put("type", "goal-clear") })
+    }
+
+    private fun sendGoalFrame(frame: JsonObject) {
+        val sock = socket ?: run {
+            _state.update { it.copy(error = "socket is not connected") }
+            return
+        }
+        val raw = Json.encodeToString(JsonObject.serializer(), frame)
+        if (!sock.sendJson(raw)) {
+            _state.update { it.copy(error = "socket is not connected") }
+        }
     }
 
     fun setEffort(effort: String) {
@@ -766,61 +789,7 @@ class RemotexViewModel(
 
     fun startSessionInCurrentPath() {
         val path = _state.value.browsePath.ifEmpty { null }
-        if (_state.value.preferredKind == app.remotex.ui.screens.session.composer.SessionKind.Orchestrator) {
-            prepareOrchestratorLaunch(cwd = path)
-            return
-        }
         openSession(resumeThreadId = null, cwd = path)
-    }
-
-    /** Build a draft for the launcher modal. The user fills in the
-     *  task + policy in the dialog, then [launchOrchestratorWith]
-     *  POSTs /api/sessions and attaches. */
-    fun prepareOrchestratorLaunch(cwd: String?) {
-        val target = _state.value.selectedHostId ?: run {
-            _state.update { it.copy(error = "pick a host first") }
-            return
-        }
-        val current = _state.value
-        _state.update {
-            it.copy(orchestratorDraft = OrchestratorDraft(
-                hostId = target,
-                cwd = cwd,
-                model = current.model,
-                effort = current.effort.ifEmpty { "medium" },
-                childPermissions = current.permissions.wire,
-            ))
-        }
-    }
-
-    fun updateOrchestratorDraft(transform: (OrchestratorDraft) -> OrchestratorDraft) {
-        _state.update { s ->
-            val draft = s.orchestratorDraft ?: return@update s
-            s.copy(orchestratorDraft = transform(draft))
-        }
-    }
-
-    fun cancelOrchestratorLaunch() {
-        _state.update { it.copy(orchestratorDraft = null) }
-    }
-
-    fun launchOrchestratorWith(draft: OrchestratorDraft) {
-        if (draft.task.isBlank()) {
-            _state.update { it.copy(error = "orchestrator: task is required") }
-            return
-        }
-        _state.update { it.copy(orchestratorDraft = null) }
-        openSession(
-            resumeThreadId = null,
-            cwd = draft.cwd,
-            hostId = draft.hostId,
-            kind = "orchestrator",
-            task = draft.task,
-            model = draft.model.ifBlank { null },
-            effort = draft.effort.ifBlank { null },
-            permissions = draft.childPermissions.ifBlank { null },
-            approvalPolicy = draft.approvalPolicy.ifBlank { null },
-        )
     }
 
     fun refresh() {
@@ -890,12 +859,6 @@ class RemotexViewModel(
         resumeThreadId: String? = null,
         cwd: String? = null,
         hostId: String? = null,
-        kind: String? = null,
-        task: String? = null,
-        model: String? = null,
-        effort: String? = null,
-        permissions: String? = null,
-        approvalPolicy: String? = null,
     ) {
         val target = hostId ?: _state.value.selectedHostId ?: return
         detachSession()
@@ -926,7 +889,7 @@ class RemotexViewModel(
                 tokensOutput = 0L,
                 tokensCached = 0L,
                 tokensReasoning = 0L,
-                orchestrator = OrchestratorState(),
+                goal = null,
             )
         }
         viewModelScope.launch {
@@ -936,12 +899,6 @@ class RemotexViewModel(
                     target,
                     resumeThreadId = resumeThreadId,
                     cwd = cwd,
-                    kind = kind,
-                    task = task,
-                    model = model,
-                    effort = effort,
-                    permissions = permissions,
-                    approvalPolicy = approvalPolicy,
                 )
             } catch (t: Throwable) {
                 _state.update {
@@ -954,7 +911,6 @@ class RemotexViewModel(
                     session = SessionInfo(
                         sessionId = sid,
                         hostId = target,
-                        kind = kind ?: "coder",
                     ),
                     status = Status.Connecting,
                 )
@@ -1167,6 +1123,7 @@ class RemotexViewModel(
                 slashFeedback = null,
                 resuming = false,
                 resumingSinceMs = 0L,
+                goal = null,
             )
         }
     }
@@ -1337,10 +1294,6 @@ class RemotexViewModel(
                         session = it.session?.copy(
                             model = data.string("model") ?: it.session.model,
                             cwd = data.string("cwd") ?: it.session.cwd,
-                            // Server-side truth for what the user is
-                            // actually attached to; keeps the KIND
-                            // chip honest instead of echoing the
-                            // user's preferredKind preference.
                             kind = data.string("kind") ?: it.session.kind,
                         ),
                     )
@@ -1359,23 +1312,6 @@ class RemotexViewModel(
                 } ?: false
                 val next = buildUiEvent(data, itemId, itemType, replayed)
                 appendEventOnce(next)
-                if (
-                    itemType == "collab_agent_tool_call" &&
-                    data.string("_orchestrator_role") == "brain"
-                ) {
-                    val event = normalizeSubagentEvent(data, "item-started")
-                    _state.update { s ->
-                        s.copy(
-                            orchestrator = s.orchestrator.copy(
-                                active = true,
-                                brainSubagents = upsertSubagentEvent(
-                                    s.orchestrator.brainSubagents,
-                                    event,
-                                ),
-                            ),
-                        )
-                    }
-                }
                 if (itemType == "user_message" && !replayed) {
                     _state.update { it.copy(pending = true) }
                 }
@@ -1421,23 +1357,6 @@ class RemotexViewModel(
                             else -> e
                         }
                     })
-                }
-                if (
-                    data.string("item_type") == "collab_agent_tool_call" &&
-                    data.string("_orchestrator_role") == "brain"
-                ) {
-                    val event = normalizeSubagentEvent(data, "item-completed")
-                    _state.update { s ->
-                        s.copy(
-                            orchestrator = s.orchestrator.copy(
-                                active = true,
-                                brainSubagents = upsertSubagentEvent(
-                                    s.orchestrator.brainSubagents,
-                                    event,
-                                ),
-                            ),
-                        )
-                    }
                 }
             }
 
@@ -1486,134 +1405,12 @@ class RemotexViewModel(
                 // informational markers — consumers can render a divider later
             }
 
-            "orchestrator-plan" -> {
-                val rawSteps = (data["steps"] as? JsonArray) ?: return
-                val parsed = rawSteps.mapNotNull { (it as? JsonObject)?.let(::parseOrchStep) }
-                _state.update { s ->
-                    val keepLive = s.orchestrator.steps.associateBy { it.stepId }
-                    val merged = parsed.map { step ->
-                        keepLive[step.stepId]?.let { step.copy(live = it.live) } ?: step
-                    }
-                    s.copy(orchestrator = s.orchestrator.copy(active = true, steps = merged))
-                }
+            "goal-snapshot", "goal-updated" -> {
+                _state.update { it.copy(goal = normalizeGoal(data["goal"])) }
             }
 
-            "orchestrator-step-status" -> {
-                val incoming = parseOrchStep(data) ?: return
-                _state.update { s ->
-                    val existing = s.orchestrator.steps
-                    val idx = existing.indexOfFirst { it.stepId == incoming.stepId }
-                    val nextSteps = if (idx >= 0) {
-                        existing.toMutableList().apply {
-                            this[idx] = mergeOrchStep(this[idx], incoming)
-                        }
-                    } else {
-                        existing + incoming
-                    }
-                    s.copy(orchestrator = s.orchestrator.copy(active = true, steps = nextSteps))
-                }
-            }
-
-            "orchestrator-agent-event" -> {
-                _state.update { s ->
-                    s.copy(
-                        orchestrator = s.orchestrator.copy(
-                            active = true,
-                            agents = upsertAgentTranscript(s.orchestrator.agents, data),
-                        ),
-                    )
-                }
-            }
-
-            "orchestrator-step-event" -> {
-                val stepId = data.string("step_id") ?: return
-                val evKind = data.string("kind") ?: return
-                val itemType = data.string("item_type")
-                val itemId = data.string("item_id")
-                val labelExplicit = data.string("label")
-                _state.update { s ->
-                    val existing = s.orchestrator.steps
-                    val idx = existing.indexOfFirst { it.stepId == stepId }
-                    if (idx < 0) return@update s
-                    val prev = existing[idx]
-                    val prevLive = prev.live ?: OrchStepLive()
-                    val itemBoundary = itemId != null && itemId != prevLive.itemId
-                    var text = if (itemBoundary) "" else prevLive.text
-                    var label = prevLive.label
-                    var completed = prevLive.completed
-                    var subagents = prevLive.subagents
-                    when (evKind) {
-                        "item-delta" -> {
-                            val delta = data.string("delta") ?: ""
-                            if (delta.isNotEmpty()) {
-                                text = (text + delta).let {
-                                    if (it.length > 800) "…" + it.takeLast(800) else it
-                                }
-                            }
-                            completed = false
-                        }
-                        "item-started" -> {
-                            text = ""
-                            completed = false
-                            label = labelExplicit ?: when (itemType) {
-                                "agent_reasoning" -> "thinking…"
-                                "agent_message" -> "replying…"
-                                else -> itemType?.replace('_', ' ')
-                            }
-                            if (itemType == "collab_agent_tool_call") {
-                                subagents = upsertSubagentEvent(
-                                    subagents,
-                                    normalizeSubagentEvent(data, evKind),
-                                )
-                            }
-                        }
-                        "item-completed" -> {
-                            completed = true
-                            if (labelExplicit != null) label = labelExplicit
-                            if (itemType == "collab_agent_tool_call") {
-                                subagents = upsertSubagentEvent(
-                                    subagents,
-                                    normalizeSubagentEvent(data, evKind),
-                                )
-                            }
-                        }
-                        "turn-started" -> {
-                            text = ""
-                            label = "starting…"
-                            completed = false
-                        }
-                        else -> return@update s
-                    }
-                    val nextLive = prevLive.copy(
-                        text = text,
-                        label = label,
-                        itemId = itemId ?: prevLive.itemId,
-                        itemType = itemType ?: prevLive.itemType,
-                        completed = completed,
-                        subagents = subagents,
-                    )
-                    val nextSteps = existing.toMutableList().apply {
-                        this[idx] = prev.copy(live = nextLive)
-                    }
-                    s.copy(orchestrator = s.orchestrator.copy(active = true, steps = nextSteps))
-                }
-            }
-
-            "orchestrator-finished" -> {
-                val ok = (data["ok"] as? JsonPrimitive)?.contentOrNull?.let {
-                    it != "false" && it != "False"
-                } ?: true
-                val finished = OrchFinished(
-                    ok = ok,
-                    summary = data.string("summary"),
-                    error = data.string("error"),
-                )
-                _state.update { s ->
-                    s.copy(
-                        orchestrator = s.orchestrator.copy(active = true, finished = finished),
-                        pending = false,
-                    )
-                }
+            "goal-cleared" -> {
+                _state.update { it.copy(goal = null) }
             }
 
             "token-usage" -> {
@@ -1697,7 +1494,31 @@ private fun JsonObject.long(key: String): Long? =
 private fun JsonObject.obj(key: String): JsonObject? =
     (this[key] as? JsonElement) as? JsonObject
 
-private const val SUBAGENT_ACTIVITY_MAX = 24
+private fun normalizeGoal(raw: JsonElement?): ThreadGoal? {
+    val goal = raw as? JsonObject ?: return null
+    fun string(vararg keys: String): String? =
+        keys.firstNotNullOfOrNull { key -> goal.string(key) }
+    fun long(vararg keys: String): Long? =
+        keys.firstNotNullOfOrNull { key -> goal.long(key) }
+    val statusRaw = string("status").orEmpty()
+    val status = when (statusRaw.replace("-", "").replace("_", "").lowercase()) {
+        "budgetlimited" -> "budgetLimited"
+        "active" -> "active"
+        "paused" -> "paused"
+        "complete" -> "complete"
+        else -> statusRaw
+    }
+    return ThreadGoal(
+        threadId = string("thread_id", "threadId").orEmpty(),
+        objective = string("objective").orEmpty(),
+        status = status,
+        tokenBudget = long("token_budget", "tokenBudget"),
+        tokensUsed = long("tokens_used", "tokensUsed") ?: 0L,
+        timeUsedSeconds = long("time_used_seconds", "timeUsedSeconds") ?: 0L,
+        createdAt = string("created_at", "createdAt"),
+        updatedAt = string("updated_at", "updatedAt"),
+    )
+}
 
 private fun buildUiEvent(
     data: JsonObject,
@@ -1859,269 +1680,3 @@ private fun jsonText(raw: JsonElement?): String {
     if (raw == null) return ""
     return (raw as? JsonPrimitive)?.contentOrNull ?: raw.toString()
 }
-
-private fun normalizeSubagentEvent(data: JsonObject, evKind: String): OrchSubagentEvent =
-    OrchSubagentEvent(
-        id = data.string("item_id") ?: "$evKind:${data.string("tool") ?: "subagent"}",
-        agentId = data.string("agent_id")
-            ?: (data["receiver_thread_ids"] as? JsonArray)
-                ?.firstOrNull()
-                ?.jsonPrimitive
-                ?.contentOrNull
-            ?: data.string("sender_thread_id")
-            ?: "",
-        kind = data.string("kind") ?: evKind,
-        tool = data.string("tool") ?: "",
-        label = data.string("label") ?: formatCollabTool(data.string("tool")),
-        status = subagentEventStatus(data, evKind),
-        prompt = data.string("prompt") ?: "",
-        model = data.string("model") ?: "",
-        reasoningEffort = data.string("reasoning_effort") ?: "",
-        senderThreadId = data.string("sender_thread_id") ?: "",
-        receiverThreadIds = (data["receiver_thread_ids"] as? JsonArray)
-            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-            ?: emptyList(),
-        agentStates = normalizeAgentStates(data["agents_states"]),
-    )
-
-private fun subagentEventStatus(data: JsonObject, evKind: String): String =
-    data.string("status") ?: when (evKind) {
-        "item-completed" -> "completed"
-        else -> "inProgress"
-    }
-
-private fun normalizeAgentStates(raw: JsonElement?): List<OrchSubagentState> {
-    if (raw == null) return emptyList()
-    return when (raw) {
-        is JsonObject -> raw.mapNotNull { (threadId, value) ->
-            val obj = value as? JsonObject ?: return@mapNotNull null
-            OrchSubagentState(
-                threadId = threadId,
-                status = obj.string("status") ?: obj.string("state") ?: "running",
-                message = obj.string("message")
-                    ?: obj.string("summary")
-                    ?: obj.string("error")
-                    ?: "",
-            )
-        }
-        is JsonArray -> raw.mapIndexedNotNull { idx, value ->
-            val obj = value as? JsonObject ?: return@mapIndexedNotNull null
-            val threadId = obj.string("thread_id")
-                ?: obj.string("threadId")
-                ?: obj.string("id")
-                ?: idx.toString()
-            OrchSubagentState(
-                threadId = threadId,
-                status = obj.string("status") ?: obj.string("state") ?: "running",
-                message = obj.string("message")
-                    ?: obj.string("summary")
-                    ?: obj.string("error")
-                    ?: "",
-            )
-        }
-        else -> emptyList()
-    }
-}
-
-private fun upsertSubagentEvent(
-    existing: List<OrchSubagentEvent>,
-    incoming: OrchSubagentEvent,
-): List<OrchSubagentEvent> {
-    val idx = existing.indexOfFirst { it.id == incoming.id }
-    val next = if (idx >= 0) {
-        existing.toMutableList().apply {
-            this[idx] = mergeSubagentEvent(this[idx], incoming)
-        }
-    } else {
-        existing + incoming
-    }
-    return assignSubagentDepths(next.takeLast(SUBAGENT_ACTIVITY_MAX))
-}
-
-private fun mergeSubagentEvent(
-    prev: OrchSubagentEvent,
-    incoming: OrchSubagentEvent,
-): OrchSubagentEvent =
-    prev.copy(
-        kind = incoming.kind.ifBlank { prev.kind },
-        tool = incoming.tool.ifBlank { prev.tool },
-        label = incoming.label.ifBlank { prev.label },
-        status = incoming.status.ifBlank { prev.status },
-        prompt = incoming.prompt.ifBlank { prev.prompt },
-        model = incoming.model.ifBlank { prev.model },
-        reasoningEffort = incoming.reasoningEffort.ifBlank { prev.reasoningEffort },
-        senderThreadId = incoming.senderThreadId.ifBlank { prev.senderThreadId },
-        receiverThreadIds = if (incoming.receiverThreadIds.isNotEmpty()) {
-            incoming.receiverThreadIds
-        } else {
-            prev.receiverThreadIds
-        },
-        agentStates = if (incoming.agentStates.isNotEmpty()) {
-            incoming.agentStates
-        } else {
-            prev.agentStates
-        },
-    )
-
-private fun assignSubagentDepths(events: List<OrchSubagentEvent>): List<OrchSubagentEvent> {
-    val receiverDepth = mutableMapOf<String, Int>()
-    return events.map { event ->
-        val depth = receiverDepth[event.senderThreadId]?.plus(1) ?: 1
-        val boundedDepth = depth.coerceIn(1, 4)
-        event.receiverThreadIds.forEach { receiverId ->
-            receiverDepth[receiverId] = boundedDepth
-        }
-        val states = event.agentStates.map { state ->
-            state.copy(depth = (receiverDepth[state.threadId] ?: boundedDepth).coerceIn(1, 4))
-        }
-        event.copy(depth = boundedDepth, agentStates = states)
-    }
-}
-
-private fun upsertAgentTranscript(
-    agents: Map<String, OrchAgentTranscript>,
-    data: JsonObject,
-): Map<String, OrchAgentTranscript> {
-    val agentId = data.string("agent_id") ?: return agents
-    val prev = agents[agentId] ?: OrchAgentTranscript(
-        id = agentId,
-        label = data.string("label") ?: agentId,
-        parentAgentId = data.string("parent_agent_id"),
-        stepId = data.string("step_id"),
-        threadId = data.string("thread_id"),
-        depth = data.long("depth")?.toInt() ?: 0,
-    )
-    val next = prev.copy(
-        label = data.string("label") ?: prev.label,
-        parentAgentId = data.string("parent_agent_id") ?: prev.parentAgentId,
-        stepId = data.string("step_id") ?: prev.stepId,
-        threadId = data.string("thread_id") ?: prev.threadId,
-        depth = data.long("depth")?.toInt() ?: prev.depth,
-        status = agentStatusFromPayload(data, prev.status),
-        events = applyTranscriptEvent(prev.events, data),
-    )
-    return agents + (agentId to next)
-}
-
-private fun agentStatusFromPayload(data: JsonObject, previous: String): String =
-    when (data.string("kind")) {
-        "turn-completed" -> if (data.string("error") != null) "failed" else "completed"
-        "turn-started", "item-started", "item-delta" -> "running"
-        else -> previous
-    }
-
-private fun applyTranscriptEvent(events: List<UiEvent>, data: JsonObject): List<UiEvent> =
-    when (data.string("kind")) {
-        "item-started" -> {
-            val id = data.string("item_id") ?: return events
-            upsertTranscriptItem(
-                events,
-                buildUiEvent(data, id, data.string("item_type") ?: "item", replayed = false),
-            )
-        }
-        "item-delta" -> appendTranscriptDelta(events, data)
-        "item-completed" -> {
-            val id = data.string("item_id") ?: return events
-            val item = buildUiEvent(data, id, data.string("item_type") ?: "item", replayed = false)
-            val completed = when (item) {
-                is UiEvent.Agent -> item.copy(text = data.string("text") ?: item.text, completed = true)
-                is UiEvent.Reasoning -> item.copy(text = data.string("text") ?: item.text, completed = true)
-                is UiEvent.Tool -> item.copy(
-                    output = completedToolOutput(data, item.output),
-                    status = data.string("status") ?: item.status,
-                    durationMs = data.long("duration_ms") ?: item.durationMs,
-                    error = data.string("error") ?: item.error,
-                    rawResult = rawToolResult(data).ifBlank { item.rawResult },
-                    completed = true,
-                )
-                else -> item
-            }
-            upsertTranscriptItem(events, completed)
-        }
-        "approval-request" -> upsertTranscriptItem(
-            events,
-            UiEvent.System(
-                id = data.string("approval_id") ?: "approval-${events.size}",
-                label = "approval",
-                detail = data.string("reason") ?: data.string("command") ?: "approval requested",
-            ),
-        )
-        "user-input-request" -> upsertTranscriptItem(
-            events,
-            UiEvent.System(
-                id = data.string("call_id") ?: "input-${events.size}",
-                label = "prompt",
-                detail = "agent requested input",
-            ),
-        )
-        else -> events
-    }
-
-private fun upsertTranscriptItem(events: List<UiEvent>, item: UiEvent): List<UiEvent> {
-    val idx = events.indexOfFirst { it.id == item.id }
-    if (idx < 0) return events + item
-    return events.toMutableList().apply { this[idx] = item }
-}
-
-private fun appendTranscriptDelta(events: List<UiEvent>, data: JsonObject): List<UiEvent> {
-    val id = data.string("item_id") ?: return events
-    val delta = data.string("delta") ?: ""
-    val idx = events.indexOfFirst { it.id == id }
-    if (idx < 0) {
-        val itemType = data.string("item_type") ?: "agent_message"
-        val seeded = buildUiEvent(
-            buildJsonObject {
-                data.forEach { (key, value) -> put(key, value) }
-                if (itemType == "mcp_tool_call" || itemType == "dynamic_tool_call") {
-                    put("output", delta)
-                } else {
-                    put("text", delta)
-                }
-            },
-            id,
-            itemType,
-            replayed = false,
-        )
-        return events + seeded
-    }
-    return events.mapIndexed { i, event ->
-        if (i != idx) event else when (event) {
-            is UiEvent.Agent -> event.copy(text = event.text + delta)
-            is UiEvent.Reasoning -> event.copy(text = event.text + delta)
-            is UiEvent.Tool -> event.copy(output = event.output + delta)
-            else -> event
-        }
-    }
-}
-
-/** Parse one orchestrator step record. Step ids are required;
- *  everything else has sane defaults so partial updates from
- *  orchestrator-step-status (which omits unchanged fields) work. */
-internal fun parseOrchStep(o: JsonObject): OrchStep? {
-    val id = o.string("step_id") ?: return null
-    val deps = (o["deps"] as? JsonArray)?.mapNotNull {
-        (it as? JsonPrimitive)?.contentOrNull
-    } ?: emptyList()
-    return OrchStep(
-        stepId = id,
-        title = o.string("title") ?: id,
-        deps = deps,
-        status = o.string("status") ?: "pending",
-        summary = o.string("summary") ?: "",
-        childSessionId = o.string("child_session_id"),
-    )
-}
-
-/** Merge an incoming step-status patch onto an existing step,
- *  preserving the local `live` block (which only the step-event
- *  channel manages). */
-internal fun mergeOrchStep(prev: OrchStep, incoming: OrchStep): OrchStep =
-    OrchStep(
-        stepId = incoming.stepId,
-        title = incoming.title.ifBlank { prev.title },
-        deps = if (incoming.deps.isNotEmpty()) incoming.deps else prev.deps,
-        status = incoming.status,
-        summary = incoming.summary.ifBlank { prev.summary },
-        childSessionId = incoming.childSessionId ?: prev.childSessionId,
-        live = prev.live,
-    )

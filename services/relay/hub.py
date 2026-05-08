@@ -222,9 +222,8 @@ class Hub:
         to avoid sending duplicate session-open frames when multiple
         clients attach to the same newly-reserved session at once.
 
-        Orchestrator-session overrides (kind, task, approval_policy,
-        permissions, model, effort) ride along on the same session-open
-        frame. The daemon side reads these to pick the right adapter.
+        Session overrides (kind, resume thread, cwd) ride along on the
+        same session-open frame.
         """
         async with self._lock:
             frame = self.session_open_frames.get(session_id)
@@ -236,8 +235,7 @@ class Hub:
                 frame["resume_thread_id"] = overrides["thread_id"]
             if overrides.get("cwd"):
                 frame["cwd"] = overrides["cwd"]
-            for k in ("kind", "task", "approval_policy", "permissions",
-                      "model", "effort"):
+            for k in ("kind",):
                 v = overrides.get(k)
                 if v:
                     frame[k] = v

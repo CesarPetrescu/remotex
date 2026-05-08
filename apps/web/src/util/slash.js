@@ -1,6 +1,6 @@
 // Parse `/<command> [<args>]` from the composer input. Matches Android's
-// ViewModel.sendTurn parser so /cd, /pwd, /compact, /plan, /default,
-// /collab all route the same way.
+// ViewModel.sendTurn parser so /goal, /cd, /pwd, /compact, /plan,
+// and /default all route the same way.
 export function parseSlash(input) {
   const text = input.trim();
   if (!text.startsWith('/')) return null;

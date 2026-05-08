@@ -71,16 +71,6 @@ internal fun ComposerBar(
     onStop: () -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
-    // 4th chip — kind selector. When sessionKind is non-null (i.e.
-    // we're already in a session) the chip becomes a "switch session"
-    // affordance: picking the OTHER kind starts a NEW session of that
-    // kind (current one keeps running). Outside a session it falls
-    // back to setting preferredKind.
-    preferredKind: SessionKind = SessionKind.Coder,
-    sessionKind: SessionKind? = null,
-    onPreferredKindChange: (SessionKind) -> Unit = {},
-    onSwitchToCoder: () -> Unit = {},
-    onSwitchToOrchestrator: () -> Unit = {},
     // Slash command sender — composer bypasses sendTurn for these.
     onSlashCommand: (cmd: String, args: String) -> Unit = { _, _ -> },
 ) {
@@ -157,42 +147,16 @@ internal fun ComposerBar(
                         onSelect = onPermissionsChange,
                     )
                 }
-                item {
-                    CompactKindPicker(
-                        // Show the actual session kind when we have
-                        // one; outside any session, show the user's
-                        // standing preference for the next "+ New".
-                        selected = sessionKind ?: preferredKind,
-                        onSelect = { picked ->
-                            if (sessionKind != null) {
-                                if (picked == sessionKind) return@CompactKindPicker
-                                when (picked) {
-                                    SessionKind.Orchestrator -> onSwitchToOrchestrator()
-                                    SessionKind.Coder -> onSwitchToCoder()
-                                }
-                            } else {
-                                onPreferredKindChange(picked)
-                            }
-                        },
-                        // Never locked — the chip is now a real
-                        // switcher even mid-session.
-                        lockedTo = null,
-                    )
-                }
             }
-            if (sessionKind == SessionKind.Orchestrator) {
-                OrchestratorRoleChip()
-            } else {
-                // Plan-mode toggle chip (Phase C). One tap flips it on/off
-                // without typing /plan. Sends the same slash so daemon state
-                // stays the source of truth.
-                PlanChip(
-                    planMode = planMode,
-                    onClick = {
-                        onSlashCommand(if (planMode) "default" else "plan", "")
-                    },
-                )
-            }
+            // Plan-mode toggle chip. One tap flips it on/off without
+            // typing /plan. Sends the same slash so daemon state stays
+            // the source of truth.
+            PlanChip(
+                planMode = planMode,
+                onClick = {
+                    onSlashCommand(if (planMode) "default" else "plan", "")
+                },
+            )
             if (text.startsWith("/") && !text.contains(' ')) {
                 SlashAutocomplete(
                     query = text,
@@ -303,6 +267,7 @@ internal data class SlashSpec(
 )
 
 internal val KNOWN_SLASHES = listOf(
+    SlashSpec("goal", "set or inspect the native Codex goal", takesArg = true, argHint = "<objective|pause|resume|clear>"),
     SlashSpec("plan", "plan-then-act for the next turn (codex plan mode)"),
     SlashSpec("default", "clear plan mode"),
     SlashSpec("cd", "change cwd for next turns", takesArg = true, argHint = "<path>"),
@@ -333,33 +298,6 @@ private fun PlanChip(planMode: Boolean, onClick: () -> Unit) {
                 else
                     "plan mode (tap to enable for next turn)",
                 color = accent,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-            )
-        }
-    }
-}
-
-@Composable
-private fun OrchestratorRoleChip() {
-    Surface(
-        color = Amber.copy(alpha = 0.08f),
-        border = BorderStroke(1.dp, Amber.copy(alpha = 0.65f)),
-        shape = RectangleShape,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Box(
-                Modifier
-                    .size(6.dp)
-                    .background(Amber)
-            )
-            Text(
-                "orchestrator role: plan · delegate · await · finish",
-                color = Amber,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
             )

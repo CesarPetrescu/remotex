@@ -17,7 +17,7 @@ export function DashboardHeader({
   onRightView,
   leftCollapsed = false,
   onToggleLeftCollapsed,
-  hasOrchestrator = false,
+  hasGoal = false,
   pendingPromptCount = 0,
   onDashboard,
 }) {
@@ -72,11 +72,11 @@ export function DashboardHeader({
         {onRightView && (
           <div className="right-view-tabs" role="tablist" aria-label="Right sidebar">
             <RightHeaderTab
-              id="plan"
-              label="Plan"
-              active={rightView === 'plan'}
-              onClick={() => onRightView('plan')}
-              badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasOrchestrator}
+              id="goal"
+              label="Goal"
+              active={rightView === 'goal'}
+              onClick={() => onRightView('goal')}
+              badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasGoal}
             />
             <RightHeaderTab
               id="telemetry"

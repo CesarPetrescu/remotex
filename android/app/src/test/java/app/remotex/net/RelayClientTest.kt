@@ -63,7 +63,7 @@ class RelayClientTest {
     }
 
     @Test
-    fun openSessionSendsOverridesAndEscapesJsonStrings() = runTest {
+    fun openSessionSendsCodexSessionPayload() = runTest {
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "application/json")
@@ -75,12 +75,6 @@ class RelayClientTest {
             hostId = "host_1",
             resumeThreadId = "thread_1",
             cwd = "/tmp/remotex",
-            kind = "orchestrator",
-            task = "fix \"quotes\"\nand newline",
-            model = "gpt-5.4-mini",
-            effort = "low",
-            permissions = "readonly",
-            approvalPolicy = "on-failure",
         )
 
         assertEquals("sess_123", sessionId)
@@ -93,12 +87,12 @@ class RelayClientTest {
         assertEquals("host_1", body["host_id"]?.jsonPrimitive?.contentOrNull)
         assertEquals("thread_1", body["thread_id"]?.jsonPrimitive?.contentOrNull)
         assertEquals("/tmp/remotex", body["cwd"]?.jsonPrimitive?.contentOrNull)
-        assertEquals("orchestrator", body["kind"]?.jsonPrimitive?.contentOrNull)
-        assertEquals("fix \"quotes\"\nand newline", body["task"]?.jsonPrimitive?.contentOrNull)
-        assertEquals("gpt-5.4-mini", body["model"]?.jsonPrimitive?.contentOrNull)
-        assertEquals("low", body["effort"]?.jsonPrimitive?.contentOrNull)
-        assertEquals("readonly", body["permissions"]?.jsonPrimitive?.contentOrNull)
-        assertEquals("on-failure", body["approval_policy"]?.jsonPrimitive?.contentOrNull)
+        assertNull(body["kind"])
+        assertNull(body["task"])
+        assertNull(body["model"])
+        assertNull(body["effort"])
+        assertNull(body["permissions"])
+        assertNull(body["approval_policy"])
     }
 
     @Test

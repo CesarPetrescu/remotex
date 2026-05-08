@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
-import { ModelPicker, EffortPicker, PermissionsPicker, KindPicker } from './Pickers';
+import { ModelPicker, EffortPicker, PermissionsPicker } from './Pickers';
 import { SendOrStopButton } from './SendOrStopButton';
 
 // Daemon-supported slash commands. Wire matches services/daemon/adapters/stdio.py.
 const KNOWN_SLASHES = [
+  { id: 'goal', hint: 'set or inspect the native Codex goal', takesArg: true, argHint: '<objective|pause|resume|clear>' },
   { id: 'plan', hint: 'plan-then-act for the next turn (codex plan mode)', takesArg: false },
   { id: 'default', hint: 'clear plan mode', takesArg: false },
   { id: 'cd', hint: 'change cwd for next turns', takesArg: true, argHint: '<path>' },
@@ -40,21 +41,12 @@ export function Composer({
   onStop,
   onAttachImage,
   onRemoveImage,
-  // 4th chip — preferred kind for the next "+ New session". When the
-  // current session is active, sessionKind is shown read-only since
-  // you can't switch a running session in place.
-  preferredKind = 'coder',
-  sessionKind = null,
-  onPreferredKindChange,
-  onOpenOrchestrator,
-  onOpenCoder,
   onSlashCommand,
 }) {
   const [text, setText] = useState('');
   const [slashIdx, setSlashIdx] = useState(0);
   const fileInputRef = useRef(null);
   const enabled = connected && !pending;
-  const isOrchestrator = sessionKind === 'orchestrator';
   const canSend = enabled && (text.trim().length > 0 || pendingImages.length > 0);
 
   // Slash-autocomplete: when the input starts with "/" and has no
@@ -158,53 +150,20 @@ export function Composer({
         <ModelPicker value={model} models={models} onChange={onModelChange} />
         <EffortPicker model={model} value={effort} models={models} onChange={onEffortChange} />
         <PermissionsPicker value={permissions} onChange={onPermissionsChange} />
-        <KindPicker
-          value={sessionKind || preferredKind}
-          onChange={(kind) => {
-            // The chip is a "switch session" affordance — picking the
-            // OTHER kind starts a fresh session of that kind. The
-            // current session keeps running until the user navigates
-            // away. Picking the same kind we're already in is a no-op
-            // (no point starting a duplicate). Outside any session
-            // (sessionKind null) we still update preferredKind so a
-            // reload remembers the user's last pick.
-            if (sessionKind) {
-              if (kind === sessionKind) return;
-              if (kind === 'orchestrator') onOpenOrchestrator?.();
-              else if (kind === 'coder') onOpenCoder?.();
-              return;
-            }
-            onPreferredKindChange?.(kind);
-          }}
-          locked={false}
-          lockedReason=""
-        />
       </div>
-      {isOrchestrator ? (
-        <div className="plan-row">
-          <span
-            className="orchestrator-role-chip"
-            title="This brain should only use orchestrator MCP tools and delegate concrete work to child agents."
-          >
-            <span className="plan-chip-dot" />
-            orchestrator role: plan · delegate · await · finish
-          </span>
-        </div>
-      ) : (
-        <div className="plan-row">
-          <button
-            type="button"
-            className={`plan-chip ${planMode ? 'on' : ''}`}
-            onClick={() => onSlashCommand?.(planMode ? 'default' : 'plan', '')}
-            title={planMode
-              ? 'Plan mode is on — codex will plan before acting on the next turn'
-              : 'Toggle plan mode for the next turn (codex /plan)'}
-          >
-            <span className="plan-chip-dot" />
-            {planMode ? 'plan mode active — tap to clear' : 'plan mode (tap to enable for next turn)'}
-          </button>
-        </div>
-      )}
+      <div className="plan-row">
+        <button
+          type="button"
+          className={`plan-chip ${planMode ? 'on' : ''}`}
+          onClick={() => onSlashCommand?.(planMode ? 'default' : 'plan', '')}
+          title={planMode
+            ? 'Plan mode is on - codex will plan before acting on the next turn'
+            : 'Toggle plan mode for the next turn (codex /plan)'}
+        >
+          <span className="plan-chip-dot" />
+          {planMode ? 'plan mode active - tap to clear' : 'plan mode (tap to enable for next turn)'}
+        </button>
+      </div>
       {slashOpen && slashMatches.length > 0 && (
         <div className="slash-popover" role="listbox">
           {slashMatches.map((cmd, i) => (
@@ -243,13 +202,7 @@ export function Composer({
         <textarea
           className="prompt"
           rows={1}
-          placeholder={
-            pending
-              ? ''
-              : isOrchestrator
-                ? 'tell the orchestrator what to delegate'
-                : 'ask codex'
-          }
+          placeholder={pending ? '' : 'ask codex'}
           value={text}
           onChange={(e) => enabled && setText(e.target.value)}
           onKeyDown={onKeyDown}

@@ -14,7 +14,6 @@ import { buildUrl, parseUrl } from '../util/url';
 
 const TOKEN_KEY = 'remotex.userToken';
 const PROMPT_BACKUP_PREFIX = 'remotex.pendingPrompts.';
-const SUBAGENT_ACTIVITY_MAX = 24;
 const loadToken = () => {
   try {
     return localStorage.getItem(TOKEN_KEY) || 'demo-user-token';
@@ -95,6 +94,36 @@ function normalizePromptSnapshot(frame = {}) {
   };
 }
 
+function normalizeGoal(goal) {
+  if (!goal || typeof goal !== 'object') return null;
+  const statusText = String(goal.status || '').replace(/[-_]/g, '').toLowerCase();
+  const status = statusText === 'budgetlimited'
+    ? 'budgetLimited'
+    : statusText === 'active'
+      ? 'active'
+      : statusText === 'paused'
+        ? 'paused'
+        : statusText === 'complete'
+          ? 'complete'
+          : (goal.status || '');
+  const number = (value, fallback = 0) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && /^-?\d+$/.test(value)) return parseInt(value, 10);
+    return fallback;
+  };
+  const budget = goal.token_budget ?? goal.tokenBudget ?? null;
+  return {
+    thread_id: goal.thread_id || goal.threadId || '',
+    objective: goal.objective || '',
+    status,
+    token_budget: budget === null || budget === undefined ? null : number(budget, null),
+    tokens_used: number(goal.tokens_used ?? goal.tokensUsed),
+    time_used_seconds: number(goal.time_used_seconds ?? goal.timeUsedSeconds),
+    created_at: goal.created_at ?? goal.createdAt ?? null,
+    updated_at: goal.updated_at ?? goal.updatedAt ?? null,
+  };
+}
+
 const initialState = {
   screen: SCREENS.Hosts,
   userToken: loadToken(),
@@ -130,11 +159,7 @@ const initialState = {
   pendingApproval: null,
   slashFeedback: null,
   planMode: false,
-  // Preferred kind for the next "+ New session" tap. The Composer's
-  // 4th chip surfaces this; persisted to localStorage so it sticks.
-  preferredKind: (() => {
-    try { return localStorage.getItem('remotex.preferredKind') || 'coder'; } catch { return 'coder'; }
-  })(),
+  goal: null,
   // True between thread-status:resuming and thread-status:resumed/resume-failed.
   // Codex can take a minute+ to re-hydrate big rollouts; surfaced as a banner.
   resuming: false,
@@ -158,14 +183,6 @@ const initialState = {
   // on first paint and replaces this fallback. See services/relay/models.py
   // for the canonical source of truth.
   modelOptions: FALLBACK_MODEL_OPTIONS,
-  // Orchestrator session shape: {
-  //   active: bool,            // true when the active session is kind=orchestrator
-  //   steps: [{ step_id, title, deps, status, summary, child_session_id, ... }],
-  //   brainSubagents: [{ id, tool, status, depth, ... }],
-  //   agents: { [agent_id]: { id, label, step_id, thread_id, events: [] } },
-  //   finished: { ok, summary?, error? } | null,
-  // }
-  orchestrator: { active: false, steps: [], finished: null, brainSubagents: [], agents: {} },
 };
 
 const TELEMETRY_HISTORY_MAX = 60;
@@ -182,9 +199,6 @@ function reducer(state, action) {
       return { ...state, error: action.error };
     case 'CLEAR_FEEDBACK':
       return { ...state, slashFeedback: null };
-    case 'SET_PREFERRED_KIND':
-      try { localStorage.setItem('remotex.preferredKind', action.kind); } catch { /* private mode */ }
-      return { ...state, preferredKind: action.kind };
 
     case 'HOSTS':
       return { ...state, hosts: action.hosts, hostsLoading: false };
@@ -296,118 +310,12 @@ function reducer(state, action) {
         tokensCached: 0,
         tokensReasoning: 0,
         status: action.status ?? STATUS.Idle,
-        orchestrator: { active: false, steps: [], finished: null, brainSubagents: [], agents: {} },
+        goal: null,
       };
-    case 'ORCHESTRATOR_BEGIN':
-      return {
-        ...state,
-        orchestrator: { active: true, steps: [], finished: null, brainSubagents: [], agents: {} },
-      };
-    case 'ORCHESTRATOR_PLAN': {
-      const existingById = new Map(
-        (state.orchestrator.steps || []).map((step) => [step.step_id, step]),
-      );
-      const steps = (action.steps || []).map((step) => {
-        const prev = existingById.get(step.step_id);
-        return prev?.live ? { ...step, live: prev.live } : step;
-      });
-      return {
-        ...state,
-        orchestrator: {
-          ...state.orchestrator,
-          active: true,
-          steps,
-        },
-      };
-    }
-    case 'ORCHESTRATOR_STEP_STATUS': {
-      const incoming = action.step;
-      if (!incoming?.step_id) return state;
-      const existing = state.orchestrator.steps;
-      const idx = existing.findIndex((s) => s.step_id === incoming.step_id);
-      let nextSteps;
-      if (idx >= 0) {
-        nextSteps = existing.slice();
-        nextSteps[idx] = { ...existing[idx], ...incoming };
-      } else {
-        nextSteps = [...existing, incoming];
-      }
-      return {
-        ...state,
-        orchestrator: { ...state.orchestrator, active: true, steps: nextSteps },
-      };
-    }
-    case 'ORCHESTRATOR_STEP_LIVE': {
-      // Live progress for one child step: appends streaming text or
-      // sets the current "what's running" label. Cap accumulated text
-      // so a chatty child doesn't bloat the React state.
-      const { step_id, patch } = action;
-      if (!step_id || !patch) return state;
-      const existing = state.orchestrator.steps;
-      const idx = existing.findIndex((s) => s.step_id === step_id);
-      if (idx < 0) return state;
-      const prev = existing[idx];
-      const prevLive = prev.live || { text: '', label: null, item_id: null, subagents: [] };
-      const nextLive = { ...prevLive };
-      // Item boundary: a new item_id wipes the running text buffer so
-      // we don't bleed one step's reasoning into the next message.
-      if (patch.item_id && patch.item_id !== prevLive.item_id) {
-        nextLive.text = '';
-      }
-      if (patch.reset_text) nextLive.text = '';
-      if (patch.delta) {
-        nextLive.text = (nextLive.text || '') + patch.delta;
-        if (nextLive.text.length > 800) {
-          nextLive.text = '…' + nextLive.text.slice(-800);
-        }
-      }
-      if ('label' in patch) nextLive.label = patch.label;
-      if ('item_id' in patch) nextLive.item_id = patch.item_id;
-      if ('item_type' in patch) nextLive.item_type = patch.item_type;
-      if ('completed' in patch) nextLive.completed = patch.completed;
-      if (patch.subagentEvent) {
-        nextLive.subagents = upsertSubagentEvent(nextLive.subagents, patch.subagentEvent);
-      }
-      const nextSteps = existing.slice();
-      nextSteps[idx] = { ...prev, live: nextLive };
-      return {
-        ...state,
-        orchestrator: { ...state.orchestrator, active: true, steps: nextSteps },
-      };
-    }
-    case 'ORCHESTRATOR_BRAIN_SUBAGENT':
-      return {
-        ...state,
-        orchestrator: {
-          ...state.orchestrator,
-          active: true,
-          brainSubagents: upsertSubagentEvent(
-            state.orchestrator.brainSubagents,
-            action.event,
-          ),
-        },
-      };
-    case 'ORCHESTRATOR_AGENT_EVENT':
-      return {
-        ...state,
-        orchestrator: {
-          ...state.orchestrator,
-          active: true,
-          agents: upsertAgentTranscript(
-            state.orchestrator.agents,
-            action.payload,
-          ),
-        },
-      };
-    case 'ORCHESTRATOR_FINISHED':
-      return {
-        ...state,
-        orchestrator: {
-          ...state.orchestrator,
-          active: true,
-          finished: action.payload,
-        },
-      };
+    case 'GOAL_SET':
+      return { ...state, goal: action.goal || null };
+    case 'GOAL_CLEAR':
+      return { ...state, goal: null };
     case 'TOKEN_USAGE':
       return {
         ...state,
@@ -559,6 +467,7 @@ export function useRemotex() {
     selectedHostId: state.selectedHostId,
     userToken: state.userToken,
     sessionId: state.session?.sessionId,
+    goal: state.goal,
   };
 
   useEffect(() => {
@@ -601,20 +510,6 @@ export function useRemotex() {
     dispatch({ type: 'SESSION_RESET', status });
   }, []);
 
-  const hydrateOrchestratorPlan = useCallback((sid) => {
-    if (!sid) return;
-    apiRef.current
-      .getOrchestratorPlan(sid)
-      .then((snapshot) => {
-        if (snapshot?.kind !== 'orchestrator') return;
-        dispatch({ type: 'ORCHESTRATOR_PLAN', steps: snapshot.steps || [] });
-        dispatch({ type: 'SESSION_INFO', info: { kind: 'orchestrator' } });
-      })
-      .catch(() => {
-        // Non-orchestrator sessions return 400 here; ignore.
-      });
-  }, []);
-
   const handleFrame = useCallback((frame) => {
     if (frame.type === 'attached') {
       reconnectAttemptRef.current = 0;
@@ -632,7 +527,6 @@ export function useRemotex() {
           peerCount: frame.peer_count,
         },
       });
-      hydrateOrchestratorPlan(frame.session_id);
       const backup = readPromptBackup(frame.session_id);
       if (backup?.approval || backup?.userInput) {
         dispatch({
@@ -702,16 +596,7 @@ export function useRemotex() {
               ? STATUS.Connecting
               : STATUS.Connected,
         });
-        dispatch({
-          type: 'SESSION_INFO',
-          // Spread `kind` only when present — older daemon builds
-          // don't include it and we don't want to overwrite an
-          // optimistic `kind: 'orchestrator'` set in
-          // openOrchestratorSession with `undefined`.
-          info: data.kind
-            ? { model: data.model, cwd: data.cwd, kind: data.kind }
-            : { model: data.model, cwd: data.cwd },
-        });
+        dispatch({ type: 'SESSION_INFO', info: { model: data.model, cwd: data.cwd } });
         dispatch({
           type: 'SET_ERROR',
           error: readOnlyHistory
@@ -725,12 +610,6 @@ export function useRemotex() {
       case 'item-started': {
         const ev = buildItemEvent(data);
         if (ev) dispatch({ type: 'APPEND_EVENT', event: ev });
-        if (data.item_type === 'collab_agent_tool_call' && data._orchestrator_role === 'brain') {
-          dispatch({
-            type: 'ORCHESTRATOR_BRAIN_SUBAGENT',
-            event: normalizeSubagentEvent({ ...data, kind: 'item-started' }),
-          });
-        }
         if (data.item_type === 'user_message' && !data.replayed) {
           dispatch({ type: 'PENDING', pending: true });
         }
@@ -763,12 +642,6 @@ export function useRemotex() {
           patch.output = formatCollabStatus(data);
         }
         dispatch({ type: 'COMPLETE_EVENT', id: data.item_id, patch });
-        if (data.item_type === 'collab_agent_tool_call' && data._orchestrator_role === 'brain') {
-          dispatch({
-            type: 'ORCHESTRATOR_BRAIN_SUBAGENT',
-            event: normalizeSubagentEvent({ ...data, kind: 'item-completed' }),
-          });
-        }
         return;
       }
       case 'turn-completed':
@@ -853,88 +726,25 @@ export function useRemotex() {
         });
         return;
       }
+      case 'goal-snapshot':
+        dispatch({ type: 'GOAL_SET', goal: normalizeGoal(data.goal) });
+        return;
+      case 'goal-updated':
+        dispatch({ type: 'GOAL_SET', goal: normalizeGoal(data.goal) });
+        return;
+      case 'goal-cleared':
+        dispatch({ type: 'GOAL_CLEAR' });
+        return;
       case 'turn-started':
         dispatch({ type: 'PENDING', pending: true });
         return;
       case 'history-begin':
       case 'history-end':
         return;
-      case 'orchestrator-plan':
-        dispatch({ type: 'ORCHESTRATOR_PLAN', steps: data.steps || [] });
-        return;
-      case 'orchestrator-step-status':
-        dispatch({ type: 'ORCHESTRATOR_STEP_STATUS', step: data });
-        return;
-      case 'orchestrator-agent-event':
-        dispatch({ type: 'ORCHESTRATOR_AGENT_EVENT', payload: data });
-        return;
-      case 'orchestrator-step-event': {
-        // Per-step live progress — text deltas, current tool/file
-        // label, and completion markers. The reducer accumulates a
-        // bounded `live.text` per step so the UI can show what the
-        // child is doing right now without re-rendering the brain's
-        // own event stream.
-        const stepId = data.step_id;
-        if (!stepId) return;
-        const kind = data.kind;
-        const itemType = data.item_type;
-        const patch = {};
-        if (kind === 'item-delta') {
-          patch.item_id = data.item_id;
-          patch.item_type = itemType;
-          patch.delta = data.delta || '';
-          // A new item replaces the previous live text. Detect via
-          // item_id boundary: if the daemon sent a different item_id,
-          // start fresh.
-          patch._maybeReset = true;
-        } else if (kind === 'item-started') {
-          patch.item_id = data.item_id;
-          patch.item_type = itemType;
-          patch.completed = false;
-          patch.reset_text = true;
-          if (data.label) patch.label = data.label;
-          else if (itemType === 'agent_message' || itemType === 'agent_reasoning') {
-            patch.label = itemType === 'agent_reasoning' ? 'thinking…' : 'replying…';
-          } else if (itemType) {
-            patch.label = itemType.replace(/_/g, ' ');
-          }
-          if (itemType === 'collab_agent_tool_call') {
-            patch.subagentEvent = normalizeSubagentEvent(data);
-          }
-        } else if (kind === 'item-completed') {
-          patch.item_id = data.item_id;
-          patch.item_type = itemType;
-          patch.completed = true;
-          if (data.label) patch.label = data.label;
-          if (data.text) patch.delta = ''; // text already streamed
-          if (itemType === 'collab_agent_tool_call') {
-            patch.subagentEvent = normalizeSubagentEvent(data);
-          }
-        } else if (kind === 'turn-started') {
-          patch.label = 'starting…';
-          patch.reset_text = true;
-        } else {
-          return;
-        }
-        delete patch._maybeReset;
-        dispatch({ type: 'ORCHESTRATOR_STEP_LIVE', step_id: stepId, patch });
-        return;
-      }
-      case 'orchestrator-finished':
-        dispatch({
-          type: 'ORCHESTRATOR_FINISHED',
-          payload: {
-            ok: data.ok !== false,
-            summary: data.summary || null,
-            error: data.error || null,
-          },
-        });
-        dispatch({ type: 'PENDING', pending: false });
-        return;
       default:
         return;
     }
-  }, [hydrateOrchestratorPlan]);
+  }, []);
 
   // attachSocket + scheduleReconnect form a cycle (attach emits
   // disconnect → schedule → reattach). Use refs to break the cycle so
@@ -1261,55 +1071,6 @@ export function useRemotex() {
     [attachSocket, detachSession],
   );
 
-  // Orchestrator entrypoint. The relay opens a kind=orchestrator
-  // session, the daemon spawns the brain Codex with the orchestration
-  // system prompt, and child Codex sessions are spawned per planned
-  // step. The user supplies a free-text task plus the policies that
-  // every child inherits — model, effort, sandbox/approval permissions.
-  const openOrchestratorSession = useCallback(
-    async ({
-      task,
-      cwd = null,
-      hostId: hostOverride = null,
-      model = null,
-      effort = null,
-      permissions = null,
-      approvalPolicy = null,
-    }) => {
-      const hostId = hostOverride || latestInputsRef.current.selectedHostId;
-      if (!hostId) return;
-      const cleaned = (task || '').trim();
-      if (!cleaned) {
-        dispatch({ type: 'SET_ERROR', error: 'orchestrator: task is required' });
-        return;
-      }
-      detachSession(STATUS.Opening);
-      userClosedRef.current = false;
-      dispatch({ type: 'ORCHESTRATOR_BEGIN' });
-      dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
-      try {
-        const sid = await apiRef.current.openSession(hostId, {
-          cwd,
-          kind: 'orchestrator',
-          task: cleaned,
-          model: model || latestInputsRef.current.model,
-          effort: effort || latestInputsRef.current.effort,
-          permissions: permissions || latestInputsRef.current.permissions,
-          approvalPolicy,
-        });
-        dispatch({
-          type: 'SESSION_ATTACHED',
-          session: { sessionId: sid, hostId, cwd: cwd || null, kind: 'orchestrator' },
-        });
-        attachSocket(sid);
-      } catch (t) {
-        dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });
-        dispatch({ type: 'SET_ERROR', error: t.message });
-      }
-    },
-    [attachSocket, detachSession],
-  );
-
   const searchAbortRef = useRef(null);
   const searchChats = useCallback(async (query, { mode = 'hybrid', rerank = 'auto' } = {}) => {
     const cleaned = (query || '').trim();
@@ -1443,6 +1204,45 @@ export function useRemotex() {
     if (cmd === 'plan') dispatch({ type: 'SET_PLAN', on: true });
     if (cmd === 'default') dispatch({ type: 'SET_PLAN', on: false });
     return true;
+  }, []);
+
+  const refreshGoal = useCallback(() => {
+    if (!socketRef.current?.sendGoalGet()) {
+      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+    }
+  }, []);
+
+  const setGoal = useCallback(({ objective, tokenBudget = undefined } = {}) => {
+    const cleaned = (objective || '').trim();
+    if (!cleaned) {
+      dispatch({ type: 'SET_ERROR', error: 'goal objective is required' });
+      return;
+    }
+    if (!socketRef.current?.sendGoalSet({
+      objective: cleaned,
+      status: 'active',
+      tokenBudget,
+    })) {
+      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+    }
+  }, []);
+
+  const pauseGoal = useCallback(() => {
+    if (!socketRef.current?.sendGoalSet({ status: 'paused' })) {
+      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+    }
+  }, []);
+
+  const resumeGoal = useCallback(() => {
+    if (!socketRef.current?.sendGoalSet({ status: 'active' })) {
+      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+    }
+  }, []);
+
+  const clearGoal = useCallback(() => {
+    if (!socketRef.current?.sendGoalClear()) {
+      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+    }
   }, []);
 
   const sendTurn = useCallback(
@@ -1677,19 +1477,22 @@ export function useRemotex() {
       workspaceRenameFile,
       workspaceUploadFile,
       openSession,
-      openOrchestratorSession,
       startSessionInCurrentPath: () =>
         openSession({ cwd: latestInputsRef.current.browsePath || null }),
       closeSession,
       sendTurn,
       sendSlash,
+      refreshGoal,
+      setGoal,
+      pauseGoal,
+      resumeGoal,
+      clearGoal,
       interruptTurn,
       resolveApproval,
       resolveUserInput,
       cancelUserInput,
       attachImage,
       removeImage,
-      setPreferredKind: (k) => dispatch({ type: 'SET_PREFERRED_KIND', kind: k }),
       // Internal escape hatch: WorkspaceFilesDrawer needs apiRef directly
       // so a single component can call read/rename/delete/upload without
       // dragging four wrappers through props.
@@ -1718,10 +1521,14 @@ export function useRemotex() {
       workspaceRenameFile,
       workspaceUploadFile,
       openSession,
-      openOrchestratorSession,
       closeSession,
       sendTurn,
       sendSlash,
+      refreshGoal,
+      setGoal,
+      pauseGoal,
+      resumeGoal,
+      clearGoal,
       interruptTurn,
       resolveApproval,
       resolveUserInput,
@@ -1874,220 +1681,6 @@ function formatJsonPreview(value) {
   } catch {
     return String(value);
   }
-}
-
-function normalizeSubagentEvent(data = {}) {
-  return {
-    id: data.item_id || '',
-    agent_id: data.agent_id || firstString(data.receiver_thread_ids) || data.sender_thread_id || '',
-    kind: data.kind || '',
-    tool: data.tool || '',
-    label: data.label || formatCollabTool(data.tool),
-    status: subagentEventStatus(data),
-    prompt: data.prompt || '',
-    model: data.model || '',
-    reasoning_effort: data.reasoning_effort || '',
-    sender_thread_id: data.sender_thread_id || '',
-    receiver_thread_ids: Array.isArray(data.receiver_thread_ids)
-      ? data.receiver_thread_ids.filter(Boolean)
-      : [],
-    agents_states: normalizeAgentStates(data.agents_states),
-  };
-}
-
-function firstString(value) {
-  return Array.isArray(value) ? value.find((v) => typeof v === 'string' && v) || '' : '';
-}
-
-function subagentEventStatus(data = {}) {
-  if (data.status) return data.status;
-  if (data.kind === 'item-completed') return 'completed';
-  if (data.kind === 'item-started') return 'inProgress';
-  return 'inProgress';
-}
-
-function normalizeAgentStates(raw) {
-  if (!raw) return [];
-  const entries = Array.isArray(raw)
-    ? raw.map((value, idx) => [value?.thread_id || value?.threadId || value?.id || String(idx), value])
-    : Object.entries(raw);
-  return entries
-    .filter(([threadId, value]) => threadId && value && typeof value === 'object')
-    .map(([threadId, value]) => ({
-      thread_id: threadId,
-      status: value.status || value.state || 'running',
-      message: value.message || value.summary || value.error || '',
-    }));
-}
-
-function upsertSubagentEvent(list = [], event = {}) {
-  const prev = Array.isArray(list) ? list : [];
-  const id = event.id || `${event.kind || 'event'}:${event.tool || 'subagent'}:${prev.length}`;
-  const nextEvent = { ...event, id };
-  const idx = prev.findIndex((item) => item.id === id);
-  const next = idx >= 0
-    ? prev.map((item, i) => (i === idx ? mergeSubagentEvent(item, nextEvent) : item))
-    : [...prev, nextEvent];
-  return assignSubagentDepths(next.slice(-SUBAGENT_ACTIVITY_MAX));
-}
-
-function mergeSubagentEvent(prev, incoming) {
-  return {
-    ...prev,
-    ...incoming,
-    label: incoming.label || prev.label,
-    status: incoming.status || prev.status,
-    prompt: incoming.prompt || prev.prompt,
-    model: incoming.model || prev.model,
-    reasoning_effort: incoming.reasoning_effort || prev.reasoning_effort,
-    sender_thread_id: incoming.sender_thread_id || prev.sender_thread_id,
-    receiver_thread_ids: incoming.receiver_thread_ids?.length
-      ? incoming.receiver_thread_ids
-      : prev.receiver_thread_ids || [],
-    agents_states: incoming.agents_states?.length
-      ? incoming.agents_states
-      : prev.agents_states || [],
-  };
-}
-
-function assignSubagentDepths(events) {
-  const receiverDepth = new Map();
-  return events.map((event) => {
-    let depth = 1;
-    if (event.sender_thread_id && receiverDepth.has(event.sender_thread_id)) {
-      depth = receiverDepth.get(event.sender_thread_id) + 1;
-    }
-    const boundedDepth = Math.min(Math.max(depth, 1), 4);
-    for (const receiverId of event.receiver_thread_ids || []) {
-      receiverDepth.set(receiverId, boundedDepth);
-    }
-    const agentsStates = (event.agents_states || []).map((agent) => ({
-      ...agent,
-      depth: agent.thread_id && receiverDepth.has(agent.thread_id)
-        ? receiverDepth.get(agent.thread_id)
-        : boundedDepth,
-    }));
-    return { ...event, depth: boundedDepth, agents_states: agentsStates };
-  });
-}
-
-function upsertAgentTranscript(agents = {}, payload = {}) {
-  const agentId = payload.agent_id;
-  if (!agentId) return agents || {};
-  const prev = agents?.[agentId] || {
-    id: agentId,
-    label: payload.label || agentId,
-    parent_agent_id: payload.parent_agent_id || null,
-    step_id: payload.step_id || null,
-    thread_id: payload.thread_id || null,
-    depth: payload.depth ?? 0,
-    status: 'running',
-    events: [],
-  };
-  const next = {
-    ...prev,
-    label: payload.label || prev.label,
-    parent_agent_id: payload.parent_agent_id ?? prev.parent_agent_id,
-    step_id: payload.step_id ?? prev.step_id,
-    thread_id: payload.thread_id ?? prev.thread_id,
-    depth: payload.depth ?? prev.depth,
-    status: agentStatusFromPayload(payload, prev.status),
-    events: applyTranscriptEvent(prev.events, payload),
-  };
-  return { ...(agents || {}), [agentId]: next };
-}
-
-function agentStatusFromPayload(payload, prevStatus) {
-  if (payload.kind === 'turn-completed') {
-    return payload.error ? 'failed' : 'completed';
-  }
-  if (payload.kind === 'turn-started' || payload.kind === 'item-started' || payload.kind === 'item-delta') {
-    return 'running';
-  }
-  return prevStatus || 'running';
-}
-
-function applyTranscriptEvent(events = [], payload = {}) {
-  const kind = payload.kind;
-  if (kind === 'item-started') {
-    const event = buildItemEvent({ ...payload, replayed: false });
-    return event ? upsertTranscriptItem(events, event) : events;
-  }
-  if (kind === 'item-delta') {
-    return appendTranscriptDelta(events, payload);
-  }
-  if (kind === 'item-completed') {
-    const event = buildItemEvent({ ...payload, replayed: false });
-    const patch = completedPatchForItem(payload);
-    return upsertTranscriptItem(events, { ...event, ...patch, completed: true });
-  }
-  if (kind === 'approval-request') {
-    return upsertTranscriptItem(events, {
-      id: payload.approval_id || `approval-${events.length}`,
-      role: 'system',
-      label: 'approval',
-      detail: payload.reason || payload.command || 'approval requested',
-    });
-  }
-  if (kind === 'user-input-request') {
-    return upsertTranscriptItem(events, {
-      id: payload.call_id || `input-${events.length}`,
-      role: 'system',
-      label: 'prompt',
-      detail: 'agent requested input',
-    });
-  }
-  return events;
-}
-
-function completedPatchForItem(data = {}) {
-  if (data.item_type === 'agent_message' || data.item_type === 'agent_reasoning') {
-    return data.text ? { text: data.text } : {};
-  }
-  if (data.item_type === 'tool_call') {
-    return data.output ? { output: data.output } : {};
-  }
-  if (data.item_type === 'mcp_tool_call') {
-    return { output: formatMcpOutput(data) };
-  }
-  if (data.item_type === 'dynamic_tool_call') {
-    return { output: formatDynamicOutput(data) };
-  }
-  if (data.item_type === 'collab_agent_tool_call') {
-    return { output: formatCollabStatus(data) };
-  }
-  return {};
-}
-
-function upsertTranscriptItem(events = [], event) {
-  if (!event?.id) return events;
-  const idx = events.findIndex((item) => item.id === event.id);
-  if (idx >= 0) {
-    return events.map((item, i) => (i === idx ? { ...item, ...event } : item));
-  }
-  return [...events, event];
-}
-
-function appendTranscriptDelta(events = [], payload = {}) {
-  const id = payload.item_id;
-  if (!id) return events;
-  const idx = events.findIndex((item) => item.id === id);
-  if (idx < 0) {
-    const event = buildItemEvent({
-      ...payload,
-      item_id: id,
-      output: payload.item_type === 'mcp_tool_call' ? payload.delta || '' : '',
-      text: payload.item_type !== 'mcp_tool_call' ? payload.delta || '' : '',
-    });
-    return event ? [...events, event] : events;
-  }
-  return events.map((event, i) => {
-    if (i !== idx) return event;
-    if (event.role === 'tool') {
-      return { ...event, output: (event.output || '') + (payload.delta || '') };
-    }
-    return { ...event, text: (event.text || '') + (payload.delta || '') };
-  });
 }
 
 async function readAsBase64(file) {

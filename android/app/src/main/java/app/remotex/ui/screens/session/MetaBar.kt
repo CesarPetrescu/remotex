@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.ui.UiState
 import app.remotex.ui.theme.Amber
-import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
 import app.remotex.ui.theme.Line
@@ -29,7 +28,6 @@ import app.remotex.ui.theme.Line
 @Composable
 internal fun MetaBar(state: UiState) {
     val info = state.session
-    val isOrchestrator = info?.kind == "orchestrator"
     val text = when {
         info == null -> "no session"
         else -> buildString {
@@ -53,7 +51,9 @@ internal fun MetaBar(state: UiState) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            KindBadge(isOrchestrator)
+            state.goal?.let {
+                GoalBadge(it.status)
+            }
             if (haveTokens) {
                 Spacer(Modifier.width(8.dp))
                 TokenChip(state)
@@ -63,17 +63,16 @@ internal fun MetaBar(state: UiState) {
 }
 
 @Composable
-private fun KindBadge(isOrchestrator: Boolean) {
-    val label = if (isOrchestrator) "ORCHESTRATOR" else "CODER"
-    val accent = if (isOrchestrator) Amber else AccentDeep
+private fun GoalBadge(status: String) {
+    val active = status == "active"
     Surface(
-        color = if (isOrchestrator) Amber.copy(alpha = 0.07f) else Color.Transparent,
-        border = BorderStroke(1.dp, if (isOrchestrator) Amber.copy(alpha = 0.72f) else Line),
+        color = if (active) Amber.copy(alpha = 0.07f) else Color.Transparent,
+        border = BorderStroke(1.dp, if (active) Amber.copy(alpha = 0.72f) else Line),
         shape = RectangleShape,
     ) {
         Text(
-            label,
-            color = accent,
+            "GOAL ${status.uppercase()}",
+            color = if (active) Amber else InkDim,
             fontFamily = FontFamily.Monospace,
             fontSize = 9.sp,
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),

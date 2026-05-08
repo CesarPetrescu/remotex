@@ -21,8 +21,13 @@ function shortenCwdLeft(cwd, max = 36) {
   return '…' + (slash > 0 ? tail.slice(slash) : tail);
 }
 
-function sessionKindLabel(kind) {
-  return kind === 'orchestrator' ? 'orchestrator' : 'coder';
+function goalStatusLabel(goal) {
+  if (!goal) return '';
+  const status = goal.status || 'active';
+  const used = Number.isFinite(goal.tokens_used) ? goal.tokens_used : 0;
+  const budget = Number.isFinite(goal.token_budget) ? goal.token_budget : 0;
+  const usage = budget > 0 ? ` ${formatK(used)}/${formatK(budget)}` : '';
+  return `goal ${status}${usage}`;
 }
 
 export function SessionScreen({
@@ -37,7 +42,6 @@ export function SessionScreen({
   workspaceApi,
 }) {
   const info = state.session;
-  const sessionKind = sessionKindLabel(info?.kind);
   const hostId = info?.hostId;
   const cwd = info?.cwd || '/';
   const totalIn = state.tokensInput + state.tokensCached;
@@ -80,16 +84,14 @@ export function SessionScreen({
       <div className="session-meta">
         <div className="session-meta-row1">
           <span className="session-meta-title" title={chatTitle}>{chatTitle}</span>
-          <span
-            className={`session-kind-badge ${sessionKind}`}
-            title={
-              sessionKind === 'orchestrator'
-                ? 'Orchestrator brain: plans and delegates through orchestrator MCP tools'
-                : 'Coder session: one Codex agent works directly in this thread'
-            }
-          >
-            {sessionKind === 'orchestrator' ? 'orchestrator brain' : 'coder'}
-          </span>
+          {state.goal && (
+            <span
+              className={`goal-badge goal-badge-${String(state.goal.status || 'active').toLowerCase()}`}
+              title={state.goal.objective || 'Codex goal'}
+            >
+              {goalStatusLabel(state.goal)}
+            </span>
+          )}
           {haveTokens && (
             <span
               className="token-chip"
@@ -154,11 +156,6 @@ export function SessionScreen({
         onStop={onStop}
         onAttachImage={onAttachImage}
         onRemoveImage={onRemoveImage}
-        preferredKind={state.preferredKind}
-        sessionKind={sessionKind}
-        onPreferredKindChange={workspaceApi?.setPreferredKind}
-        onOpenOrchestrator={workspaceApi?.openOrchestrator}
-        onOpenCoder={workspaceApi?.openCoder}
         onSlashCommand={workspaceApi?.sendSlash}
       />
       <WorkspaceFilesDrawer

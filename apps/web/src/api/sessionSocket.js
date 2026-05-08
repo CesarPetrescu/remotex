@@ -142,6 +142,22 @@ export class SessionSocket {
     return this.send(frame);
   }
 
+  sendGoalGet() {
+    return this.send({ type: 'goal-get' });
+  }
+
+  sendGoalSet({ objective = null, status = null, tokenBudget = undefined } = {}) {
+    const frame = { type: 'goal-set' };
+    if (objective !== null && objective !== undefined) frame.objective = objective;
+    if (status) frame.status = status;
+    if (tokenBudget !== undefined) frame.token_budget = tokenBudget;
+    return this.send(frame);
+  }
+
+  sendGoalClear() {
+    return this.send({ type: 'goal-clear' });
+  }
+
   sendApproval(approvalId, decision) {
     return this.send({ type: 'approval-response', approval_id: approvalId, decision });
   }

@@ -1,9 +1,9 @@
 import { TelemetrySidebar } from './TelemetrySidebar';
-import { PlanTree } from './PlanTree';
 import { PendingPromptsPanel } from './PendingPromptsPanel';
+import { GoalPanel } from './GoalPanel';
 
 const TAB_LABELS = {
-  plan: 'Plan',
+  goal: 'Goal',
   telemetry: 'Telemetry',
 };
 
@@ -17,8 +17,14 @@ export function RightSidebar({
   onClose,
   telemetry,
   selectedHost,
-  orchestrator,
-  hasOrchestrator,
+  goal,
+  hasGoal,
+  connected,
+  onSetGoal,
+  onPauseGoal,
+  onResumeGoal,
+  onClearGoal,
+  onRefreshGoal,
   pendingApproval,
   pendingUserInput,
   onResolveApproval,
@@ -31,10 +37,10 @@ export function RightSidebar({
     <aside className="right-sidebar" aria-label="Right sidebar">
       <div className="right-sidebar-tabs">
         <RightTab
-          id="plan"
-          active={view === 'plan'}
-          onClick={() => onView('plan')}
-          badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasOrchestrator ? '●' : null}
+          id="goal"
+          active={view === 'goal'}
+          onClick={() => onView('goal')}
+          badge={pendingPromptCount > 0 ? String(pendingPromptCount) : hasGoal ? '●' : null}
         />
         <RightTab
           id="telemetry"
@@ -50,8 +56,8 @@ export function RightSidebar({
         >×</button>
       </div>
       <div className="right-sidebar-body">
-        {view === 'plan' ? (
-          <div className="plan-sidebar-stack">
+        {view === 'goal' ? (
+          <div className="goal-sidebar-stack">
             <PendingPromptsPanel
               approval={pendingApproval}
               userInput={pendingUserInput}
@@ -59,19 +65,15 @@ export function RightSidebar({
               onUserInputSubmit={onResolveUserInput}
               onUserInputCancel={onCancelUserInput}
             />
-            {hasOrchestrator ? (
-              <PlanTree orchestrator={orchestrator} />
-            ) : !pendingPromptCount ? (
-              <div className="right-sidebar-empty">
-                No orchestrator session active.
-                <br /><br />
-                Open the launcher from the dashboard's
-                <span className="hl"> Quick Actions → Orchestrate</span>
-                {' '}tile, or tap the <span className="hl">kind</span>
-                {' '}chip in the composer of any session and pick
-                <span className="hl"> orchestrator</span>.
-              </div>
-            ) : null}
+            <GoalPanel
+              goal={goal}
+              connected={connected}
+              onSetGoal={onSetGoal}
+              onPauseGoal={onPauseGoal}
+              onResumeGoal={onResumeGoal}
+              onClearGoal={onClearGoal}
+              onRefreshGoal={onRefreshGoal}
+            />
           </div>
         ) : (
           <TelemetrySidebar telemetry={telemetry} selectedHost={selectedHost} />
