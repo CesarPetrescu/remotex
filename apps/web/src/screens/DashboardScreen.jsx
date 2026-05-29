@@ -207,12 +207,13 @@ function QuickActionsPanel({
         <ActionTile
           icon="+"
           title="New session"
+          detail="choose folder"
           onClick={onNewSession}
           disabled={!canStart}
         />
         <ActionTile
           icon="▤"
-          title="Select folder"
+          title="Browse files"
           onClick={onBrowseFiles}
           disabled={!canStart}
         />

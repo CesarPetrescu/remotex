@@ -1,5 +1,6 @@
 import { relativeAge } from '../util/time';
 import { shortenCwd } from '../util/path';
+import { hostHomePath } from '../util/host';
 import { SCREENS } from '../config';
 
 const SCREEN_LABELS = {
@@ -53,7 +54,7 @@ export function HostsSidebar({
           </div>
         )}
         <SidebarSection
-          label="HOSTS"
+          label="HOST TABS"
           right={state.hosts.length > 0 ? `${state.hosts.length}` : null}
           action={(onAddHost || onRefreshHosts) && (
             <button
@@ -94,7 +95,7 @@ export function HostsSidebar({
             <span>
               <span className="sidebar-new-session-title">new session</span>
               <span className="sidebar-new-session-sub">
-                {selectedHost?.online ? `start a fresh codex thread on ${selectedHost.nickname}` : 'select an online host first'}
+                {selectedHost?.online ? `choose a folder on ${selectedHost.nickname}` : 'select an online host first'}
               </span>
             </span>
           </button>
@@ -153,6 +154,7 @@ function SidebarEmpty({ children }) {
 }
 
 function HostRow({ host, active, onClick }) {
+  const home = hostHomePath(host);
   return (
     <button
       type="button"
@@ -170,6 +172,10 @@ function HostRow({ host, active, onClick }) {
         <span className="sidebar-host-row2">
           {host.hostname || (host.id ? host.id.slice(0, 14) + '…' : '—')}
           <span className="sidebar-host-state">{host.online ? 'online' : 'offline'}</span>
+        </span>
+        <span className="sidebar-host-row3" title={home}>
+          <span className="sidebar-host-home-label">home</span>
+          <span className="sidebar-host-home">{home}</span>
         </span>
       </span>
     </button>

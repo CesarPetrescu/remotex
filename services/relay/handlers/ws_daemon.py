@@ -66,6 +66,8 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             hello.get("hostname", "") or "",
             hello.get("platform", "") or "",
             hello.get("os_user", "") or "",
+            hello.get("home_dir", "") or "",
+            hello.get("default_cwd", "") or "",
         )
         await store.mark_host(host_id, True)
         old_ws = await hub.attach_daemon(host_id, ws)

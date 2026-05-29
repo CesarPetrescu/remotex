@@ -5,11 +5,13 @@ import { SCREENS, STATUS } from './config';
 import { Toast } from './components/Toast';
 import { SessionScreen } from './screens/SessionScreen';
 import { SearchScreen } from './screens/SearchScreen';
+import { FilesScreen } from './screens/FilesScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
 import { RightSidebar } from './components/RightSidebar';
 import { FolderPickerModal } from './components/FolderPickerModal';
+import { hostHomePath } from './util/host';
 
 const RIGHT_VIEWS = ['prompts', 'telemetry', 'off'];
 const RIGHT_VIEW_KEY = 'remotex.rightView';
@@ -117,6 +119,12 @@ export default function App() {
     closeDrawers();
   };
 
+  const openNewSessionBrowser = () => {
+    if (!selectedHost?.online) return;
+    r.goToFiles(hostHomePath(selectedHost));
+    closeDrawers();
+  };
+
   const isSessionActive = !!state.session || state.status !== STATUS.Idle;
   const onSessionScreen = state.screen === SCREENS.Session && isSessionActive;
   const onSearchScreen = state.screen === SCREENS.Search;
@@ -167,7 +175,7 @@ export default function App() {
           r.openHost(host);
           closeDrawers();
         }}
-        onNewSession={() => openSession({})}
+        onNewSession={openNewSessionBrowser}
         onResumeThread={(thread) => openSession({
           hostId: thread.host_id,
           threadId: thread.id,
@@ -201,6 +209,13 @@ export default function App() {
               sendSlash: r.sendSlash,
             }}
           />
+        ) : onFilesScreen ? (
+          <FilesScreen
+            state={state}
+            onNavigate={r.browseDir}
+            onUp={r.browseUp}
+            onStartHere={() => openSession({ cwd: state.browsePath || hostHomePath(selectedHost) })}
+          />
         ) : (
             <DashboardScreen
               state={state}
@@ -214,7 +229,7 @@ export default function App() {
               closeDrawers();
             }}
             onEndSession={r.closeSession}
-            onNewSession={() => openSession({})}
+            onNewSession={openNewSessionBrowser}
             onOpenSearch={r.goToSearch}
             onSearchChange={r.setSearchQuery}
             onRunSearch={(query) => {
@@ -222,7 +237,7 @@ export default function App() {
               r.searchChats(query, { mode: state.searchMode, rerank: state.searchRerank });
             }}
             onBrowseFiles={() => {
-              r.goToFiles();
+              r.goToFiles(state.browsePath || hostHomePath(selectedHost));
               setLeftOpen(false);
             }}
             onOpenFolderPicker={() => setFolderPickerOpen(true)}
@@ -231,8 +246,6 @@ export default function App() {
             onOpenManageHosts={() => setLeftOpen(true)}
           />
         )}
-
-        {onFilesScreen && !onSessionScreen && !onSearchScreen && null}
       </main>
 
       <RightSidebar
@@ -250,7 +263,7 @@ export default function App() {
 
       <FolderPickerModal
         open={folderPickerOpen}
-        initialPath={state.browsePath || '/'}
+        initialPath={state.browsePath || hostHomePath(selectedHost)}
         onClose={() => setFolderPickerOpen(false)}
         onListDirectory={r.listDirectory}
         onCreateFolder={r.createFolder}

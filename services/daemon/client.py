@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 from typing import Awaitable, Callable
 
@@ -56,6 +57,8 @@ class DaemonClient:
                     "platform": self.config.platform_string,
                     "nickname": self.config.nickname,
                     "os_user": self.config.os_user,
+                    "home_dir": os.path.expanduser("~"),
+                    "default_cwd": self.config.default_cwd,
                 })
                 welcome = await ws.receive()
                 if welcome.type != aiohttp.WSMsgType.TEXT:

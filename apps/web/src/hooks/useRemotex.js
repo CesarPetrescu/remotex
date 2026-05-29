@@ -10,6 +10,7 @@ import { SessionSocket } from '../api/sessionSocket';
 import { FALLBACK_MODEL_OPTIONS, SCREENS, STATUS, effortsFor } from '../config';
 import { parseSlash } from '../util/slash';
 import { parentPath } from '../util/path';
+import { hostHomePath } from '../util/host';
 import { buildUrl, parseUrl } from '../util/url';
 
 const TOKEN_KEY = 'remotex.userToken';
@@ -124,6 +125,49 @@ function normalizeGoal(goal) {
   };
 }
 
+function slashCommandText(cmd, args = '') {
+  const name = String(cmd || '').replace(/^\/+/, '').trim();
+  const rest = String(args || '').trim();
+  return `/${name}${rest ? ` ${rest}` : ''}`;
+}
+
+function slashEventId(prefix, cmd) {
+  return `${prefix}-${String(cmd || 'slash')}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function shouldEchoSlashCommand(cmd) {
+  return cmd !== 'plan' && cmd !== 'default';
+}
+
+function appendSlashUserEvent(dispatch, cmd, args = '') {
+  if (!shouldEchoSlashCommand(cmd)) return;
+  dispatch({
+    type: 'APPEND_EVENT',
+    event: {
+      id: slashEventId('slash-user', cmd),
+      role: 'user',
+      text: slashCommandText(cmd, args),
+      completed: true,
+      slash: true,
+    },
+  });
+}
+
+function appendSlashAckEvent(dispatch, cmd, ok, data = {}) {
+  if (!shouldEchoSlashCommand(cmd)) return;
+  dispatch({
+    type: 'APPEND_EVENT',
+    event: {
+      id: slashEventId('slash-ack', cmd),
+      role: 'system',
+      label: ok ? `/${cmd}` : `/${cmd} failed`,
+      detail: data.message || data.error || (ok ? 'ok' : 'unknown error'),
+      completed: true,
+      slash: true,
+    },
+  });
+}
+
 const initialState = {
   screen: SCREENS.Hosts,
   userToken: loadToken(),
@@ -212,6 +256,11 @@ function reducer(state, action) {
         threads: action.id === state.threadsHostId ? state.threads : [],
         threadsHostId: action.id === state.threadsHostId ? state.threadsHostId : null,
         threadsLoading: false,
+        browsePath: action.browsePath || state.browsePath,
+        browseEntries: action.browsePath && action.browsePath !== state.browsePath
+          ? []
+          : state.browseEntries,
+        browseLoading: false,
       };
     case 'THREADS':
       if (action.hostId && action.hostId !== state.selectedHostId) return state;
@@ -677,6 +726,7 @@ export function useRemotex() {
           ? `/${cmd} failed: ${data.error || 'unknown error'}`
           : `/${cmd} ok`;
         dispatch({ type: 'SLASH_FEEDBACK', text });
+        appendSlashAckEvent(dispatch, cmd, ok, data);
         return;
       }
       case 'collab-modes': {
@@ -960,8 +1010,9 @@ export function useRemotex() {
         dispatch({ type: 'SET_ERROR', error: `${host.nickname} is offline` });
         return;
       }
-      dispatch({ type: 'SELECT_HOST', id: host.id });
-      dispatch({ type: 'SET_SCREEN', screen: SCREENS.Threads });
+      const browsePath = hostHomePath(host);
+      dispatch({ type: 'SELECT_HOST', id: host.id, browsePath });
+      dispatch({ type: 'SET_SCREEN', screen: SCREENS.Hosts });
       refreshThreads(host.id);
     },
     [refreshThreads],
@@ -974,7 +1025,7 @@ export function useRemotex() {
     if (state.selectedHostId) return;
     const firstOnline = state.hosts.find((h) => h.online);
     if (firstOnline) {
-      dispatch({ type: 'SELECT_HOST', id: firstOnline.id });
+      dispatch({ type: 'SELECT_HOST', id: firstOnline.id, browsePath: hostHomePath(firstOnline) });
       refreshThreads(firstOnline.id);
     }
   }, [state.hosts, state.selectedHostId, refreshThreads]);
@@ -1201,6 +1252,7 @@ export function useRemotex() {
       dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
       return false;
     }
+    appendSlashUserEvent(dispatch, cmd, args);
     if (cmd === 'plan') dispatch({ type: 'SET_PLAN', on: true });
     if (cmd === 'default') dispatch({ type: 'SET_PLAN', on: false });
     return true;
@@ -1260,6 +1312,7 @@ export function useRemotex() {
             dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
             return;
           }
+          appendSlashUserEvent(dispatch, slash.cmd, slash.args);
           if (slash.cmd === 'plan') dispatch({ type: 'SET_PLAN', on: true });
           if (slash.cmd === 'default') dispatch({ type: 'SET_PLAN', on: false });
           return;

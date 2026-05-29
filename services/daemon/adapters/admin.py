@@ -65,6 +65,7 @@ class AdminCodex:
             except asyncio.TimeoutError as exc:
                 # TimeoutError stringifies to "", which otherwise becomes
                 # a useless "daemon error:" in the UI.
+                await self._tear_down()
                 raise TimeoutError(f"{method} timed out after {timeout:g}s") from exc
             except Exception:
                 # The subprocess might be hosed; kill it so the next call

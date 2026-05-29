@@ -3202,6 +3202,15 @@ main.screen-host {
   font-size: 10px;
   color: var(--ink-dim);
 }
+.sidebar-host-row3 {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--ink-dim);
+}
 .sidebar-host-dot {
   width: 6px; height: 6px;
   background: var(--ink-dim);
@@ -3216,6 +3225,19 @@ main.screen-host {
 .sidebar-host-user { color: var(--amber); font-size: 10.5px; }
 .sidebar-host-state { color: var(--ink-dim); }
 .sidebar-host.online .sidebar-host-state { color: var(--ok); }
+.sidebar-host-home-label {
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.sidebar-host-home {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-dim);
+}
+.sidebar-host.active .sidebar-host-home { color: var(--ink); }
 
 .sidebar-new-session {
   display: flex; align-items: center; gap: 10px;

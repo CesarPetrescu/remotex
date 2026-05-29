@@ -1,6 +1,11 @@
 """Pure helpers in the daemon adapter package."""
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+
+from daemon.adapters.admin import AdminCodex
 from daemon.adapters.items import _item_extras, _join_input, _snake_item_type
 from daemon.adapters.permissions import (
     _approval_policy_to_codex,
@@ -76,6 +81,31 @@ def test_codex_config_goals_feature_noops_when_enabled(tmp_path):
 
     assert changed is False
     assert path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.asyncio
+async def test_admin_codex_tears_down_after_request_timeout(monkeypatch):
+    admin = AdminCodex()
+    torn_down = False
+
+    async def ensure_running():
+        return None
+
+    async def slow_request(_method, _params):
+        await asyncio.sleep(10)
+
+    async def tear_down():
+        nonlocal torn_down
+        torn_down = True
+
+    monkeypatch.setattr(admin, "_ensure_running", ensure_running)
+    monkeypatch.setattr(admin, "_request", slow_request)
+    monkeypatch.setattr(admin, "_tear_down", tear_down)
+
+    with pytest.raises(TimeoutError, match=r"thread/list timed out after 0.01s"):
+        await admin._call("thread/list", {}, timeout=0.01)
+
+    assert torn_down is True
 
 
 def test_join_input_concatenates_text_parts_only():
