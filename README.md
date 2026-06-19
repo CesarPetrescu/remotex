@@ -102,6 +102,14 @@ watch reasoning, tool calls, and streamed agent messages arrive live:
   <img src="docs/screenshots/client-session.png" alt="Remotex web client - live session" width="820" />
 </p>
 
+The **Jump** folder picker — recall a folder by name from recents and
+favorites, type a `/path` to teleport, or browse the tree; click to drill in
+and pick the working directory from the bar at the bottom:
+
+<p align="center">
+  <img src="docs/screenshots/client-jump.png" alt="Remotex web client - Jump folder picker" width="820" />
+</p>
+
 The three surfaces side-by-side (click to view full size):
 
 <table>
@@ -111,7 +119,7 @@ The three surfaces side-by-side (click to view full size):
       <sub><b>Web · desktop</b> (1440 × 900)</sub>
     </td>
     <td align="center" valign="top" width="25%">
-      <img src="docs/screenshots/client-mobile.png" alt="Web - mobile" width="180" /><br/>
+      <img src="docs/screenshots/client-mobile.png" alt="Web - mobile (Jump folder picker)" width="180" /><br/>
       <sub><b>Web · mobile</b> (390 × 844)</sub>
     </td>
     <td align="center" valign="top" width="25%">
