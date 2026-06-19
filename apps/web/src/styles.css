@@ -2199,16 +2199,24 @@ main.screen-host {
 }
 
 @media (max-width: 1000px) {
-  .dashboard-layout {
+  /* Collapse to a single column. The desktop collapse classes
+     (.left-collapsed / .right-off) set a 3-column grid-template-columns at
+     higher specificity, so they must be listed here too — otherwise they
+     leak into the compact layout, mismatch the single-column grid-areas, and
+     squeeze the header/main into a stray 280px track (header buttons overlap). */
+  .dashboard-layout,
+  .dashboard-layout.left-collapsed,
+  .dashboard-layout.right-off,
+  .dashboard-layout.left-collapsed.right-off {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 52px minmax(0, 1fr);
     grid-template-areas:
       'header'
       'main';
   }
-  .hosts-sidebar,
-  .telemetry-sidebar,
-  .right-sidebar {
+  .dashboard-layout .hosts-sidebar,
+  .dashboard-layout .telemetry-sidebar,
+  .dashboard-layout .right-sidebar {
     position: fixed;
     top: 52px;
     bottom: 0;
