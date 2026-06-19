@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from daemon.adapters.admin import AdminCodex
+from daemon.adapters.admin import AdminCodex, _read_line_unbounded
 from daemon.adapters.items import _item_extras, _join_input, _snake_item_type
 from daemon.adapters.permissions import (
     _approval_policy_to_codex,
@@ -81,6 +81,17 @@ def test_codex_config_goals_feature_noops_when_enabled(tmp_path):
 
     assert changed is False
     assert path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.asyncio
+async def test_admin_read_line_unbounded_handles_large_json_frames():
+    stream = asyncio.StreamReader(limit=32)
+    payload = b'{"id":1,"result":"' + (b"x" * 100_000) + b'"}\n'
+
+    stream.feed_data(payload)
+    stream.feed_eof()
+
+    assert await _read_line_unbounded(stream) == payload
 
 
 @pytest.mark.asyncio

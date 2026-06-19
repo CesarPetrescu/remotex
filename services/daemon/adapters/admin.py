@@ -9,6 +9,19 @@ import shlex
 log = logging.getLogger("daemon.adapters.admin")
 
 
+async def _read_line_unbounded(stream: asyncio.StreamReader) -> bytes:
+    """Read one newline-delimited JSON-RPC frame without asyncio's 64KB cap."""
+    parts: list[bytes] = []
+    while True:
+        try:
+            tail = await stream.readuntil(b"\n")
+            return b"".join(parts) + tail
+        except asyncio.LimitOverrunError as exc:
+            parts.append(await stream.readexactly(exc.consumed))
+        except asyncio.IncompleteReadError as exc:
+            return b"".join(parts) + exc.partial
+
+
 class AdminCodex:
     """Long-running codex app-server that answers thread/list quickly.
 
@@ -140,7 +153,7 @@ class AdminCodex:
         assert self._proc and self._proc.stdout
         try:
             while True:
-                line = await self._proc.stdout.readline()
+                line = await _read_line_unbounded(self._proc.stdout)
                 if not line:
                     # codex exited. Fail any waiters; next call respawns.
                     for fut in self._pending.values():
@@ -163,6 +176,12 @@ class AdminCodex:
                             fut.set_result(msg.get("result") or {})
         except asyncio.CancelledError:
             pass
+        except Exception as exc:  # noqa: BLE001
+            log.warning("admin codex read loop failed: %s", exc)
+            for fut in self._pending.values():
+                if not fut.done():
+                    fut.set_exception(RuntimeError(f"admin codex read failed: {exc}"))
+            self._pending.clear()
 
 
 # Backwards-compatible module-level helper: the DaemonClient owns a
