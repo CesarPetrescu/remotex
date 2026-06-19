@@ -5,7 +5,7 @@ import { SCREENS } from '../config';
 // both jump back to the wide-screen Hosts/Dashboard view from anywhere
 // — the existing `←` button walks the stack one level (Session →
 // Threads → Hosts), but the user wants an unambiguous one-tap home.
-export function Header({ state, onBack, onSearch, onDashboard }) {
+export function Header({ state, onBack, onDashboard }) {
   const onHome = state.screen === SCREENS.Hosts;
   return (
     <header className="bar">
@@ -40,9 +40,6 @@ export function Header({ state, onBack, onSearch, onDashboard }) {
           ⌂ Dashboard
         </button>
       )}
-      <button type="button" className="header-search" onClick={onSearch}>
-        Search
-      </button>
       <StatusBadge status={state.status} />
     </header>
   );

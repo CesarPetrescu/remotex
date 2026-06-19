@@ -1,7 +1,6 @@
 #!/bin/sh
 # Drop privileges to the unprivileged `relay` user. Inventory state
-# now lives in Postgres (shared with the search store), so no /data
-# volume ownership dance is required.
+# now lives in Postgres, so no /data volume ownership dance is required.
 set -e
 
 if [ "$(id -u)" = "0" ]; then

@@ -54,23 +54,6 @@ final class RelayClient {
         return try decoder.decode(OpenSessionResponse.self, from: data).sessionId
     }
 
-    func searchChats(baseURL: String, userToken: String, query: String, limit: Int = 20) async throws -> [SearchResult] {
-        var components = URLComponents(url: try url(baseURL: baseURL, path: "/api/search"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "q", value: query),
-            URLQueryItem(name: "limit", value: String(limit)),
-        ]
-        guard let searchURL = components?.url else {
-            throw RelayClientError.invalidURL
-        }
-        var request = URLRequest(url: searchURL)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
-
-        let data = try await data(for: request)
-        return try decoder.decode(SearchResponse.self, from: data).results
-    }
-
     private func data(for request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {

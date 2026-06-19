@@ -48,9 +48,6 @@ async def open_session(request: web.Request) -> web.Response:
                 "reused": True,
             })
     sid = await store.open_session(host_id, user["token"], kind=kind)
-    session = await store.session_info(sid)
-    if session:
-        request.app["search"].capture_session_opened(session)
     # Stash per-session overrides so ws_client can thread them into the
     # session-open frame it later sends to the daemon.
     overrides: dict = {"kind": kind}

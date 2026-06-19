@@ -1,8 +1,6 @@
 """Inventory store: users, hosts, bridge keys, sessions in Postgres.
 
-The relay shares the same pgvector Postgres instance that powers semantic
-search. Inventory tables are prefixed with ``inventory_`` so they coexist
-with the ``search_*`` tables without collision.
+Inventory tables are prefixed with ``inventory_``.
 
 Migrating from the prior SQLite store: see
 ``services/relay/scripts/import_sqlite_inventory.py`` for a one-shot
@@ -81,7 +79,7 @@ class Store:
     async def start(self) -> None:
         if not self._dsn:
             raise RuntimeError(
-                "RELAY_DATABASE_URL (or SEARCH_DATABASE_URL) is required for the inventory store"
+                "RELAY_DATABASE_URL is required for the inventory store"
             )
         import asyncpg  # type: ignore[import-not-found]
         self._pool = await asyncpg.create_pool(

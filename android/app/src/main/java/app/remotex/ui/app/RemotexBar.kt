@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,7 +31,6 @@ import app.remotex.ui.theme.Ink
 fun RemotexBar(
     state: UiState,
     onBack: () -> Unit,
-    onSearch: () -> Unit,
     onModelChange: (String) -> Unit,
     onEffortChange: (String) -> Unit,
 ) {
@@ -78,10 +76,5 @@ fun RemotexBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
         ),
-        actions = {
-            IconButton(onClick = onSearch) {
-                Icon(Icons.Filled.Search, contentDescription = "Search", tint = Ink)
-            }
-        },
     )
 }

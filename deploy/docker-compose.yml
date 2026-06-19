@@ -2,18 +2,26 @@ name: remotex
 
 services:
   postgres:
+    # Keep the pgvector image: the existing named volume was initialized
+    # by it. Plain postgres:16 would also mount this PG16 cluster (the
+    # pgvector image is postgres:16 + the extension), but staying on
+    # pgvector/pgvector:pg16 guarantees zero volume-compat risk now that
+    # no vector columns remain. Only inventory (users/hosts/sessions) lives
+    # here.
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${SEARCH_POSTGRES_DB:-remotex}
-      POSTGRES_USER: ${SEARCH_POSTGRES_USER:-remotex}
-      POSTGRES_PASSWORD: ${SEARCH_POSTGRES_PASSWORD:-remotex-search}
+      POSTGRES_DB: ${POSTGRES_DB:-remotex}
+      POSTGRES_USER: ${POSTGRES_USER:-remotex}
+      # Default kept as the original SEARCH_POSTGRES_PASSWORD value so the
+      # already-initialized named volume still authenticates.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-remotex-search}
     volumes:
       - search-data:/var/lib/postgresql/data
     networks:
       - remotex
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${SEARCH_POSTGRES_USER:-remotex} -d ${SEARCH_POSTGRES_DB:-remotex}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-remotex} -d ${POSTGRES_DB:-remotex}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,28 +38,8 @@ services:
     environment:
       TZ: ${TZ:-Etc/UTC}
       RELAY_CLIENT_RECONNECT_GRACE_SECONDS: ${RELAY_CLIENT_RECONNECT_GRACE_SECONDS:-75}
-      # Inventory + search both live in the pgvector container.
-      RELAY_DATABASE_URL: postgresql://${SEARCH_POSTGRES_USER:-remotex}:${SEARCH_POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${SEARCH_POSTGRES_DB:-remotex}
-      SEARCH_DATABASE_URL: postgresql://${SEARCH_POSTGRES_USER:-remotex}:${SEARCH_POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${SEARCH_POSTGRES_DB:-remotex}
-      EMBEDDING_API_BASE_URL: ${EMBEDDING_API_BASE_URL:-}
-      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding}
-      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-4096}
-      EMBEDDING_MAX_CONTEXT_TOKENS: ${EMBEDDING_MAX_CONTEXT_TOKENS:-32768}
-      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-16}
-      RERANKER_API_BASE_URL: ${RERANKER_API_BASE_URL:-}
-      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
-      RERANKER_MODEL: ${RERANKER_MODEL:-qwen3-reranker}
-      SEARCH_RERANK_POOL: ${SEARCH_RERANK_POOL:-50}
-      SEARCH_RERANK_TOP_N: ${SEARCH_RERANK_TOP_N:-20}
-      MAIN_MODEL_API_BASE_URL: ${MAIN_MODEL_API_BASE_URL:-}
-      MAIN_MODEL_API_KEY: ${MAIN_MODEL_API_KEY:-}
-      MAIN_MODEL: ${MAIN_MODEL:-MainModel}
-      MAIN_MODEL_CONTEXT_TOKENS: ${MAIN_MODEL_CONTEXT_TOKENS:-16000}
-      MAIN_MODEL_DISABLE_THINKING_STYLE: ${MAIN_MODEL_DISABLE_THINKING_STYLE:-chat_template_kwargs}
-      CHAT_TITLE_ENABLED: ${CHAT_TITLE_ENABLED:-1}
-      CHAT_TITLE_MAX_INPUT_TOKENS: ${CHAT_TITLE_MAX_INPUT_TOKENS:-12000}
-      CHAT_TITLE_MAX_ATTEMPTS: ${CHAT_TITLE_MAX_ATTEMPTS:-3}
+      # Inventory (users/hosts/sessions) lives in the Postgres container.
+      RELAY_DATABASE_URL: postgresql://${POSTGRES_USER:-remotex}:${POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${POSTGRES_DB:-remotex}
     ports:
       # Bind to localhost only by default; front with Caddy (profile `tls`)
       # or your own reverse proxy for anything public. Override the host

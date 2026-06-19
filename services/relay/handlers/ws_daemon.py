@@ -22,20 +22,6 @@ from ..store import Store
 
 log = logging.getLogger("relay.ws.daemon")
 
-_SEARCH_EVENT_KINDS = {
-    "session-started",
-    "turn-started",
-    "item-completed",
-    "turn-completed",
-    "history-end",
-}
-
-def _search_should_capture(frame: dict) -> bool:
-    event = frame.get("event")
-    if not isinstance(event, dict):
-        return False
-    return event.get("kind") in _SEARCH_EVENT_KINDS
-
 
 async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse(heartbeat=20)
@@ -124,8 +110,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 # Bounded fanout: close slow clients rather than letting
                 # the daemon's event loop stall behind one consumer.
                 await hub.broadcast_to_session(sid, frame)
-                if session and ftype == "session-event" and _search_should_capture(frame):
-                    request.app["search"].capture_session_event(session, frame)
+                if session and ftype == "session-event":
                     event = frame.get("event") or {}
                     data = event.get("data") or {}
                     if event.get("kind") == "session-started" and isinstance(data, dict):
@@ -143,8 +128,6 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 if ftype == "session-closed":
                     await store.close_session(sid)
                     await hub.forget_session(sid)
-                    if session:
-                        request.app["search"].capture_session_closed(session)
                     audit("session.closed", session_id=sid, host_id=host_id)
             elif ftype in (
                 "threads-list-response",

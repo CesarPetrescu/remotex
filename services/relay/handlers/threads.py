@@ -1,4 +1,4 @@
-"""Thread listing — forwards to the daemon and joins with search titles."""
+"""Thread listing — forwards to the daemon and reshapes the response."""
 from __future__ import annotations
 
 import asyncio
@@ -42,20 +42,11 @@ async def list_host_threads(request: web.Request) -> web.Response:
     if "error" in payload:
         raise web.HTTPBadGateway(reason=f"daemon error: {payload['error']}")
     threads = payload.get("threads") or []
-    thread_ids = [t.get("id") for t in threads if t.get("id") and not t.get("ephemeral")]
-    metadata = await request.app["search"].thread_metadata(
-        owner_token=user["token"],
-        host_id=host_id,
-        thread_ids=thread_ids,
-    )
     # Reshape to a compact payload for clients (keep only what the UI needs).
     summarized = [
         {
             "id": t.get("id"),
             "preview": t.get("preview") or "",
-            "title": (metadata.get(t.get("id")) or {}).get("title"),
-            "description": (metadata.get(t.get("id")) or {}).get("description"),
-            "title_is_generic": (metadata.get(t.get("id")) or {}).get("title_is_generic", True),
             "created_at": t.get("createdAt"),
             "updated_at": t.get("updatedAt"),
             "cwd": t.get("cwd"),

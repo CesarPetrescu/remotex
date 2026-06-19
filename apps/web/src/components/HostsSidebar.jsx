@@ -5,7 +5,6 @@ import { SCREENS } from '../config';
 
 const SCREEN_LABELS = {
   [SCREENS.Files]: 'FILES',
-  [SCREENS.Search]: 'SEARCH',
 };
 
 /**
@@ -27,8 +26,8 @@ export function HostsSidebar({
 }) {
   const hostUserChip = osUserChipFor(selectedHost);
   // W2: surface "you are here" for screens that aren't covered by the
-  // hosts/sessions highlights — Files and Search live outside that
-  // hierarchy and were invisible to anyone scanning the sidebar.
+  // hosts/sessions highlights — Files lives outside that hierarchy and
+  // was invisible to anyone scanning the sidebar.
   const screenLabel = SCREEN_LABELS[state.screen];
   return (
     <aside className="hosts-sidebar" aria-label="Hosts and sessions">

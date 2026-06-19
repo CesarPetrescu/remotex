@@ -31,7 +31,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.remotex.ui.app.RemotexBar
 import app.remotex.ui.screens.files.FilesScreen
 import app.remotex.ui.screens.hosts.HostsScreen
-import app.remotex.ui.screens.search.SearchScreen
 import app.remotex.ui.screens.session.ApprovalDialog
 import app.remotex.ui.screens.session.SessionScreen
 import app.remotex.ui.screens.session.UserInputDialog
@@ -54,7 +53,6 @@ fun RemotexApp(relayUrl: String) {
     BackHandler(enabled = state.screen == Screen.Session) { vm.goToThreads() }
     BackHandler(enabled = state.screen == Screen.Files) { vm.goToThreads() }
     BackHandler(enabled = state.screen == Screen.Threads) { vm.goToHosts() }
-    BackHandler(enabled = state.screen == Screen.Search) { vm.goToHosts() }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -84,10 +82,8 @@ fun RemotexApp(relayUrl: String) {
                         Screen.Threads -> ({ vm.goToHosts() })
                         Screen.Files -> ({ vm.goToThreads() })
                         Screen.Session -> ({ vm.goToThreads() })
-                        Screen.Search -> ({ vm.goToHosts() })
                         Screen.Hosts -> ({})
                     },
-                    onSearch = { vm.goToSearch() },
                     onModelChange = vm::setModel,
                     onEffortChange = vm::setEffort,
                 )
@@ -118,12 +114,6 @@ fun RemotexApp(relayUrl: String) {
                         onUp = vm::browseUp,
                         onStartHere = vm::startSessionInCurrentPath,
                         onCreateFolder = vm::createFolder,
-                    )
-                    Screen.Search -> SearchScreen(
-                        state = state,
-                        onQueryChange = vm::setSearchQuery,
-                        onSearch = vm::searchChats,
-                        onOpenResult = vm::openSearchResult,
                     )
                     Screen.Session -> SessionScreen(
                         state = state,

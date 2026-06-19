@@ -177,18 +177,6 @@ const initialState = {
   threads: [],
   threadsHostId: null,
   threadsLoading: false,
-  searchQuery: '',
-  searchResults: [],
-  searchLoading: false,
-  searchConfig: null,
-  searchMode: 'hybrid',
-  searchSignals: [],
-  searchRerank: 'auto',
-  searchReranked: false,
-  // searchStages tracks each step in the pipeline for live progress:
-  //   { name, status: 'pending'|'running'|'done'|'skipped', elapsed_ms, count }
-  searchStages: [],
-  searchStageOrigin: null, // which stage produced the current results list
   browsePath: '',
   browseEntries: [],
   browseLoading: false,
@@ -273,59 +261,6 @@ function reducer(state, action) {
     case 'THREADS_LOADING':
       if (action.hostId && action.hostId !== state.selectedHostId) return state;
       return { ...state, threadsLoading: action.loading };
-
-    case 'SEARCH_QUERY':
-      return { ...state, searchQuery: action.query };
-    case 'SEARCH_CONFIG':
-      return { ...state, searchConfig: action.config };
-    case 'SEARCH_LOADING':
-      return { ...state, searchLoading: action.loading };
-    case 'SEARCH_RESULTS':
-      return {
-        ...state,
-        searchResults: action.results !== undefined ? action.results : state.searchResults,
-        searchLoading: false,
-        searchQuery: action.query ?? state.searchQuery,
-        searchMode: action.mode ?? state.searchMode,
-        searchSignals: action.signals ?? state.searchSignals,
-        searchReranked: action.reranked ?? state.searchReranked,
-        searchStageOrigin: action.origin ?? state.searchStageOrigin,
-      };
-    case 'SET_SEARCH_SIGNALS':
-      return { ...state, searchSignals: action.signals };
-    case 'SEARCH_MODE':
-      return { ...state, searchMode: action.mode };
-    case 'SEARCH_RERANK':
-      return { ...state, searchRerank: action.rerank };
-    case 'SEARCH_PLAN': {
-      const stages = action.stages.map((name) => ({
-        name,
-        status: 'pending',
-        elapsed_ms: null,
-        count: null,
-      }));
-      return {
-        ...state,
-        searchStages: stages,
-        searchResults: [],
-        searchSignals: [],
-        searchReranked: false,
-        searchStageOrigin: null,
-        searchLoading: true,
-      };
-    }
-    case 'SEARCH_STAGE_UPDATE': {
-      const stages = state.searchStages.map((stage) =>
-        stage.name === action.name ? { ...stage, ...action.patch } : stage,
-      );
-      return { ...state, searchStages: stages };
-    }
-    case 'SEARCH_STAGE_RESULTS':
-      return {
-        ...state,
-        searchResults: action.results,
-        searchStageOrigin: action.origin,
-      };
 
     case 'BROWSE_LOADING':
       return {
@@ -908,16 +843,6 @@ export function useRemotex() {
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
   }, []);
 
-  const goToSearch = useCallback(async () => {
-    dispatch({ type: 'SET_SCREEN', screen: SCREENS.Search });
-    try {
-      const config = await apiRef.current.searchConfig();
-      dispatch({ type: 'SEARCH_CONFIG', config });
-    } catch (t) {
-      dispatch({ type: 'SET_ERROR', error: t.message });
-    }
-  }, []);
-
   const refreshHosts = useCallback(async () => {
     dispatch({ type: 'HOSTS_LOADING', loading: true });
     try {
@@ -1122,127 +1047,6 @@ export function useRemotex() {
     [attachSocket, detachSession],
   );
 
-  const searchAbortRef = useRef(null);
-  const searchChats = useCallback(async (query, { mode = 'hybrid', rerank = 'auto' } = {}) => {
-    const cleaned = (query || '').trim();
-    dispatch({ type: 'SEARCH_QUERY', query });
-    if (!cleaned) {
-      dispatch({ type: 'SEARCH_RESULTS', results: [], query, signals: [], reranked: false, origin: null });
-      return;
-    }
-
-    // Cancel any in-flight search before starting a new one.
-    searchAbortRef.current?.();
-    searchAbortRef.current = null;
-
-    const { promise, abort } = apiRef.current.searchChatsStream(cleaned, {
-      limit: 20,
-      mode,
-      rerank,
-      onEvent: (ev) => {
-        if (ev.type === 'plan') {
-          dispatch({ type: 'SEARCH_PLAN', stages: ev.stages });
-          return;
-        }
-        if (ev.type === 'signal') {
-          dispatch({
-            type: 'SEARCH_STAGE_UPDATE',
-            name: ev.name,
-            patch: { status: 'done', elapsed_ms: ev.elapsed_ms, count: ev.count },
-          });
-          // Promote this signal's results to the UI if nothing better has
-          // landed yet. Priority: rerank > fused > any single signal.
-          const origin = ev.name;
-          dispatch({ type: 'SEARCH_STAGE_RESULTS', results: ev.results || [], origin });
-          return;
-        }
-        if (ev.type === 'fused') {
-          dispatch({
-            type: 'SEARCH_STAGE_RESULTS',
-            results: ev.results || [],
-            origin: 'fused',
-          });
-          dispatch({ type: 'SET_SEARCH_SIGNALS', signals: ev.signals || [] });
-          return;
-        }
-        if (ev.type === 'rerank_start') {
-          dispatch({
-            type: 'SEARCH_STAGE_UPDATE',
-            name: 'rerank',
-            patch: { status: 'running', count: ev.candidates },
-          });
-          return;
-        }
-        if (ev.type === 'rerank') {
-          dispatch({
-            type: 'SEARCH_STAGE_UPDATE',
-            name: 'rerank',
-            patch: { status: 'done', elapsed_ms: ev.elapsed_ms },
-          });
-          dispatch({
-            type: 'SEARCH_STAGE_RESULTS',
-            results: ev.results || [],
-            origin: 'rerank',
-          });
-          return;
-        }
-        if (ev.type === 'rerank_error') {
-          dispatch({
-            type: 'SEARCH_STAGE_UPDATE',
-            name: 'rerank',
-            patch: { status: 'error', error: ev.message },
-          });
-          return;
-        }
-        if (ev.type === 'done') {
-          dispatch({
-            type: 'SEARCH_RESULTS',
-            results: undefined, // preserve whatever stage-results left behind
-            query: cleaned,
-            mode: ev.mode,
-            signals: ev.signals || [],
-            reranked: !!ev.reranked,
-            origin: ev.reranked ? 'rerank' : 'fused',
-          });
-          return;
-        }
-        if (ev.type === 'error') {
-          dispatch({ type: 'SET_ERROR', error: ev.message });
-        }
-      },
-    });
-    searchAbortRef.current = abort;
-    try {
-      await promise;
-    } catch (t) {
-      if (t.name !== 'AbortError') {
-        dispatch({ type: 'SET_ERROR', error: t.message });
-      }
-    } finally {
-      dispatch({ type: 'SEARCH_LOADING', loading: false });
-      if (searchAbortRef.current === abort) searchAbortRef.current = null;
-    }
-  }, []);
-
-  const openSearchResult = useCallback(
-    (result) => {
-      if (!result?.thread_id) {
-        dispatch({
-          type: 'SET_ERROR',
-          error: 'This result has no resumable Codex thread yet.',
-        });
-        return;
-      }
-      dispatch({ type: 'SELECT_HOST', id: result.host_id });
-      openSession({
-        hostId: result.host_id,
-        threadId: result.thread_id,
-        cwd: result.cwd || null,
-      });
-    },
-    [openSession],
-  );
-
   // Composer's slash autocomplete fires this when the user picks a
   // command. Slash commands never carry images so we bypass sendTurn.
   const sendSlash = useCallback((cmd, args = '') => {
@@ -1410,14 +1214,14 @@ export function useRemotex() {
   // --- URL router ---
   //
   // Two-way sync: any in-app navigation (changing screen, switching host,
-  // running a search, browsing a directory) reflects into window.location,
-  // and any incoming URL (initial load, bookmark, browser back/forward)
-  // replays through the navigation callbacks above.
+  // browsing a directory) reflects into window.location, and any incoming
+  // URL (initial load, bookmark, browser back/forward) replays through the
+  // navigation callbacks above.
   //
   // pushState is used only when the screen name changes (that's a real
   // navigation the user should be able to back-button out of). Intra-screen
-  // changes — typing in the search box, tweaking mode, cd'ing the file
-  // browser — use replaceState so they don't spam the back-button stack.
+  // changes — cd'ing the file browser — use replaceState so they don't spam
+  // the back-button stack.
   const urlReadyRef = useRef(false);
   const lastScreenRef = useRef(null);
   const applyRouteRef = useRef(null);
@@ -1425,21 +1229,6 @@ export function useRemotex() {
   applyRouteRef.current = (route) => {
     if (route.screen === SCREENS.Hosts) {
       dispatch({ type: 'SET_SCREEN', screen: SCREENS.Hosts });
-      return;
-    }
-    if (route.screen === SCREENS.Search) {
-      dispatch({ type: 'SET_SCREEN', screen: SCREENS.Search });
-      if (route.mode) dispatch({ type: 'SEARCH_MODE', mode: route.mode });
-      if (route.rerank) dispatch({ type: 'SEARCH_RERANK', rerank: route.rerank });
-      if (route.hostId) dispatch({ type: 'SELECT_HOST', id: route.hostId });
-      apiRef.current
-        .searchConfig()
-        .then((config) => dispatch({ type: 'SEARCH_CONFIG', config }))
-        .catch(() => {});
-      if (route.query) {
-        dispatch({ type: 'SEARCH_QUERY', query: route.query });
-        searchChats(route.query, { mode: route.mode || 'hybrid', rerank: route.rerank || 'auto' });
-      }
       return;
     }
     if (route.screen === SCREENS.Threads && route.hostId) {
@@ -1490,9 +1279,6 @@ export function useRemotex() {
     state.selectedHostId,
     state.session?.sessionId,
     state.browsePath,
-    state.searchQuery,
-    state.searchMode,
-    state.searchRerank,
   ]);
 
   // --- public surface ---
@@ -1501,9 +1287,6 @@ export function useRemotex() {
     () => ({
       state,
       setToken: (t) => dispatch({ type: 'SET_TOKEN', token: t }),
-      setSearchQuery: (query) => dispatch({ type: 'SEARCH_QUERY', query }),
-      setSearchMode: (mode) => dispatch({ type: 'SEARCH_MODE', mode }),
-      setSearchRerank: (rerank) => dispatch({ type: 'SEARCH_RERANK', rerank }),
       setModel: (m) => dispatch({ type: 'SET_MODEL', model: m }),
       setEffort: (e) => dispatch({ type: 'SET_EFFORT', effort: e }),
       setPermissions: (p) => dispatch({ type: 'SET_PERMS', permissions: p }),
@@ -1512,14 +1295,11 @@ export function useRemotex() {
       goToHosts,
       goToDashboard,
       goToThreads,
-      goToSearch,
       goToSession,
       goToFiles,
       refreshHosts,
       openHost,
       refreshThreads,
-      searchChats,
-      openSearchResult,
       browseDir,
       browseUp,
       createFolder,
@@ -1556,14 +1336,11 @@ export function useRemotex() {
       goToHosts,
       goToDashboard,
       goToThreads,
-      goToSearch,
       goToSession,
       goToFiles,
       refreshHosts,
       openHost,
       refreshThreads,
-      searchChats,
-      openSearchResult,
       browseDir,
       browseUp,
       createFolder,

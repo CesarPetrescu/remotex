@@ -10,8 +10,6 @@ import app.remotex.model.FsEntry
 import app.remotex.model.Host
 import app.remotex.model.HostTelemetryData
 import app.remotex.model.HostTelemetrySnapshot
-import app.remotex.model.SearchResult
-import app.remotex.model.SearchStage
 import app.remotex.model.TelemetryHistory
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
@@ -50,7 +48,7 @@ import java.util.UUID
 import kotlin.math.min
 import kotlin.random.Random
 
-enum class Screen { Hosts, Threads, Files, Session, Search }
+enum class Screen { Hosts, Threads, Files, Session }
 
 enum class Status { Idle, Opening, Connecting, Connected, Disconnected, Error }
 
@@ -132,13 +130,6 @@ data class UiState(
     val effort: String = "medium",   // none/minimal/low/medium/high/xhigh
     val threads: List<ThreadInfo> = emptyList(),
     val threadsLoading: Boolean = false,
-    val searchQuery: String = "",
-    val searchResults: List<SearchResult> = emptyList(),
-    val searchLoading: Boolean = false,
-    // Live pipeline state — populated as the relay's /api/search/stream
-    // yields plan / signal / fused / rerank events. Empty when there's
-    // no active search.
-    val searchStages: List<SearchStage> = emptyList(),
     val browsePath: String = "",
     val browseEntries: List<FsEntry> = emptyList(),
     val browseLoading: Boolean = false,
@@ -549,150 +540,6 @@ class RemotexViewModel(
         _state.update { it.copy(screen = Screen.Threads) }
     }
 
-    fun goToSearch() {
-        _state.update { it.copy(screen = Screen.Search) }
-    }
-
-    fun setSearchQuery(query: String) {
-        _state.update { it.copy(searchQuery = query) }
-    }
-
-    private var searchStreamJob: Job? = null
-
-    fun searchChats() {
-        val query = _state.value.searchQuery.trim()
-        if (query.isEmpty()) {
-            _state.update { it.copy(searchResults = emptyList(), searchLoading = false, searchStages = emptyList()) }
-            searchStreamJob?.cancel()
-            return
-        }
-        searchStreamJob?.cancel()
-        _state.update {
-            it.copy(
-                searchLoading = true,
-                error = null,
-                searchStages = emptyList(),
-                searchResults = emptyList(),
-            )
-        }
-        searchStreamJob = client.searchChatsStream(
-            scope = viewModelScope,
-            userToken = _state.value.userToken,
-            query = query,
-            limit = 20,
-            onEvent = { event -> handleSearchStreamEvent(event) },
-            onDone = { err ->
-                _state.update {
-                    it.copy(
-                        searchLoading = false,
-                        error = err?.message?.takeIf { e -> e.isNotBlank() && it.searchResults.isEmpty() }
-                            ?: it.error,
-                    )
-                }
-            },
-        )
-    }
-
-    private fun handleSearchStreamEvent(event: JsonObject) {
-        val type = event["type"]?.jsonPrimitive?.contentOrNull ?: return
-        when (type) {
-            "plan" -> {
-                val stages = (event["stages"] as? JsonArray).orEmpty().mapNotNull { s ->
-                    val obj = s as? JsonObject ?: return@mapNotNull null
-                    SearchStage(
-                        name = obj["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
-                        status = obj["status"]?.jsonPrimitive?.contentOrNull ?: "pending",
-                    )
-                }
-                _state.update { it.copy(searchStages = stages) }
-            }
-            "signal" -> {
-                val name = event["name"]?.jsonPrimitive?.contentOrNull ?: return
-                val elapsedMs = event["elapsed_ms"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
-                val count = event["count"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
-                val results = parseSearchResults(event["results"])
-                _state.update {
-                    it.copy(
-                        searchStages = patchStage(it.searchStages, name, "done", elapsedMs, count),
-                        searchResults = if (results.isNotEmpty()) results else it.searchResults,
-                    )
-                }
-            }
-            "fused" -> {
-                val results = parseSearchResults(event["results"])
-                if (results.isNotEmpty()) {
-                    _state.update { it.copy(searchResults = results) }
-                }
-            }
-            "rerank_start" -> {
-                val candidates = event["candidates"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
-                _state.update {
-                    it.copy(searchStages = patchStage(it.searchStages, "rerank", "running", null, candidates))
-                }
-            }
-            "rerank" -> {
-                val elapsedMs = event["elapsed_ms"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
-                val results = parseSearchResults(event["results"])
-                _state.update {
-                    it.copy(
-                        searchStages = patchStage(it.searchStages, "rerank", "done", elapsedMs, null),
-                        searchResults = if (results.isNotEmpty()) results else it.searchResults,
-                    )
-                }
-            }
-            "rerank_error" -> {
-                val msg = event["message"]?.jsonPrimitive?.contentOrNull ?: "rerank failed"
-                _state.update {
-                    it.copy(searchStages = patchStage(it.searchStages, "rerank", "error", null, null, msg))
-                }
-            }
-            "done" -> {
-                val results = parseSearchResults(event["results"])
-                _state.update {
-                    it.copy(
-                        searchResults = if (results.isNotEmpty()) results else it.searchResults,
-                        searchLoading = false,
-                    )
-                }
-            }
-        }
-    }
-
-    private fun patchStage(
-        stages: List<SearchStage>,
-        name: String,
-        status: String,
-        elapsedMs: Long?,
-        count: Int?,
-        error: String? = null,
-    ): List<SearchStage> {
-        if (stages.none { it.name == name }) {
-            return stages + SearchStage(name, status, elapsedMs, count, error)
-        }
-        return stages.map { stage ->
-            if (stage.name != name) return@map stage
-            stage.copy(
-                status = status,
-                elapsedMs = elapsedMs ?: stage.elapsedMs,
-                count = count ?: stage.count,
-                error = error ?: stage.error,
-            )
-        }
-    }
-
-    private fun parseSearchResults(element: JsonElement?): List<SearchResult> {
-        val arr = element as? JsonArray ?: return emptyList()
-        if (arr.isEmpty()) return emptyList()
-        return try {
-            json.decodeFromJsonElement(
-                kotlinx.serialization.builtins.ListSerializer(SearchResult.serializer()),
-                arr,
-            )
-        } catch (_: Throwable) {
-            emptyList()
-        }
-    }
-
     // --- workspace files (in-chat panel) ---
 
     /** List the contents of a directory on the active host. Used by the
@@ -724,16 +571,6 @@ class RemotexViewModel(
     suspend fun uploadWorkspaceFile(targetDir: String, fileName: String, bytes: ByteArray, mime: String) {
         val hostId = _state.value.session?.hostId ?: error("no host selected")
         client.uploadFile(_state.value.userToken, hostId, targetDir, fileName, bytes, mime)
-    }
-
-    fun openSearchResult(result: SearchResult) {
-        val threadId = result.threadId
-        if (threadId.isNullOrBlank()) {
-            _state.update { it.copy(error = "This result has no resumable Codex thread yet.") }
-            return
-        }
-        _state.update { it.copy(selectedHostId = result.hostId) }
-        openSession(resumeThreadId = threadId, cwd = result.cwd, hostId = result.hostId)
     }
 
     fun goToFiles(initialPath: String? = null) {

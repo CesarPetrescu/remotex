@@ -13,7 +13,7 @@ deploy/
 │                        then bundles the built assets into the relay
 │                        container so one image serves both the API
 │                        and the web UI.
-├── docker-compose.yml   relay, pgvector search store + optional Caddy TLS
+├── docker-compose.yml   relay, Postgres inventory store + optional Caddy TLS
 ├── Caddyfile            TLS reverse proxy config (activated with --profile tls)
 ├── .env.example         variables for the tls profile
 └── README.md            this file
@@ -26,10 +26,9 @@ cd deploy
 docker compose up -d --build
 ```
 
-The relay binds to `127.0.0.1:8080` on the host. SQLite lives in a
-named volume (`remotex_relay-data`), so restarts preserve hosts,
-bridge tokens, and sessions. Semantic search chunks and vectors live
-in the Postgres/pgvector volume (`remotex_search-data`).
+The relay binds to `127.0.0.1:8080` on the host. Inventory (hosts,
+bridge tokens, sessions) lives in the Postgres volume
+(`remotex_search-data`), so restarts preserve it.
 
 ```bash
 curl -H "Authorization: Bearer demo-user-token" \
@@ -41,57 +40,13 @@ Web control UI is at http://127.0.0.1:8080/ - it's the
 image build and served by the relay itself (no separate web
 container).
 
-## Semantic Search
-
-The Compose stack includes Postgres with pgvector. Search is visible
-in the clients, but results require an OpenAI-compatible embedding
-endpoint. LiteLLM works when it exposes `/v1/embeddings`:
-
-```bash
-cd deploy
-cp .env.example .env
-$EDITOR .env
-docker compose up -d --build
-```
+## Session reconnect grace
 
 `RELAY_CLIENT_RECONNECT_GRACE_SECONDS` controls how long the relay keeps
 a daemon session alive after a web or mobile socket disappears. The
 default is 75 seconds, which covers phone sleep, Wi-Fi/LTE switches, and
 browser reloads without leaving abandoned Codex processes around for
 long.
-
-Set at least:
-
-```dotenv
-EMBEDDING_API_BASE_URL=http://your-litellm-host:80/v1
-EMBEDDING_API_KEY=your-litellm-master-key
-EMBEDDING_MODEL=qwen3-embedding
-EMBEDDING_DIMENSIONS=4096
-EMBEDDING_MAX_CONTEXT_TOKENS=32768
-```
-
-If the same LiteLLM proxy also serves the Qwen LLM, chat
-title/description generation can use it too:
-
-```dotenv
-MAIN_MODEL_API_BASE_URL=http://your-litellm-host:80/v1
-MAIN_MODEL_API_KEY=your-litellm-master-key
-MAIN_MODEL=MainModel
-MAIN_MODEL_CONTEXT_TOKENS=16000
-MAIN_MODEL_DISABLE_THINKING_STYLE=chat_template_kwargs
-CHAT_TITLE_ENABLED=1
-```
-
-The relay sends `chat_template_kwargs: {enable_thinking: false}` so
-Qwen3.6 returns the XML metadata directly instead of streaming a
-`<think>` section first.
-
-The relay exposes non-secret effective config at:
-
-```bash
-curl -H "Authorization: Bearer demo-user-token" \
-     http://127.0.0.1:8080/api/search/config
-```
 
 ## Quickstart - with TLS (Caddy + Let's Encrypt)
 

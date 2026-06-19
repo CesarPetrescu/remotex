@@ -8,22 +8,15 @@ import app.remotex.model.HostsResponse
 import app.remotex.model.ModelInfo
 import app.remotex.model.ModelsResponse
 import app.remotex.model.OpenSessionResponse
-import app.remotex.model.SearchResponse
-import app.remotex.model.SearchResult
 import app.remotex.model.ThreadInfo
 import app.remotex.model.ThreadsResponse
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -271,78 +264,6 @@ class RelayClient(
         }
     }
 
-    suspend fun searchChats(
-        userToken: String,
-        query: String,
-        limit: Int = 20,
-    ): List<SearchResult> = withContext(Dispatchers.IO) {
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val req = Request.Builder()
-            .url("$baseUrl/api/search?q=$encoded&limit=$limit")
-            .header("Authorization", "Bearer $userToken")
-            .get()
-            .build()
-        http.newCall(req).execute().use { resp ->
-            check(resp.isSuccessful) { "searchChats: ${resp.code} ${resp.message}" }
-            val body = resp.body?.string().orEmpty()
-            json.decodeFromString(SearchResponse.serializer(), body).results
-        }
-    }
-
-    /**
-     * Stream the relay's semantic-search pipeline events. Reads NDJSON
-     * one line at a time from /api/search/stream and forwards each
-     * parsed JSON object to [onEvent]. Returns a Job that, when
-     * cancelled, aborts the underlying HTTP call.
-     *
-     * The web client uses the same endpoint; event types include
-     * `plan`, `signal`, `fused`, `rerank_start`, `rerank`,
-     * `rerank_error`, and `done`. Callers parse what they care about.
-     */
-    fun searchChatsStream(
-        scope: CoroutineScope,
-        userToken: String,
-        query: String,
-        limit: Int = 20,
-        mode: String = "hybrid",
-        rerank: String = "auto",
-        onEvent: (JsonObject) -> Unit,
-        onDone: (Throwable?) -> Unit = {},
-    ): Job {
-        // Long read timeout — the stream can stay open while the rerank
-        // step waits on a remote LLM. The pipeline ends on `done`.
-        val streamHttp = http.newBuilder()
-            .readTimeout(120, TimeUnit.SECONDS)
-            .build()
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val rerankParam = if (rerank == "auto") "" else "&rerank=${if (rerank == "1" || rerank == "true") "1" else "0"}"
-        val req = Request.Builder()
-            .url("$baseUrl/api/search/stream?q=$encoded&limit=$limit&mode=$mode$rerankParam")
-            .header("Authorization", "Bearer $userToken")
-            .get()
-            .build()
-        return scope.launch(Dispatchers.IO) {
-            var failure: Throwable? = null
-            try {
-                streamHttp.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) error("searchStream: ${resp.code} ${resp.message}")
-                    val source = resp.body?.source() ?: error("no body")
-                    while (!source.exhausted()) {
-                        val line = source.readUtf8Line() ?: break
-                        if (line.isBlank()) continue
-                        val parsed = try {
-                            json.parseToJsonElement(line) as? JsonObject
-                        } catch (_: Throwable) { null }
-                        parsed?.let { onEvent(it) }
-                    }
-                }
-            } catch (t: Throwable) {
-                failure = t
-            } finally {
-                onDone(failure)
-            }
-        }
-    }
 }
 
 typealias FsEntryInfo = FsEntry

@@ -1,12 +1,11 @@
 // Small client-side router — serializes the useRemotex state we care about
-// into a real URL and back. Lets the user bookmark/share a search, use the
-// browser back button, and refresh any screen without losing their place.
+// into a real URL and back. Lets the user use the browser back button and
+// refresh any screen without losing their place.
 //
 // URL map:
 //   /                                         → Hosts
 //   /host/:hostId                             → Threads for that host
 //   /host/:hostId/files?path=...              → File browser
-//   /search?q=...&mode=...&rerank=...&host_id → Search
 //   /session/:id                              → Live session (best-effort)
 
 import { SCREENS } from '../config';
@@ -36,15 +35,6 @@ export function buildUrl(state) {
     return `/session/${encodeURIComponent(sid)}`;
   }
 
-  if (s === SCREENS.Search) {
-    if (state.searchQuery) params.set('q', state.searchQuery);
-    if (state.searchMode && state.searchMode !== 'hybrid') params.set('mode', state.searchMode);
-    if (state.searchRerank && state.searchRerank !== 'auto') params.set('rerank', state.searchRerank);
-    if (state.selectedHostId) params.set('host_id', state.selectedHostId);
-    const qs = params.toString();
-    return `/search${qs ? '?' + qs : ''}`;
-  }
-
   return '/';
 }
 
@@ -57,15 +47,6 @@ export function parseUrl(location) {
 
   if (path === '/' || path === '') {
     return { screen: SCREENS.Hosts };
-  }
-  if (path === '/search') {
-    return {
-      screen: SCREENS.Search,
-      query: qs.get('q') || '',
-      mode: qs.get('mode') || 'hybrid',
-      rerank: qs.get('rerank') || 'auto',
-      hostId: qs.get('host_id') || null,
-    };
   }
 
   let m = path.match(/^\/host\/([^/]+)\/files$/);

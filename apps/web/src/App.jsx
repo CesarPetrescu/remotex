@@ -4,14 +4,14 @@ import { useBackgroundCompletionAlert } from './hooks/useBackgroundCompletionAle
 import { SCREENS, STATUS } from './config';
 import { Toast } from './components/Toast';
 import { SessionScreen } from './screens/SessionScreen';
-import { SearchScreen } from './screens/SearchScreen';
 import { FilesScreen } from './screens/FilesScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
 import { RightSidebar } from './components/RightSidebar';
-import { FolderPickerModal } from './components/FolderPickerModal';
-import { hostHomePath } from './util/host';
+import { JumpPicker } from './components/JumpPicker';
+import { hostHomePath, hostDisplayName } from './util/host';
+import { recordVisit } from './util/folderHistory';
 
 const RIGHT_VIEWS = ['prompts', 'telemetry', 'off'];
 const RIGHT_VIEW_KEY = 'remotex.rightView';
@@ -49,7 +49,8 @@ export default function App() {
   useBackgroundCompletionAlert(state);
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const [jumpMode, setJumpMode] = useState('search');
   // Right sidebar: prompts | telemetry | off. Goal lives in the
   // composer now, so stale persisted "goal" values fall back to off.
   const [rightView, setRightViewState] = useState(() =>
@@ -115,19 +116,24 @@ export default function App() {
   };
 
   const openSession = ({ threadId, cwd, hostId } = {}) => {
+    if (cwd) recordVisit(hostId || state.selectedHostId, cwd);
     r.openSession({ threadId, cwd, hostId });
     closeDrawers();
   };
 
-  const openNewSessionBrowser = () => {
+  // The Jump picker is the single entry point for choosing a cwd. `mode`
+  // controls whether it opens in fuzzy-recall (search) or tree (browse).
+  const openJump = (mode = 'search') => {
     if (!selectedHost?.online) return;
-    r.goToFiles(hostHomePath(selectedHost));
+    setJumpMode(mode);
+    setJumpOpen(true);
     closeDrawers();
   };
 
+  const openNewSessionBrowser = () => openJump('search');
+
   const isSessionActive = !!state.session || state.status !== STATUS.Idle;
   const onSessionScreen = state.screen === SCREENS.Session && isSessionActive;
-  const onSearchScreen = state.screen === SCREENS.Search;
   const onFilesScreen = state.screen === SCREENS.Files;
 
   const layoutClass = [
@@ -184,16 +190,7 @@ export default function App() {
       />
 
       <main className="dashboard-main">
-        {onSearchScreen ? (
-          <SearchScreen
-            state={state}
-            onQueryChange={r.setSearchQuery}
-            onSearch={(query, opts) => r.searchChats(query, opts || {})}
-            onModeChange={r.setSearchMode}
-            onRerankChange={r.setSearchRerank}
-            onOpenResult={r.openSearchResult}
-          />
-        ) : onSessionScreen ? (
+        {onSessionScreen ? (
           <SessionScreen
             state={state}
             onSend={r.sendTurn}
@@ -230,17 +227,8 @@ export default function App() {
             }}
             onEndSession={r.closeSession}
             onNewSession={openNewSessionBrowser}
-            onOpenSearch={r.goToSearch}
-            onSearchChange={r.setSearchQuery}
-            onRunSearch={(query) => {
-              r.goToSearch();
-              r.searchChats(query, { mode: state.searchMode, rerank: state.searchRerank });
-            }}
-            onBrowseFiles={() => {
-              r.goToFiles(state.browsePath || hostHomePath(selectedHost));
-              setLeftOpen(false);
-            }}
-            onOpenFolderPicker={() => setFolderPickerOpen(true)}
+            onBrowseFiles={() => openJump('browse')}
+            onOpenFolderPicker={() => openJump('search')}
             onStartInCwd={() => openSession({ cwd: state.browsePath || null })}
             onRefreshThreads={() => r.refreshThreads()}
             onOpenManageHosts={() => setLeftOpen(true)}
@@ -261,16 +249,18 @@ export default function App() {
         onCancelUserInput={r.cancelUserInput}
       />
 
-      <FolderPickerModal
-        open={folderPickerOpen}
+      <JumpPicker
+        open={jumpOpen}
+        onClose={() => setJumpOpen(false)}
+        hostId={state.selectedHostId}
+        hostHome={hostHomePath(selectedHost)}
+        hostName={selectedHost ? hostDisplayName(selectedHost) : ''}
         initialPath={state.browsePath || hostHomePath(selectedHost)}
-        onClose={() => setFolderPickerOpen(false)}
+        initialMode={jumpMode}
         onListDirectory={r.listDirectory}
         onCreateFolder={r.createFolder}
         onSelect={(p) => {
-          setFolderPickerOpen(false);
-          // Keep the dashboard badge in sync before opening the session.
-          r.browseDir(p);
+          setJumpOpen(false);
           openSession({ cwd: p });
         }}
       />

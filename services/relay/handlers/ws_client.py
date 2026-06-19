@@ -57,10 +57,7 @@ async def _close_backend_session(app: web.Application, host_id: str, session_id:
             })
         except Exception as exc:  # noqa: BLE001
             log.debug("session-close forward failed", extra={"error": str(exc)})
-    session = await store.session_info(session_id)
     await store.close_session(session_id)
-    if session:
-        app["search"].capture_session_closed(session)
     await hub.forget_session(session_id)
 
 
@@ -267,9 +264,6 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                         },
                     },
                 })
-                session = await store.session_info(session_id)
-                if session:
-                    request.app["search"].capture_client_turn(session, frame)
                 audit(
                     "turn.started",
                     session_id=session_id,

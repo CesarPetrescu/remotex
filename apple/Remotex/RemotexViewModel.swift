@@ -14,9 +14,6 @@ final class RemotexViewModel: ObservableObject {
     @Published private(set) var status: ConnectionStatus = .idle
     @Published private(set) var session: SessionInfo?
     @Published private(set) var stream: [StreamItem] = []
-    @Published var searchQuery: String = ""
-    @Published private(set) var searchResults: [SearchResult] = []
-    @Published private(set) var searchLoading: Bool = false
     @Published var prompt: String = ""
     @Published var errorMessage: String?
     @Published private(set) var pending: Bool = false
@@ -52,42 +49,6 @@ final class RemotexViewModel: ObservableObject {
             return
         }
         openSession(hostId: host.id, host: host)
-    }
-
-    func searchChats() {
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            searchResults = []
-            return
-        }
-        searchLoading = true
-        errorMessage = nil
-        Task {
-            do {
-                searchResults = try await client.searchChats(
-                    baseURL: relayURL,
-                    userToken: userToken,
-                    query: query
-                )
-                searchLoading = false
-            } catch {
-                searchLoading = false
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    func openSearchResult(_ result: SearchResult) {
-        guard let threadId = result.threadId, !threadId.isEmpty else {
-            errorMessage = "This result has no resumable Codex thread yet."
-            return
-        }
-        let host = hosts.first { $0.id == result.hostId }
-        if let host, !host.online {
-            errorMessage = "\(host.nickname) is offline"
-            return
-        }
-        openSession(hostId: result.hostId, host: host, threadId: threadId, cwd: result.cwd)
     }
 
     private func openSession(

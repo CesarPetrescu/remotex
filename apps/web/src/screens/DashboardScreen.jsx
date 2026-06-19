@@ -1,11 +1,9 @@
-import { useEffect, useState } from 'react';
-
 import { shortenCwd } from '../util/path';
 import { relativeAge } from '../util/time';
 import { STATUS } from '../config';
 
-// Middle-column view when no session or search screen is active.
-// Active Session card + Semantic Search + Quick Actions + Folder Selection.
+// Middle-column view when no session screen is active.
+// Active Session card + Quick Actions + Folder Selection.
 
 export function DashboardScreen({
   state,
@@ -13,9 +11,6 @@ export function DashboardScreen({
   onOpenSession,
   onEndSession,
   onNewSession,
-  onOpenSearch,
-  onSearchChange,
-  onRunSearch,
   onBrowseFiles,
   onOpenFolderPicker,
   onStartInCwd,
@@ -38,12 +33,6 @@ export function DashboardScreen({
           onRefreshThreads={onRefreshThreads}
           onOpenManageHosts={onOpenManageHosts}
           threadCount={state.threads.length}
-        />
-        <SemanticSearchPanel
-          query={state.searchQuery}
-          onChange={onSearchChange}
-          onSubmit={onRunSearch}
-          onOpenSearch={onOpenSearch}
         />
       </div>
       <FolderSelectionPanel
@@ -147,46 +136,6 @@ function SessionFact({ label, value, mono = false, tone }) {
         {value}
       </span>
     </div>
-  );
-}
-
-function SemanticSearchPanel({ query, onChange, onSubmit, onOpenSearch }) {
-  const [localQuery, setLocalQuery] = useState(query || '');
-  useEffect(() => {
-    setLocalQuery(query || '');
-  }, [query]);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const q = localQuery.trim();
-    if (!q) return;
-    onChange?.(q);
-    onSubmit?.(q);
-  };
-
-  return (
-    <section className="card card-search">
-      <div className="card-head">
-        <span className="card-eyebrow">SEMANTIC CHAT SEARCH</span>
-        <span className="card-hint" aria-hidden="true">ⓘ</span>
-      </div>
-      <form className="search-form" onSubmit={handleSubmit}>
-        <input
-          type="text"
-          className="search-input"
-          value={localQuery}
-          onChange={(e) => setLocalQuery(e.target.value)}
-          placeholder="Search chats by topic, code, or question…"
-          spellCheck={false}
-        />
-        <button type="submit" className="btn-primary btn-full">
-          Search chats
-        </button>
-      </form>
-      <button type="button" className="link-button" onClick={onOpenSearch}>
-        Open full search →
-      </button>
-    </section>
   );
 }
 
