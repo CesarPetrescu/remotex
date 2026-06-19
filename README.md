@@ -57,6 +57,42 @@ Two credentials are intentionally separate:
 The daemon does not read the Codex auth file. It only starts the local
 Codex app server process.
 
+## Remotex vs. Codex Remote Connections
+
+OpenAI now ships official
+[Codex Remote Connections](https://developers.openai.com/codex/remote-connections),
+which covers the mainstream version of Remotex's original idea: control
+Codex on a trusted host from another device without exposing that host
+directly to the internet. The official path is deeply integrated with
+ChatGPT, the Codex App, workspace auth, SSH projects, worktrees, Git UI,
+Computer Use, browser features, automations, and enterprise controls.
+
+Remotex is different by design: it is a self-hosted relay and custom
+client stack for people who want to run `codex app-server` on their own
+machine, own the rendezvous service, and add product features around that
+wire protocol.
+
+| Area | Official Codex Remote Connections | Remotex |
+| --- | --- | --- |
+| Control plane | OpenAI-managed secure relay across authorized ChatGPT/Codex devices | Self-hosted aiohttp relay with your own Postgres inventory and tokens |
+| Host runtime | Codex App host on macOS/Windows, plus SSH hosts managed through the Codex App | Python daemon that starts the official `codex app-server` binary over stdio |
+| Clients | ChatGPT mobile and supported Codex App devices | Custom web app, Android app, and starter iPhone app |
+| Auth | ChatGPT account/workspace auth, MFA/SSO/passkeys, admin policy | Prototype bearer-token auth today: user token plus bridge token |
+| Session basics | Start new host threads, continue existing threads, switch hosts and threads | Start/resume Codex threads, replay history during resume, reconnect with event replay |
+| Live control | Send follow-ups, answer questions, steer active work, approve actions | Send turns, interrupt turns, answer approvals and user-input prompts, use slash commands and goals |
+| Host environment | Uses the host's projects, files, credentials, plugins, MCP servers, skills, browser setup, Computer Use, and local tools | Uses the daemon host's filesystem and Codex configuration; Remotex adds custom file browsing/upload and host telemetry |
+| Codex App features | Worktrees, built-in Git diff/review, commit/push/PR flows, automations, IDE sync, Computer Use, in-app browser | Not first-class in the Remotex UI; Codex can still run tools and shell commands through app-server |
+| Search/history | Native Codex thread surfaces | Remotex-specific semantic chat search with pgvector and Qwen3 embeddings |
+| Notifications | Built-in task and approval notifications in Codex/ChatGPT surfaces | Android foreground/done notifications and web background alerts; iPhone parity still pending |
+| Extensibility | OpenAI product surface and settings | Direct access to the relay, clients, daemon adapter, and normalized event stream |
+| Best fit | Most users who want polished official remote Codex access | Self-hosters, protocol hackers, Linux/workstation setups, custom mobile/web clients, and private relay deployments |
+
+Under the hood, both approaches meet at the same important boundary:
+[`codex app-server`](https://developers.openai.com/codex/app-server). It
+speaks JSON-RPC over transports such as stdio, Unix sockets, and
+experimental WebSocket. Remotex intentionally uses the default stdio
+transport and wraps it in its own outbound WebSocket relay.
+
 ## Screenshots
 
 A live web session: pick an online host, open a session, send a prompt,
@@ -261,11 +297,11 @@ docker compose --profile tls up -d --build
 
 | Area | Status |
 | --- | --- |
-| Relay REST + WebSocket transport | Working; SQLite-backed; demo tokens seeded |
+| Relay REST + WebSocket transport | Working; Postgres-backed; demo tokens seeded |
 | Daemon -> relay connection | Working; outbound WebSocket with reconnect |
 | Real Codex bridge | Working through `codex app-server` stdio |
 | Mock adapter | Working for tests and offline demos |
-| Web client | Lists hosts, opens sessions, sends text turns, streams reasoning/tool/agent events |
+| Web client | Lists hosts, opens/resumes sessions, sends text/image turns, streams reasoning/tool/agent events, handles approvals, user-input prompts, models, effort, permissions, slash commands, goals, files, telemetry, and search |
 | Android client | Lists hosts, opens/resumes threads, renders events, sends turns, supports images, model/effort controls, permissions, approvals, interrupt, reconnect |
 | iPhone client | Starter SwiftUI app; lists hosts, opens sessions, sends text turns, streams events, searches chats |
 | Semantic chat search | Captures completed turns, chunks user/Codex/reasoning text, embeds with Qwen3-Embedding-8B, stores vectors in pgvector, exposes web/Android/iPhone search |
@@ -295,16 +331,16 @@ carry `session_id`.
 These are the main items before this is ready for real users:
 
 1. Replace demo bearer tokens with OIDC/Keycloak login.
-2. Move the relay store from SQLite to Postgres.
-3. Add audit logs, metrics, rate limits, and bounded queues.
-4. Add web UI support for approvals, thread resume, model/effort controls,
-   image attachments, and permissions so it matches Android.
-5. Bring the iPhone app to Android feature parity: thread resume, images,
+2. Add production-grade audit retention, metrics dashboards, and stronger
+   slow-consumer/fault handling.
+3. Bring the iPhone app to Android feature parity: thread resume, images,
    model/effort controls, permissions, approvals, interrupt, and reconnect.
-6. Add mobile push notifications for approval requests.
-7. Add more fault tests: daemon disconnect, duplicate client attach, bad
+4. Add mobile push notifications for approval requests.
+5. Add more fault tests: daemon disconnect, duplicate client attach, bad
    tokens, slow clients, and host offline during a turn.
-8. Add Kubernetes manifests for multi-user deployments.
+6. Add Kubernetes manifests for multi-user deployments.
+7. Decide whether to keep pursuing custom remote-control features now that
+   official Codex Remote Connections covers the mainstream hosted path.
 
 ## Development
 
