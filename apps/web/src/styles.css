@@ -2562,7 +2562,7 @@ main.screen-host {
   border-top: 1px solid var(--line);
   background: var(--panel);
 }
-.jp-cur { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.jp-cur { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
 .jp-cur-label {
   font-size: 9px;
   letter-spacing: 0.14em;
@@ -2580,7 +2580,9 @@ main.screen-host {
   white-space: nowrap;
   min-width: 0;
 }
-.jp-use { flex: 0 0 auto; }
+/* Scoped to beat the global `.btn-primary { width: 100% }` so the button
+   stays content-width on the right instead of filling the row. */
+.jp-selectbar .jp-use { flex: 0 0 auto; width: auto; }
 
 /* mobile: full-screen, fat touch targets, sticky select bar */
 @media (max-width: 640px) {
@@ -2599,7 +2601,7 @@ main.screen-host {
     gap: 8px;
     padding: 12px 14px;
   }
-  .jp-use { padding: 13px 18px; width: 100%; }
+  .jp-selectbar .jp-use { padding: 13px 18px; width: 100%; }
 }
 
 .btn-surface,
