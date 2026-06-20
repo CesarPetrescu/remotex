@@ -2894,26 +2894,27 @@ main.screen-host {
   align-items: stretch;
   gap: 0;
   background: transparent;
-  border: 0;
+  /* Transparent border on every side so the selected state can light it up
+     without shifting the card by a pixel. */
+  border: 1px solid transparent;
   padding: 0;
   text-align: left;
   cursor: pointer;
   color: var(--ink);
-  border-top: 1px solid transparent;
-  border-bottom: 1px solid transparent;
 }
 .sidebar-host:hover:not(:disabled) { background: rgba(94, 225, 255, 0.04); }
+/* Selected host: a contained chip — filled panel + an even cyan border on
+   all four sides (no half-open box, no competing stripe). */
 .sidebar-host.active {
-  background: rgba(94, 225, 255, 0.08);
-  border-top-color: rgba(94, 225, 255, 0.18);
-  border-bottom-color: rgba(94, 225, 255, 0.18);
+  background: var(--panel-2);
+  border-color: rgba(94, 225, 255, 0.32);
 }
 .sidebar-host:disabled { cursor: not-allowed; opacity: 0.55; }
 .sidebar-host-stripe {
   width: 3px;
   background: transparent;
 }
-.sidebar-host-stripe.active { background: var(--amber); }
+.sidebar-host-stripe.active { background: transparent; }
 .sidebar-host-body { flex: 1; min-width: 0; padding: 8px 10px; }
 .sidebar-host-row1 {
   display: flex; align-items: center; gap: 6px;
