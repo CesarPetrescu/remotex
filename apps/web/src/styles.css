@@ -598,7 +598,7 @@ main.screen-host {
   text-transform: uppercase;
   margin-bottom: 2px;
 }
-.item-body { color: var(--ink); white-space: pre-wrap; word-wrap: break-word; }
+.item-body { color: var(--ink); white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; min-width: 0; }
 
 /* User messages: right-aligned bubble, muted slate/teal tone so they
  * read distinctly from the agent's blue-left-stripe column. */
@@ -629,7 +629,10 @@ main.screen-host {
  * sub-events (reasoning/agent/tool) that belong to this turn. */
 .agent-group {
   display: grid;
-  grid-template-columns: 12px 1fr;
+  /* minmax(0, 1fr) (not 1fr) so the content column can shrink below its
+     min-content width — otherwise a long path/URL/token forces the track
+     wider than the viewport and the whole chat scrolls sideways on mobile. */
+  grid-template-columns: 12px minmax(0, 1fr);
   column-gap: 10px;
   align-self: flex-start;
   width: min(82%, 900px);
@@ -664,6 +667,11 @@ main.screen-host {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+  /* Break long unbreakable tokens (paths, URLs, hashes) instead of letting
+     them push the chat wider. Inherited by all the markdown children;
+     code blocks set white-space:pre so they ignore this and scroll instead. */
+  overflow-wrap: anywhere;
 }
 
 /* A sub-event inside an agent group. No individual left border — the
