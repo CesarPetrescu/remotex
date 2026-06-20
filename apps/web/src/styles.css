@@ -2506,16 +2506,26 @@ main.screen-host {
 .jp-row-parent {
   color: var(--ink-dim);
   font-size: 11px;
-  margin-left: auto;
-  padding-left: 12px;
+  margin-left: 8px;
+  padding-left: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 46%;
   flex: 0 1 auto;
 }
-.jp-row-chev { color: var(--ink-dim); margin-left: auto; padding-left: 8px; flex: 0 0 auto; }
-.jp-row-parent + .jp-row-chev { margin-left: 6px; }
+/* Only the chevron is right-aligned; the parent path sits inline next to the
+   name (a second margin-left:auto floated it to mid-row). */
+.jp-row-chev {
+  color: var(--ink-dim);
+  margin-left: auto;
+  padding-left: 8px;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.jp-row:hover .jp-row-chev,
+.jp-row.active .jp-row-chev { opacity: 0.7; }
 .jp-hl { background: transparent; color: var(--amber); font-weight: 700; }
 .jp-pin {
   background: transparent;
