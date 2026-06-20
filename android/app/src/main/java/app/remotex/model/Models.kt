@@ -18,9 +18,6 @@ data class Host(
 data class HostsResponse(val hosts: List<Host>)
 
 @Serializable
-data class OpenSessionRequest(@SerialName("host_id") val hostId: String)
-
-@Serializable
 data class OpenSessionResponse(@SerialName("session_id") val sessionId: String)
 
 @Serializable
