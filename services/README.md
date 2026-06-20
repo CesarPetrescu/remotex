@@ -9,12 +9,11 @@ with `scripts/e2e_test.py`.
 
 ```
 services/
-├── relay/app.py                   aiohttp relay + SQLite inventory + WS routing
-├── relay/search.py                Postgres/pgvector semantic chat search
+├── relay/app.py                   aiohttp relay + Postgres inventory + WS routing
 ├── daemon/
 │   ├── __main__.py                CLI: init / run / status
 │   ├── config.py                  TOML config, cross-platform paths
-│   ├── adapters.py                MockCodexAdapter + StdioCodexAdapter skeleton
+│   ├── adapters/                  MockCodexAdapter + StdioCodexAdapter (stdio.py, mock.py, factory.py, base.py, admin.py)
 │   └── client.py                  outbound WSS client, per-session runners
 ├── scripts/e2e_test.py            in-process end-to-end test
 └── docs/
@@ -27,8 +26,6 @@ services/
 
 - Python 3.11+
 - `pip install -r requirements.txt`
-- Optional for semantic search: Postgres with pgvector plus an
-  OpenAI-compatible Qwen3-Embedding-8B endpoint.
 
 ## Run locally
 
@@ -80,18 +77,15 @@ how to replace them with Keycloak-issued credentials.
 
 ## What's real vs. mocked
 
-- **Relay transport** - real. The WS routing, SQLite inventory, bearer
+- **Relay transport** - real. The WS routing, Postgres inventory, bearer
   auth middleware, and REST endpoints all work.
-- **Semantic search** - real when configured. The relay stores completed
-  turn chunks in Postgres/pgvector and embeds them through an
-  OpenAI-compatible Qwen3-Embedding-8B API.
 - **Daemon → relay** - real. Outbound WSS with hello + session routing
   and exponential backoff reconnect.
 - **Codex integration** - mocked. The default adapter emits a scripted
   sequence of events shaped like the real Codex App Server protocol.
-  `daemon/adapters.py::StdioCodexAdapter` is the skeleton for the real
+  `daemon/adapters/stdio.py::StdioCodexAdapter` is the skeleton for the real
   stdio bridge; see `docs/codex_app_server_protocol.md`.
-- **User auth** - token lookup against SQLite only. No Keycloak yet.
+- **User auth** - token lookup against Postgres only. No Keycloak yet.
 
 ## Next steps
 

@@ -32,11 +32,6 @@ It **is**:
 
 - A WebSocket fan-out for codex sessions: one codex process can
   have multiple clients attached and they all see the same stream.
-- An orchestrator on top of codex: a long-horizon "brain" codex
-  that plans a DAG of subtasks and dispatches each to a fresh
-  child codex via MCP.
-- A semantic-search index over historical chats (pgvector +
-  Qwen3-Embedding-8B).
 
 ---
 
@@ -56,10 +51,10 @@ It **is**:
 └─────────────┬──────────────┘                             └──────┬───────┘
               │ stdio JSON-RPC                                    │
               ▼                                                   ▼
-   `codex app-server`                                  Postgres + pgvector
-   (the official OpenAI                                (chat history,
-    binary; one subprocess                              semantic search,
-    per session)                                        host inventory)
+   `codex app-server`                                  Postgres
+   (the official OpenAI                                (host inventory)
+    binary; one subprocess
+    per session)
 ```
 
 ### Data flow for a single user prompt
@@ -88,20 +83,18 @@ It **is**:
 - `handlers/sessions.py` — `POST /api/sessions` (reserves session
   IDs, picks `kind`, stashes per-session overrides).
 - `handlers/ws_daemon.py` — daemon WebSocket; receives
-  session-event frames and broadcasts to attached clients;
-  persists orchestrator events.
+  session-event frames and broadcasts to attached clients.
 - `handlers/ws_client.py` — client WebSocket; manages attach/grace,
   fans out to multiple peers, replays buffered events on reconnect.
 - `hub.py` — in-memory state: which daemons are online, which
   sessions are open, attach maps, replay buffers.
-- `store.py` — Postgres access (sessions, hosts, chats).
-- `search/` — pgvector indexer + reranker integration.
+- `store.py` — Postgres access (sessions, hosts).
 
 **`services/daemon/`** (Python systemd user unit `remotex-daemon`)
 - `client.py` — outbound WebSocket to relay; receives session-open
   / session-close frames and constructs adapters.
 - `adapters/factory.py` — picks `StdioCodexAdapter` (kind=codex)
-  or `OrchestratorAdapter` (kind=orchestrator).
+  or `MockCodexAdapter` (mode=mock).
 - `adapters/stdio.py` — bridges one codex subprocess to relay
   frames. The "main" file in the daemon (~700 lines).
 - `adapters/admin.py` — long-lived codex used for cheap read-only
@@ -110,15 +103,6 @@ It **is**:
   shape.
 - `adapters/permissions.py` — maps UI permission chip → codex
   `sandboxPolicy` + `approvalPolicy`.
-- `orchestrator/adapter.py` — wraps a brain `StdioCodexAdapter`,
-  injects the orchestrator MCP server into its `thread/start`
-  config.
-- `orchestrator/mcp_shim.py` — standalone MCP server that codex
-  spawns; relays `tools/call` over a Unix socket to the daemon.
-- `orchestrator/bridge.py` — Unix socket server inside the
-  daemon, dispatches MCP tool calls to runtime methods.
-- `orchestrator/runtime.py` — DAG of `_Step` objects, owns child
-  StdioCodexAdapter lifecycles, emits orchestrator-step-* events.
 
 **`apps/web/`** (Vite + React, bundled into relay docker image)
 - `src/hooks/useRemotex.js` — single big reducer + WebSocket
@@ -127,9 +111,7 @@ It **is**:
 - `src/screens/SessionScreen.jsx` — chat surface.
 - `src/screens/DashboardScreen.jsx` — landing surface.
 - `src/components/Composer.jsx` — chip row + textarea + send/stop.
-- `src/components/PlanTree.jsx` — orchestrator plan panel
-  (collapsible).
-- `src/components/Pickers.jsx` — model/effort/permissions/kind
+- `src/components/Pickers.jsx` — model/effort/permissions
   chip components.
 - `src/components/{Approval,UserInput,FolderPicker,Toast}.jsx` —
   modals; **all rendered through `createPortal(document.body)`**
@@ -275,8 +257,6 @@ Skip it for:
     "kind": "session-started" | "turn-started" | "item-started" |
             "item-delta" | "item-completed" | "turn-completed" |
             "approval-request" | "user-input-request" |
-            "orchestrator-plan" | "orchestrator-step-status" |
-            "orchestrator-step-event" | "orchestrator-finished" |
             "host-telemetry" | "session-closed",
     "data": { … kind-specific … },
     "ts": 1234567890.123
@@ -287,7 +267,7 @@ Skip it for:
 ### Relay → daemon (session control)
 
 ```json
-{ "type": "session-open",  "session_id": "...", "kind": "codex"|"orchestrator", "cwd": "...", "thread_id": "...", "task": "...", "model": "...", "effort": "...", "permissions": "...", "approval_policy": "..." }
+{ "type": "session-open",  "session_id": "...", "kind": "codex", "cwd": "...", "thread_id": "...", "task": "...", "model": "...", "effort": "...", "permissions": "...", "approval_policy": "..." }
 { "type": "session-close", "session_id": "..." }
 ```
 
@@ -329,26 +309,15 @@ For exact field shapes, see the canonical reference:
   dashboard layout.
 - The Android debug APK's default relay URL is `10.0.2.2:8080`.
   Real devices need the LAN IP — use `android/build.sh`.
-- The orchestrator brain MUST run with `permissions=full`. Codex
-  only auto-approves MCP tool calls when `approvalPolicy=never`
-  AND `sandbox=dangerFullAccess`. Otherwise it pops a
-  `RequestUserInput` and the brain hangs.
 - Codex's `thread/resume` reply inlines the entire conversation as
   one JSON-RPC frame. Use `_read_line_unbounded` (in
   `adapters/stdio.py`) — `StreamReader.readline()`'s 64KB cap
   silently truncates and stranding the read task.
-- Restarting the daemon kills any in-flight orchestrator. The
-  child codex processes get reparented to init. Clean them up
-  with `pkill -f "codex app-server"` if they accumulate.
 - The Postgres container is `remotex-postgres-1`. Don't confuse
   it with the unrelated `cdx-chat-postgres-1` running on the same
   docker daemon.
-- `kind` (`coder` | `orchestrator`) is on the wire in
-  `session-started.data.kind`. Both clients consume it; don't
-  remove it without updating both.
-- Web's PlanTree auto-expands when a step transitions to
-  `running`; respect that signal if you add new orchestrator
-  events.
+- `kind` is on the wire in `session-started.data.kind`. Both
+  clients consume it; don't remove it without updating both.
 
 ---
 
@@ -362,10 +331,9 @@ For exact field shapes, see the canonical reference:
    remotex-daemon -n 200 --no-pager`).
 5. **Read the relay logs** (`docker logs --since 30m
    remotex-relay-1`).
-6. **Check the actual SQLite/Postgres state** —
+6. **Check the actual Postgres state** —
    `docker exec remotex-postgres-1 psql -U remotex -d remotex
    -c "SELECT id, kind, ... FROM inventory_sessions ORDER BY
    opened_at DESC LIMIT 5;"`.
 7. **Inspect open codex processes**: `pstree -lp $(pgrep -f
-   "remotex-daemon")` — orchestrator brains have `mcp_shim.py` as
-   a sibling child; coder sessions don't.
+   "remotex-daemon")`.

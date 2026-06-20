@@ -18,9 +18,6 @@ the same `codex app-server` process via WebSocket fan-out.
 │ Web/Android │─────────────▶│ Remotex relay│◀─────────────────│ Host daemon  │────────▶ codex app-server
 │ /iPhone     │              │ aiohttp      │  bridge token    │ Python       │          (OpenAI)
 └─────────────┘              └──────────────┘                   └──────────────┘
-                                    │
-                                    ▼
-                           pgvector (chats + embeddings)
 ```
 
 The relay is a rendezvous + auth point only — it never sees the
@@ -35,11 +32,6 @@ user's OpenAI auth. Codex runs as a child process of the daemon.
 - `services/relay/` — aiohttp relay; routes between web/Android/iOS
   clients and the daemons. Lives in the `remotex-relay-1` docker
   container (compose file at `deploy/docker-compose.yml`).
-- `services/daemon/orchestrator/` — long-horizon brain that uses MCP
-  to spawn child codex sessions. See `adapter.py` for how the
-  brain's `thread/start.config.mcp_servers` is wired up; see
-  `mcp_shim.py` + `bridge.py` for the codex-side MCP server we
-  inject.
 - `apps/web/` — Vite + React UI. Built into the relay docker image
   at image build time (`deploy/Dockerfile.relay`).
 - `android/` — Compose client. Build via `android/build.sh` (auto-
@@ -111,22 +103,6 @@ auto-magically — see `android/README.md`.
   tests use — CI doesn't have the binary installed.
 - For codex-dependent verification, use the manual probe approach
   above instead of pytest.
-
-## Orchestrator-specific gotchas
-
-- The brain's per-turn frame ALWAYS uses `permissions="full"` (see
-  `services/daemon/orchestrator/adapter.py::_brain_turn_frame`).
-  Required because codex only auto-approves MCP tool calls when
-  `approvalPolicy=never` AND `sandbox=dangerFullAccess`. Children
-  spawned by the runtime still inherit the operator's permissions.
-- The MCP shim lives at `services/daemon/orchestrator/mcp_shim.py`.
-  Codex spawns it as a child process; it relays `tools/call` over
-  a Unix socket (`/run/user/$UID/remotex-orch-<sid>.sock`) to a
-  `BridgeServer` running inside the daemon.
-- `kind` (`coder` | `orchestrator`) is on the wire in `session-
-  started.data.kind` — set by `StdioCodexAdapter._session_kind`,
-  which `OrchestratorAdapter` overrides to `"orchestrator"` when
-  constructing its brain.
 
 ## What NOT to do
 

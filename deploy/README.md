@@ -82,7 +82,7 @@ The relay volume (`remotex_relay-data`) carries over.
 ## Reset
 
 ```bash
-docker compose down -v               # -v nukes the SQLite volume too
+docker compose down -v               # -v nukes the Postgres volume too
 ```
 
 ## Pointing a daemon at this relay
@@ -134,7 +134,6 @@ python3 -m daemon run --config ./demo-config.toml
 Docker Compose gets you a self-hosted demo, not a hardened service.
 Open items tracked against the roadmap:
 
-- Move the primary relay inventory from SQLite to Postgres.
 - Keycloak / OIDC auth (currently demo bearer tokens seeded on first run).
 - Audit log + metrics.
 - Bounded queues / backpressure on session fan-out.
