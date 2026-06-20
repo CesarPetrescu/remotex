@@ -238,7 +238,6 @@ export default function App() {
 
       <RightSidebar
         view={rightView}
-        onView={openRightView}
         onClose={closeRightView}
         telemetry={telemetry}
         selectedHost={selectedHost}

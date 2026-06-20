@@ -7,6 +7,9 @@ import { useId } from 'react';
 export function Sparkline({
   points = [],
   secondaryPoints = [],
+  times = [],
+  secondaryTimes = [],
+  windowMs = 30000,
   max = null,
   color = 'var(--accent)',
   secondaryColor = 'var(--accent-pink)',
@@ -29,13 +32,22 @@ export function Sparkline({
   const guides = [0.15, 0.4, 0.65, 0.9].map((ratio) => padY + plotH * ratio);
   const rails = [0.18, 0.5, 0.82].map((ratio) => padX + plotW * ratio);
 
-  function buildSeries(series) {
-    const stepX = series.length > 1 ? plotW / (series.length - 1) : 0;
+  function buildSeries(series, seriesTimes) {
+    const n = series.length;
+    // Plot x by real timestamp over a fixed window (newest at the right
+    // edge) when times are supplied, so uneven sample arrival doesn't warp
+    // the axis. Falls back to even index spacing otherwise.
+    const useTime = seriesTimes && seriesTimes.length === n && n > 0 && windowMs > 0;
+    const tStart = useTime ? seriesTimes[n - 1] - windowMs : 0;
+    const stepX = n > 1 ? plotW / (n - 1) : 0;
+    const xAt = (i) =>
+      useTime
+        ? padX + Math.max(0, Math.min(1, (seriesTimes[i] - tStart) / windowMs)) * plotW
+        : padX + i * stepX;
     const coords = series.map((v, i) => {
-      const x = padX + i * stepX;
       const clamped = Math.max(0, Math.min(cap, v));
       const y = h - padY - (clamped / cap) * plotH;
-      return [x, y];
+      return [xAt(i), y];
     });
     const linePath = coords
       .map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`)
@@ -50,8 +62,8 @@ export function Sparkline({
     };
   }
 
-  const primarySeries = buildSeries(primary);
-  const secondarySeries = secondary ? buildSeries(secondary) : null;
+  const primarySeries = buildSeries(primary, times);
+  const secondarySeries = secondary ? buildSeries(secondary, secondaryTimes) : null;
   const fillColor = fill || color;
   const secondaryFillColor = secondaryFill || secondaryColor;
 

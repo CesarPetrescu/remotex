@@ -70,22 +70,13 @@ export function DashboardHeader({
       <div className="dashboard-header-right">
         {onRightView && (
           <div className="header-tools" aria-label="Tools">
-            {hasPendingPrompt && (
-              <HeaderTool
-                id="prompts"
-                label="Pending prompts"
-                icon="!"
-                active={rightView === 'prompts'}
-                onClick={() => onRightView(rightView === 'prompts' ? 'off' : 'prompts')}
-                badge={String(pendingPromptCount)}
-              />
-            )}
             <HeaderTool
               id="telemetry"
-              label="Telemetry"
+              label={hasPendingPrompt ? 'Telemetry · pending prompt' : 'Telemetry'}
               icon="▥"
-              active={rightView === 'telemetry'}
-              onClick={() => onRightView(rightView === 'telemetry' ? 'off' : 'telemetry')}
+              active={rightView !== 'off'}
+              onClick={() => onRightView(rightView === 'off' ? 'telemetry' : 'off')}
+              badge={hasPendingPrompt ? String(pendingPromptCount) : null}
             />
           </div>
         )}

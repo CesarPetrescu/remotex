@@ -5,6 +5,8 @@ const EMPTY_HISTORY = { cpu: [], mem: [], gpu: [], up: [], down: [] };
 export function TelemetrySidebar({ telemetry, selectedHost, onClose }) {
   const current = telemetry?.current;
   const history = telemetry?.history || EMPTY_HISTORY;
+  const vals = (a) => (a || []).map((p) => p.v);
+  const tms = (a) => (a || []).map((p) => p.t);
   const fresh = telemetry?.lastUpdate
     ? Math.max(0, Math.floor((Date.now() - telemetry.lastUpdate) / 1000))
     : null;
@@ -50,10 +52,11 @@ export function TelemetrySidebar({ telemetry, selectedHost, onClose }) {
               : 'processor load'
           }
           color="var(--accent)"
-          points={history.cpu}
+          points={vals(history.cpu)}
+          times={tms(history.cpu)}
           max={100}
           online={online}
-          summary={summarizeSeries(history.cpu, (value) => `${formatPercent(value)}%`)}
+          summary={summarizeSeries(vals(history.cpu), (value) => `${formatPercent(value)}%`)}
         />
         <TelemetryCard
           label="RAM"
@@ -67,10 +70,11 @@ export function TelemetrySidebar({ telemetry, selectedHost, onClose }) {
           }
           note={current?.memory ? 'resident working set' : 'memory pressure'}
           color="var(--accent-blue)"
-          points={history.mem}
+          points={vals(history.mem)}
+          times={tms(history.mem)}
           max={100}
           online={online}
-          summary={summarizeSeries(history.mem, (value) => `${formatPercent(value)}%`)}
+          summary={summarizeSeries(vals(history.mem), (value) => `${formatPercent(value)}%`)}
         />
         <TelemetryCard
           label="GPU"
@@ -88,11 +92,12 @@ export function TelemetrySidebar({ telemetry, selectedHost, onClose }) {
               : 'accelerator state'
           }
           color="var(--accent-green)"
-          points={history.gpu}
+          points={vals(history.gpu)}
+          times={tms(history.gpu)}
           max={100}
           online={online && !!current?.gpu}
           disabled={!current?.gpu}
-          summary={summarizeSeries(history.gpu, (value) => `${formatPercent(value)}%`)}
+          summary={summarizeSeries(vals(history.gpu), (value) => `${formatPercent(value)}%`)}
         />
         <TelemetryCard
           label="NETWORK"
@@ -109,14 +114,16 @@ export function TelemetrySidebar({ telemetry, selectedHost, onClose }) {
               </span>
             </div>
           }
-          note="3 second rolling transfer window"
+          note="30-second window · 3s transfer rate"
           color="var(--accent-violet)"
-          points={history.down}
-          secondaryPoints={history.up}
-          max={Math.max(1, ...history.up, ...history.down)}
+          points={vals(history.down)}
+          secondaryPoints={vals(history.up)}
+          times={tms(history.down)}
+          secondaryTimes={tms(history.up)}
+          max={Math.max(1, ...vals(history.up), ...vals(history.down))}
           online={online}
           fixedMaxOff
-          summary={summarizeNetwork(history.up, history.down)}
+          summary={summarizeNetwork(vals(history.up), vals(history.down))}
         />
       </div>
 
@@ -152,6 +159,8 @@ function TelemetryCard({
   color,
   points,
   secondaryPoints,
+  times,
+  secondaryTimes,
   summary = [],
   max,
   online,
@@ -177,6 +186,8 @@ function TelemetryCard({
         <Sparkline
           points={points || []}
           secondaryPoints={secondaryPoints || []}
+          times={times || []}
+          secondaryTimes={secondaryTimes || []}
           max={max}
           color={color}
           secondaryColor="var(--accent-pink)"

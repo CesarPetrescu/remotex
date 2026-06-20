@@ -217,7 +217,7 @@ const initialState = {
   modelOptions: FALLBACK_MODEL_OPTIONS,
 };
 
-const TELEMETRY_HISTORY_MAX = 60;
+const TELEMETRY_WINDOW_MS = 30000; // real 30-second sliding window
 
 // --- reducer ---
 
@@ -399,9 +399,15 @@ function reducer(state, action) {
       const prev = state.hostTelemetry[hostId];
       const prevHistory = prev?.history || { cpu: [], mem: [], gpu: [], up: [], down: [] };
       const d = action.data;
+      const now = Date.now();
+      // Real 30s sliding window: timestamp each sample and drop anything
+      // older than the window. Time-based (not a fixed sample count) so the
+      // x-axis stays linear in real time no matter how unevenly frames land
+      // (the same telemetry arrives via both the 3s REST poll and WS push).
+      const cutoff = now - TELEMETRY_WINDOW_MS;
       const push = (arr, v) => {
-        const next = arr.length >= TELEMETRY_HISTORY_MAX ? arr.slice(1) : arr.slice();
-        next.push(Number.isFinite(v) ? v : 0);
+        const next = arr.filter((p) => p.t >= cutoff);
+        next.push({ t: now, v: Number.isFinite(v) ? v : 0 });
         return next;
       };
       const history = {
@@ -415,7 +421,7 @@ function reducer(state, action) {
         ...state,
         hostTelemetry: {
           ...state.hostTelemetry,
-          [hostId]: { current: d, history, lastUpdate: Date.now() },
+          [hostId]: { current: d, history, lastUpdate: now },
         },
       };
     }
