@@ -1,6 +1,7 @@
 package app.remotex.ui
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -133,6 +134,8 @@ data class UiState(
     val browsePath: String = "",
     val browseEntries: List<FsEntry> = emptyList(),
     val browseLoading: Boolean = false,
+    val favorites: List<String> = emptyList(),  // pinned cwd paths (per host)
+    val recents: List<String> = emptyList(),    // recently-used cwd paths (per host)
     val pendingImages: List<PendingImage> = emptyList(),
     val permissions: PermissionsMode = PermissionsMode.Default,
     val pendingApproval: ApprovalPrompt? = null,
@@ -201,6 +204,32 @@ class RemotexViewModel(
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    // Client-side cwd recents + favorites, persisted per host. No backend —
+    // the relay never stores or scans anything (mirrors web folderHistory).
+    private val folderPrefs by lazy {
+        getApplication<Application>().getSharedPreferences("remotex.folders", Context.MODE_PRIVATE)
+    }
+    private fun favKey() = "fav.${_state.value.selectedHostId ?: "default"}"
+    private fun recKey() = "rec.${_state.value.selectedHostId ?: "default"}"
+    private fun loadList(key: String): List<String> =
+        (folderPrefs.getString(key, "") ?: "").split("\n").filter { it.isNotBlank() }
+
+    fun toggleFavorite(path: String) {
+        val favs = loadList(favKey()).toMutableList()
+        if (!favs.remove(path)) favs.add(0, path)
+        folderPrefs.edit().putString(favKey(), favs.joinToString("\n")).apply()
+        _state.update { it.copy(favorites = favs) }
+    }
+
+    private fun recordVisit(path: String) {
+        // ponytail: recency only (most-recent-first, cap 12). Web uses frecency;
+        // marginal on a single-user phone and the two stores aren't synced anyway.
+        val rec = loadList(recKey()).toMutableList()
+        rec.remove(path); rec.add(0, path)
+        while (rec.size > 12) rec.removeAt(rec.lastIndex)
+        folderPrefs.edit().putString(recKey(), rec.joinToString("\n")).apply()
+    }
 
     private var socket: SessionSocket? = null
     private var socketJob: Job? = null
@@ -568,7 +597,11 @@ class RemotexViewModel(
         val start = initialPath?.ifBlank { null }
             ?: _state.value.browsePath.ifBlank { null }
             ?: host?.homeDir ?: host?.defaultCwd ?: "/"
-        _state.update { it.copy(screen = Screen.Files) }
+        _state.update { it.copy(
+            screen = Screen.Files,
+            favorites = loadList(favKey()),
+            recents = loadList(recKey()),
+        ) }
         browseDir(start)
     }
 
@@ -617,6 +650,7 @@ class RemotexViewModel(
 
     fun startSessionInCurrentPath() {
         val path = _state.value.browsePath.ifEmpty { null }
+        if (path != null) recordVisit(path)
         openSession(resumeThreadId = null, cwd = path)
     }
 

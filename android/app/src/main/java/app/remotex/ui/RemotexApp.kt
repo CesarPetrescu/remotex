@@ -114,6 +114,7 @@ fun RemotexApp(relayUrl: String) {
                         onUp = vm::browseUp,
                         onStartHere = vm::startSessionInCurrentPath,
                         onCreateFolder = vm::createFolder,
+                        onToggleFavorite = vm::toggleFavorite,
                     )
                     Screen.Session -> SessionScreen(
                         state = state,
