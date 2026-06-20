@@ -936,6 +936,15 @@ class StdioCodexAdapter(SessionAdapter):
             if not fut.done():
                 fut.set_exception(RuntimeError(msg))
         self._pending.clear()
+        # If a TURN was in flight, complete it with an error so the relay
+        # clears turn_in_flight and the client stops spinning / renders the
+        # failure instead of hanging silently with nothing shown.
+        if self._turn_id is not None:
+            await self._queue.put(SessionEvent("turn-completed", {
+                "turn_id": self._turn_id,
+                "error": msg,
+            }))
+            self._turn_id = None
         # If a resume was in flight, surface the failure as resume-failed
         # so the client banner clears with a real error instead of waiting
         # the full 600s _request timeout.
