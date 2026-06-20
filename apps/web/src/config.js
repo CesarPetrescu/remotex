@@ -41,20 +41,8 @@ export const FALLBACK_MODEL_OPTIONS = [
     efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
   { id: 'gpt-5.4', label: 'gpt-5.4', hint: 'frontier',
     efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.4-mini', label: 'gpt-5.4 · mini', hint: 'smaller frontier',
-    efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.3-codex', label: 'gpt-5.3 · codex', hint: 'codex-optimized',
-    efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
   { id: 'gpt-5.3-codex-spark', label: 'gpt-5.3 · codex spark', hint: 'ultra-fast coding',
     efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.2', label: 'gpt-5.2', hint: 'long-running agents',
-    efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.2-codex', label: 'gpt-5.2 · codex', hint: 'codex-optimized',
-    efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1-codex-max', label: 'gpt-5.1 · codex max', hint: 'deep reasoning',
-    efforts: [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1-codex-mini', label: 'gpt-5.1 · codex mini', hint: 'cheaper/faster',
-    efforts: [EFFORT_DEFAULT, 'medium', 'high'] },
 ];
 
 // Backwards-compatible name. Existing imports continue to work; the

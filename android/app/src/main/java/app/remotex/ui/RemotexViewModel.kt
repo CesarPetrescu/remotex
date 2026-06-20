@@ -185,20 +185,8 @@ val MODEL_OPTIONS = listOf(
         listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
     ModelOption("gpt-5.4", "gpt-5.4", "frontier",
         listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
-    ModelOption("gpt-5.4-mini", "gpt-5.4 · mini", "smaller frontier",
-        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
-    ModelOption("gpt-5.3-codex", "gpt-5.3 · codex", "codex-optimized",
-        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
     ModelOption("gpt-5.3-codex-spark", "gpt-5.3 · codex spark", "ultra-fast coding",
         listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
-    ModelOption("gpt-5.2", "gpt-5.2", "long-running agents",
-        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
-    ModelOption("gpt-5.2-codex", "gpt-5.2 · codex", "codex-optimized",
-        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
-    ModelOption("gpt-5.1-codex-max", "gpt-5.1 · codex max", "deep reasoning",
-        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
-    ModelOption("gpt-5.1-codex-mini", "gpt-5.1 · codex mini", "cheaper/faster",
-        listOf(EFFORT_DEFAULT, "medium", "high")),  // only medium/high supported
 )
 
 /** Effort list the UI should show given the currently-picked model. */
