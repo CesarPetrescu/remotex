@@ -2993,19 +2993,32 @@ main.screen-host {
   display: flex;
   align-items: stretch;
   background: transparent;
-  border: 0;
+  /* Transparent border on all sides so hover/selected can light it up with
+     no layout shift — same approach as the host card. */
+  border: 1px solid transparent;
   padding: 0;
   text-align: left;
   cursor: pointer;
   color: var(--ink);
 }
-.sidebar-session:hover { background: rgba(255,255,255,0.02); }
-.sidebar-session.active { background: rgba(94, 225, 255, 0.06); }
+/* Clear hover: a faint cyan wash + hairline outline so the row you're about
+   to click is obvious. */
+.sidebar-session:hover:not(.active) {
+  background: rgba(94, 225, 255, 0.05);
+  border-color: rgba(94, 225, 255, 0.16);
+}
+/* Selected chat: the same contained chip as the selected host — filled panel
+   + an even cyan border on all four sides. */
+.sidebar-session.active {
+  background: var(--panel-2);
+  border-color: rgba(94, 225, 255, 0.32);
+}
+.sidebar-session.active .sidebar-session-title { color: var(--amber); }
 .sidebar-session-stripe {
   width: 2px;
   background: transparent;
 }
-.sidebar-session-stripe.active { background: var(--accent); }
+.sidebar-session-stripe.active { background: transparent; }
 .sidebar-session-body { flex: 1; min-width: 0; padding: 6px 10px; }
 .sidebar-session-title {
   display: block;
