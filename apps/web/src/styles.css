@@ -1372,8 +1372,10 @@ main.screen-host {
 .desktop-only { display: inline-flex; }
 .mobile-only { display: none; }
 @media (max-width: 1023px) {
-  .desktop-only { display: none; }
-  .mobile-only { display: inline-flex; }
+  /* !important so these visibility utilities beat component rules like
+     .icon-button { display: inline-flex } that are declared later. */
+  .desktop-only { display: none !important; }
+  .mobile-only { display: inline-flex !important; }
 }
 
 /* --- header ------------------------------------------------------------ */
@@ -1709,6 +1711,14 @@ main.screen-host {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+/* On phones the workspace card header is too narrow for label + both
+   buttons side by side (they wrapped to the right, stranding the label).
+   Stack the label above full-width Browse… / Start here buttons. */
+@media (max-width: 560px) {
+  .card-folder .card-head-split { flex-direction: column; align-items: stretch; }
+  .card-folder .card-head-actions { width: 100%; }
+  .card-folder .card-head-actions > .btn-sm { flex: 1 1 0; }
 }
 .card-eyebrow {
   font-family: var(--mono);
