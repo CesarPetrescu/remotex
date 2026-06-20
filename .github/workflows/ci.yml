@@ -17,7 +17,6 @@ jobs:
     strategy:
       matrix:
         workspace:
-          - { name: wireframes, dir: "." }
           - { name: client, dir: "apps/web" }
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +37,6 @@ jobs:
     strategy:
       matrix:
         workspace:
-          - { name: wireframes, dir: "." }
           - { name: client, dir: "apps/web" }
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +56,6 @@ jobs:
     strategy:
       matrix:
         workspace:
-          - { name: wireframes, dir: "." }
           - { name: client, dir: "apps/web" }
     steps:
       - uses: actions/checkout@v4
