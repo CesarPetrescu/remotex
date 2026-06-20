@@ -62,7 +62,8 @@ pre { margin: 0; font-family: var(--mono); }
 /* --- app shell --- */
 
 .app {
-  height: 100vh;
+  height: 100vh; /* fallback */
+  height: 100dvh;
   min-width: 0;
 }
 
@@ -1234,7 +1235,13 @@ main.screen-host {
   grid-template-areas:
     'header header header'
     'hosts  main   telemetry';
+  /* dvh = the *currently visible* viewport height, so the composer stays
+     pinned to the visible bottom on mobile even as the browser's URL bar
+     shows/hides. Plain 100vh would extend behind the URL bar and push the
+     composer below the fold (you'd have to scroll to reach it). 100vh stays
+     first as a fallback for browsers without dvh. */
   height: 100vh;
+  height: 100dvh;
   min-height: 0;
   overflow: hidden;
   background: var(--bg);
