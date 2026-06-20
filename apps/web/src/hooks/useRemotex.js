@@ -507,8 +507,6 @@ export function useRemotex() {
         info: {
           sessionId: frame.session_id,
           hostId: frame.host_id,
-          clientId: frame.client_id,
-          peerCount: frame.peer_count,
         },
       });
       const backup = readPromptBackup(frame.session_id);
@@ -835,10 +833,6 @@ export function useRemotex() {
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Hosts });
   }, []);
 
-  const goToThreads = useCallback(() => {
-    dispatch({ type: 'SET_SCREEN', screen: SCREENS.Threads });
-  }, []);
-
   const goToSession = useCallback(() => {
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
   }, []);
@@ -1068,45 +1062,6 @@ export function useRemotex() {
     return true;
   }, []);
 
-  const refreshGoal = useCallback(() => {
-    if (!socketRef.current?.sendGoalGet()) {
-      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
-    }
-  }, []);
-
-  const setGoal = useCallback(({ objective, tokenBudget = undefined } = {}) => {
-    const cleaned = (objective || '').trim();
-    if (!cleaned) {
-      dispatch({ type: 'SET_ERROR', error: 'goal objective is required' });
-      return;
-    }
-    if (!socketRef.current?.sendGoalSet({
-      objective: cleaned,
-      status: 'active',
-      tokenBudget,
-    })) {
-      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
-    }
-  }, []);
-
-  const pauseGoal = useCallback(() => {
-    if (!socketRef.current?.sendGoalSet({ status: 'paused' })) {
-      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
-    }
-  }, []);
-
-  const resumeGoal = useCallback(() => {
-    if (!socketRef.current?.sendGoalSet({ status: 'active' })) {
-      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
-    }
-  }, []);
-
-  const clearGoal = useCallback(() => {
-    if (!socketRef.current?.sendGoalClear()) {
-      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
-    }
-  }, []);
-
   const sendTurn = useCallback(
     (rawText) => {
       const input = (rawText || '').trim();
@@ -1300,7 +1255,6 @@ export function useRemotex() {
       clearError: () => dispatch({ type: 'SET_ERROR', error: null }),
       goToHosts,
       goToDashboard,
-      goToThreads,
       goToSession,
       goToFiles,
       refreshHosts,
@@ -1321,11 +1275,6 @@ export function useRemotex() {
       closeSession,
       sendTurn,
       sendSlash,
-      refreshGoal,
-      setGoal,
-      pauseGoal,
-      resumeGoal,
-      clearGoal,
       interruptTurn,
       resolveApproval,
       resolveUserInput,
@@ -1341,7 +1290,6 @@ export function useRemotex() {
       state,
       goToHosts,
       goToDashboard,
-      goToThreads,
       goToSession,
       goToFiles,
       refreshHosts,
@@ -1360,11 +1308,6 @@ export function useRemotex() {
       closeSession,
       sendTurn,
       sendSlash,
-      refreshGoal,
-      setGoal,
-      pauseGoal,
-      resumeGoal,
-      clearGoal,
       interruptTurn,
       resolveApproval,
       resolveUserInput,

@@ -16,7 +16,6 @@ services/
 │   ├── config.py                  TOML config, cross-platform paths
 │   ├── adapters.py                MockCodexAdapter + StdioCodexAdapter skeleton
 │   └── client.py                  outbound WSS client, per-session runners
-├── web/index.html                 single-file web control UI
 ├── scripts/e2e_test.py            in-process end-to-end test
 └── docs/
     ├── architecture.md            topology, trust boundaries, failure modes

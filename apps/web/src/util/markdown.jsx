@@ -36,7 +36,7 @@ function highlightCode(code, lang) {
  * Close trailing unclosed tokens so partial markdown renders cleanly
  * while streaming. Same rules as Android's balanceMarkdown().
  */
-export function balanceMarkdown(s) {
+function balanceMarkdown(s) {
   const lines = s.split('\n');
   const openFences =
     lines.filter((l) => l.trimStart().startsWith('```')).length % 2 === 1;
