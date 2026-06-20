@@ -25,7 +25,7 @@ async def _read_line_unbounded(stream: asyncio.StreamReader) -> bytes:
 class AdminCodex:
     """Long-running codex app-server that answers thread/list quickly.
 
-    Each admin_list_threads() call previously cold-spawned codex (2-5s
+    Each list call previously cold-spawned codex (2-5s
     on node startup). When the box was already spawning codex for a
     live session, overlapping spawns occasionally pushed the daemon's
     event loop past the relay's 15s HTTP timeout, producing 504s and
@@ -182,25 +182,3 @@ class AdminCodex:
                 if not fut.done():
                     fut.set_exception(RuntimeError(f"admin codex read failed: {exc}"))
             self._pending.clear()
-
-
-# Backwards-compatible module-level helper: the DaemonClient owns a
-# single AdminCodex instance and routes threads-list-request through it.
-# Kept this function available in case callers that used the old API
-# are still around; new callers should go through DaemonClient.
-async def admin_list_threads(
-    codex_binary: str = "codex",
-    limit: int = 20,
-    cursor: str | None = None,
-) -> dict:
-    """Ad-hoc helper: spin up one admin codex, ask, tear down.
-
-    Kept for compatibility. The daemon itself now uses a persistent
-    AdminCodex per connection, which avoids the cold-spawn penalty on
-    every list call.
-    """
-    admin = AdminCodex(codex_binary=codex_binary)
-    try:
-        return await admin.list_threads(limit=limit, cursor=cursor)
-    finally:
-        await admin.close()

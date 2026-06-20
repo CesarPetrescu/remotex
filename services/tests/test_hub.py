@@ -45,15 +45,9 @@ async def test_detach_daemon_only_removes_matching_ws():
 @pytest.mark.asyncio
 async def test_session_open_frame_replay_for_host():
     hub = Hub()
-    await hub.remember_session_open(
-        "sess_1", "host_x", {"type": "session-open", "session_id": "sess_1"}
-    )
-    await hub.remember_session_open(
-        "sess_2", "host_x", {"type": "session-open", "session_id": "sess_2"}
-    )
-    await hub.remember_session_open(
-        "sess_3", "host_y", {"type": "session-open", "session_id": "sess_3"}
-    )
+    await hub.ensure_session_open_frame("sess_1", "host_x")
+    await hub.ensure_session_open_frame("sess_2", "host_x")
+    await hub.ensure_session_open_frame("sess_3", "host_y")
     frames = await hub.session_open_frames_for_host("host_x")
     sids = sorted(f["session_id"] for f in frames)
     assert sids == ["sess_1", "sess_2"]
@@ -62,11 +56,9 @@ async def test_session_open_frame_replay_for_host():
 @pytest.mark.asyncio
 async def test_update_session_resume_modifies_cached_frame():
     hub = Hub()
-    await hub.remember_session_open(
-        "sess_1", "host_x", {"type": "session-open", "session_id": "sess_1"}
-    )
+    await hub.ensure_session_open_frame("sess_1", "host_x")
     await hub.update_session_resume("sess_1", thread_id="thr_42", cwd="/work")
-    frame = await hub.session_open_frame("sess_1")
+    frame = (await hub.session_open_frames_for_host("host_x"))[0]
     assert frame["resume_thread_id"] == "thr_42"
     assert frame["cwd"] == "/work"
 

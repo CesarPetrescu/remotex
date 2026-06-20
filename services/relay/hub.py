@@ -205,11 +205,6 @@ class Hub:
             if self.session_host.get(sid) == host_id and not conn.ws.closed
         ]
 
-    async def remember_session_open(self, session_id: str, host_id: str, frame: dict) -> None:
-        async with self._lock:
-            self.session_host[session_id] = host_id
-            self.session_open_frames[session_id] = dict(frame)
-
     async def ensure_session_open_frame(
         self,
         session_id: str,
@@ -259,11 +254,6 @@ class Hub:
             if cwd:
                 frame["cwd"] = cwd
 
-    async def session_open_frame(self, session_id: str) -> dict | None:
-        async with self._lock:
-            frame = self.session_open_frames.get(session_id)
-            return dict(frame) if frame else None
-
     async def session_open_frames_for_host(self, host_id: str) -> list[dict]:
         async with self._lock:
             return [
@@ -301,9 +291,6 @@ class Hub:
                 for frame in self.session_replay.get(session_id, ())
                 if int(frame.get("seq") or 0) > last_seq
             ]
-
-    def session_seq_value(self, session_id: str) -> int:
-        return self.session_seq.get(session_id, 0)
 
     async def broadcast_to_session(
         self,

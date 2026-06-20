@@ -113,10 +113,6 @@ class DaemonClient:
                     runner.session_id, type(exc).__name__, exc,
                 )
 
-    async def close(self) -> None:
-        """Shut the admin codex down on graceful exit."""
-        await self._admin.close()
-
     async def _dispatch(self, frame: dict, send: Callable[[dict], Awaitable[None]]) -> None:
         ftype = frame.get("type")
         sid = frame.get("session_id")

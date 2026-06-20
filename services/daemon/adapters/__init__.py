@@ -22,7 +22,7 @@ item_type strings the relay + web client already use.
 """
 from __future__ import annotations
 
-from .admin import AdminCodex, admin_list_threads
+from .admin import AdminCodex
 from .base import SessionAdapter, SessionEvent
 from .factory import build_adapter
 from .mock import MockCodexAdapter
@@ -34,6 +34,5 @@ __all__ = [
     "SessionAdapter",
     "SessionEvent",
     "StdioCodexAdapter",
-    "admin_list_threads",
     "build_adapter",
 ]
