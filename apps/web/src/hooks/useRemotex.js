@@ -1038,7 +1038,13 @@ export function useRemotex() {
           type: 'SESSION_ATTACHED',
           session: { sessionId: sid, hostId, cwd: cwd || null },
         });
-        attachSocket(sid);
+        // Replay from the very start. openSession just reset events to [], and
+        // the session may be REUSED (still live on the relay) — in which case
+        // this browser already holds a high stored last_seq for it. Without
+        // replayFromStart the relay would replay nothing past that cursor and
+        // the chat would render empty. (Reconnect paths intentionally keep the
+        // stored cursor, since they don't reset events.)
+        attachSocket(sid, { replayFromStart: true });
       } catch (t) {
         dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });
         dispatch({ type: 'SET_ERROR', error: t.message });
