@@ -13,8 +13,8 @@ EFFORT_DEFAULT = ""
 ALL_EFFORTS = [EFFORT_DEFAULT, "low", "medium", "high", "xhigh"]
 
 
-# Models visible in `codex 0.122.0`. Effort list is per-model so
-# `gpt-5.1-codex-mini` only shows medium/high (what codex accepts).
+# Models visible in `codex 0.122.0`. Effort list is per-model (codex
+# rejects efforts a given model doesn't accept).
 MODEL_OPTIONS: list[dict] = [
     {"id": "", "label": "default", "hint": "codex picks", "efforts": ALL_EFFORTS},
     {"id": "gpt-5.5", "label": "gpt-5.5", "hint": "newest frontier",

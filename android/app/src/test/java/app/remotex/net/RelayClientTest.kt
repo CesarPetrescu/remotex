@@ -38,8 +38,8 @@ class RelayClientTest {
                     {
                       "models": [
                         {
-                          "id": "gpt-5.4-mini",
-                          "label": "gpt-5.4 mini",
+                          "id": "gpt-5.4",
+                          "label": "gpt-5.4",
                           "hint": "fast",
                           "efforts": ["", "low", "medium"]
                         }
@@ -54,7 +54,7 @@ class RelayClientTest {
         val models = client.listModels()
 
         assertEquals(1, models.size)
-        assertEquals("gpt-5.4-mini", models.single().id)
+        assertEquals("gpt-5.4", models.single().id)
         assertEquals(listOf("", "low", "medium"), models.single().efforts)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
