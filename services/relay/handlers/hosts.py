@@ -1,6 +1,8 @@
 """Host CRUD + bridge-key issuance + cached telemetry."""
 from __future__ import annotations
 
+import time
+
 from aiohttp import web
 
 from ..auth import require_user
@@ -57,4 +59,6 @@ async def get_host_telemetry(request: web.Request) -> web.Response:
         "host_id": host_id,
         "data": snap.get("data"),
         "ts": snap.get("received_at"),
+        # ~30s ring so the client opens with a full graph (oldest-first).
+        "history": hub.recent_telemetry(host_id, time.time()),
     })

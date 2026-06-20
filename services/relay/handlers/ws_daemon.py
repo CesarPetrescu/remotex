@@ -150,6 +150,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     "received_at": time.time(),
                 }
                 hub.host_telemetry[host_id] = snapshot
+                hub.record_telemetry(host_id, snapshot["received_at"], data)
                 # Fan out to any client sessions already attached to this host
                 # so the UI updates in real time without having to poll.
                 forward = {
@@ -175,6 +176,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             if detached:
                 await store.mark_host(host_id, False)
                 hub.host_telemetry.pop(host_id, None)
+                hub.host_telemetry_log.pop(host_id, None)
                 log.info("daemon offline", extra={"host_id": host_id})
                 audit("daemon.disconnected", host_id=host_id)
     return ws

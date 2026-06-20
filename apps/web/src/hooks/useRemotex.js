@@ -400,23 +400,40 @@ function reducer(state, action) {
       const prevHistory = prev?.history || { cpu: [], mem: [], gpu: [], up: [], down: [] };
       const d = action.data;
       const now = Date.now();
-      // Real 30s sliding window: timestamp each sample and drop anything
-      // older than the window. Time-based (not a fixed sample count) so the
-      // x-axis stays linear in real time no matter how unevenly frames land
-      // (the same telemetry arrives via both the 3s REST poll and WS push).
       const cutoff = now - TELEMETRY_WINDOW_MS;
-      const push = (arr, v) => {
-        const next = arr.filter((p) => p.t >= cutoff);
-        next.push({ t: now, v: Number.isFinite(v) ? v : 0 });
-        return next;
-      };
-      const history = {
-        cpu: push(prevHistory.cpu, d.cpu?.percent ?? 0),
-        mem: push(prevHistory.mem, d.memory?.percent ?? 0),
-        gpu: push(prevHistory.gpu, d.gpu?.percent ?? 0),
-        up: push(prevHistory.up, d.network?.up_bps ?? 0),
-        down: push(prevHistory.down, d.network?.down_bps ?? 0),
-      };
+      const num = (v) => (Number.isFinite(v) ? v : 0);
+      // Real 30s sliding window. The poll carries the relay's ~30s ring, so we
+      // rebuild the whole window from it — graphs open full instead of drawing
+      // in from the right. age_ms keeps it clock-skew-proof. WS pushes (no
+      // ring) just append; an empty ring also falls through so it can't wipe
+      // accumulated history.
+      let history;
+      if (Array.isArray(action.history) && action.history.length) {
+        const series = (pick) =>
+          action.history
+            .map((s) => ({ t: now - (s.age_ms || 0), v: num(pick(s.data || {})) }))
+            .filter((p) => p.t >= cutoff);
+        history = {
+          cpu: series((x) => x.cpu?.percent),
+          mem: series((x) => x.memory?.percent),
+          gpu: series((x) => x.gpu?.percent),
+          up: series((x) => x.network?.up_bps),
+          down: series((x) => x.network?.down_bps),
+        };
+      } else {
+        const push = (arr, v) => {
+          const next = arr.filter((p) => p.t >= cutoff);
+          next.push({ t: now, v: num(v) });
+          return next;
+        };
+        history = {
+          cpu: push(prevHistory.cpu, d.cpu?.percent ?? 0),
+          mem: push(prevHistory.mem, d.memory?.percent ?? 0),
+          gpu: push(prevHistory.gpu, d.gpu?.percent ?? 0),
+          up: push(prevHistory.up, d.network?.up_bps ?? 0),
+          down: push(prevHistory.down, d.network?.down_bps ?? 0),
+        };
+      }
       return {
         ...state,
         hostTelemetry: {
@@ -893,7 +910,7 @@ export function useRemotex() {
         const snap = await apiRef.current.getHostTelemetry(hostId);
         if (cancelled) return;
         if (snap?.data) {
-          dispatch({ type: 'TELEMETRY', hostId, data: snap.data });
+          dispatch({ type: 'TELEMETRY', hostId, data: snap.data, history: snap.history });
         }
       } catch {
         // Transient fetch failures are benign — next tick will retry.

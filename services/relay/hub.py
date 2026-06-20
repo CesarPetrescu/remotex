@@ -76,6 +76,9 @@ class Hub:
         self.pending_admin: dict[str, asyncio.Future] = {}
         # Latest telemetry snapshot per host (with relay-side receive ts)
         self.host_telemetry: dict[str, dict] = {}
+        # Short rolling history (~30s) per host so a freshly-connected client
+        # gets a full graph immediately instead of drawing in over 30 seconds.
+        self.host_telemetry_log: dict[str, deque] = {}
         # session_id → True while a turn is running on the daemon side.
         # Updated by ws_daemon as it forwards turn-started / turn-completed.
         self.turn_in_flight: dict[str, bool] = {}
@@ -203,6 +206,22 @@ class Hub:
             for sid, clients in self.session_clients.items()
             for conn in clients.values()
             if self.session_host.get(sid) == host_id and not conn.ws.closed
+        ]
+
+    def record_telemetry(self, host_id: str, received_at: float, data: dict) -> None:
+        # maxlen 20 ~= 60s at the daemon's 3s cadence; reads window to 30s.
+        self.host_telemetry_log.setdefault(host_id, deque(maxlen=20)).append((received_at, data))
+
+    def recent_telemetry(self, host_id: str, now: float, window_s: float = 30.0) -> list[dict]:
+        """Oldest-first samples from the last `window_s` seconds, each tagged
+        with its age so the client can place it on a clock-skew-proof axis."""
+        log = self.host_telemetry_log.get(host_id)
+        if not log:
+            return []
+        return [
+            {"age_ms": int(max(0.0, now - ts) * 1000), "data": d}
+            for ts, d in log
+            if now - ts <= window_s
         ]
 
     async def ensure_session_open_frame(
