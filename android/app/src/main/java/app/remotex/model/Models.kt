@@ -12,6 +12,8 @@ data class Host(
     @SerialName("os_user") val osUser: String? = null,
     val online: Boolean = false,
     @SerialName("last_seen") val lastSeen: Long? = null,
+    @SerialName("home_dir") val homeDir: String? = null,
+    @SerialName("default_cwd") val defaultCwd: String? = null,
 )
 
 @Serializable

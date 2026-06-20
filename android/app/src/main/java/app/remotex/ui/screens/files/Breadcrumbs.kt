@@ -60,7 +60,7 @@ internal fun Breadcrumbs(path: String, onJump: (String) -> Unit) {
                         .clickable(enabled = !active) { onJump(target) }
                         .padding(horizontal = 4.dp, vertical = 2.dp),
                 )
-                if (!active) {
+                if (!active && idx != 0) {
                     Text(
                         "/",
                         color = InkDim,

@@ -562,9 +562,12 @@ class RemotexViewModel(
     }
 
     fun goToFiles(initialPath: String? = null) {
+        // Start the picker at the host's home / default cwd, not filesystem
+        // root — matches the web picker (util/host.js hostHomePath).
+        val host = _state.value.hosts.find { it.id == _state.value.selectedHostId }
         val start = initialPath?.ifBlank { null }
             ?: _state.value.browsePath.ifBlank { null }
-            ?: "/"
+            ?: host?.homeDir ?: host?.defaultCwd ?: "/"
         _state.update { it.copy(screen = Screen.Files) }
         browseDir(start)
     }
