@@ -66,6 +66,10 @@ export function Composer({
   const enabled = connected && !pending;
   const canSend = enabled && (text.trim().length > 0 || pendingImages.length > 0);
   const goalMode = isGoalCommand(text);
+  // Plan + goal are mutually exclusive in the UI: while you're composing a
+  // /goal command the plan chip never reads "on" (the chips already
+  // cross-clear on click; this also covers typing /goal by hand).
+  const planActive = planMode && !goalMode;
 
   // Slash-autocomplete: when the input starts with "/" and has no
   // space yet, show the matching commands. ENTER picks the first match
@@ -191,14 +195,14 @@ export function Composer({
       <div className="plan-row">
         <button
           type="button"
-          className={`plan-chip ${planMode ? 'on' : ''}`}
+          className={`plan-chip ${planActive ? 'on' : ''}`}
           onClick={togglePlan}
-          title={planMode
+          title={planActive
             ? 'Plan mode is on - codex will plan before acting on the next turn'
             : 'Toggle plan mode for the next turn (codex /plan)'}
         >
           <span className="plan-chip-dot" />
-          {planMode ? 'plan on' : '/plan'}
+          {planActive ? 'plan on' : '/plan'}
         </button>
         <button
           type="button"

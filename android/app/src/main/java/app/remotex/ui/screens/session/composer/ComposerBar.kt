@@ -69,6 +69,10 @@ internal fun ComposerBar(
     var text by remember { mutableStateOf("") }
     val textEnabled = connected && !pending
     val goalMode = isGoalCommand(text)
+    // Plan + goal are mutually exclusive in the chip rail: the plan chip never
+    // reads "on" while a /goal command is being composed (clicks already
+    // cross-clear; this also covers typing /goal by hand).
+    val planActive = planMode && !goalMode
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
@@ -119,7 +123,7 @@ internal fun ComposerBar(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 item {
                     PlanChip(
-                        planMode = planMode,
+                        planMode = planActive,
                         onClick = {
                             if (!planMode && goalMode) {
                                 text = removeGoalCommand(text)
