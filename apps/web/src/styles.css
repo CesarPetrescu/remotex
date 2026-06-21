@@ -963,6 +963,13 @@ main.screen-host {
   overflow: auto;
   z-index: 10;
 }
+/* Portalled to <body>: position/coords come from inline styles so no
+   ancestor overflow (the mobile .chip-row is overflow-x:auto) can clip it. */
+.dd-portal {
+  position: fixed;
+  right: auto;
+  z-index: 1000;
+}
 .dd-item {
   display: block;
   width: 100%;
