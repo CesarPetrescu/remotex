@@ -48,6 +48,9 @@ export function SessionScreen({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !hostId) return;
+    // Oversize is rejected by workspaceUploadFile before any bytes leave
+    // the browser (contract A) — surface its message like any other
+    // upload failure instead of letting the request fail opaquely.
     try {
       await workspaceApi.upload(hostId, cwd, file);
       setFilesOpen(true);

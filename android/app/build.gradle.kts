@@ -5,6 +5,25 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// Release CI passes -PversionName=<tag> ("v1.2.3") on tags and
+// -PversionName=nightly-<date>-<sha> on main; local builds pass nothing.
+// See .github/workflows/release.yml.
+val versionNameProperty: String = (findProperty("versionName") as String?)?.trim().orEmpty()
+val resolvedVersionName: String = versionNameProperty.ifEmpty { "0.1.0" }
+
+// v1.2.3 → 10203, so a newer tag always compares greater. Anything that
+// isn't a semver tag (nightlies, local builds) stays at 1 — those are
+// sideloaded, not upgraded in place. -PversionCode=<int> overrides.
+fun versionCodeFor(name: String): Int {
+    val m = Regex("""^v?(\d+)\.(\d+)\.(\d+)""").find(name) ?: return 1
+    val (major, minor, patch) = m.destructured
+    return major.toInt() * 10000 + minor.toInt() * 100 + patch.toInt()
+}
+
+val resolvedVersionCode: Int =
+    (findProperty("versionCode") as String?)?.trim()?.toIntOrNull()
+        ?: versionCodeFor(resolvedVersionName)
+
 android {
     namespace = "app.remotex"
     compileSdk = 35
@@ -13,8 +32,8 @@ android {
         applicationId = "app.remotex"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = resolvedVersionCode
+        versionName = resolvedVersionName
 
         // Inject the relay URL at build time. Defaults to 10.0.2.2 so the
         // debug build talks to a relay running on the host machine when

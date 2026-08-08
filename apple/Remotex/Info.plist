@@ -22,8 +22,21 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<!-- The documented workflow points the app at a plain-http relay on
+		     the same Mac or on the LAN. NSAllowsLocalNetworking covers
+		     unqualified host names, .local names and private/link-local
+		     address ranges; the localhost exception covers the simulator
+		     default. Everything else still requires HTTPS. -->
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>

@@ -3,6 +3,9 @@ package app.remotex.ui.screens.session.events
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -23,9 +26,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.remotex.model.UiEvent
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
+import app.remotex.ui.theme.Line
 import kotlinx.coroutines.delay
 
 @Composable
@@ -50,6 +55,45 @@ internal fun AgentText(text: String, streaming: Boolean) {
         fontFamily = FontFamily.Monospace,
         fontSize = 12.sp,
     )
+}
+
+/**
+ * Contract (C): the relay no longer holds part of what we asked to replay.
+ * A truncated transcript must never be presented as a complete one, so the
+ * hole gets its own divider row with the missing seq range.
+ */
+@Composable
+internal fun GapMarker(event: UiEvent.Gap) {
+    val span = if (event.missedFrom > 0L && event.missedTo > 0L) {
+        " (events ${event.missedFrom}–${event.missedTo})"
+    } else {
+        ""
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(Line),
+        )
+        Text(
+            "earlier events unavailable$span",
+            color = InkDim,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 9.sp,
+            fontStyle = FontStyle.Italic,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        Box(
+            Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(Line),
+        )
+    }
 }
 
 @Composable

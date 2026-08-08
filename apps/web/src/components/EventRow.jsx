@@ -31,6 +31,24 @@ export function EventRow({ event, pending, grouped }) {
     );
   }
 
+  // Contract (C): the relay's replay buffer had already evicted part of
+  // what this client asked for. Say so — a hole in the transcript must
+  // never be presented as the whole transcript.
+  if (event.role === 'gap') {
+    const span = event.missedFrom && event.missedTo
+      ? ` (events ${event.missedFrom}–${event.missedTo})`
+      : '';
+    return (
+      <div className="stream-gap" role="note">
+        <span className="stream-gap-line" aria-hidden="true" />
+        <span className="stream-gap-text">
+          earlier events unavailable{span} — the relay no longer has them
+        </span>
+        <span className="stream-gap-line" aria-hidden="true" />
+      </div>
+    );
+  }
+
   if (event.role === 'reasoning') {
     return (
       <details className={`sub sub-reasoning${grouped ? '' : ' standalone'}`} open={!event.replayed}>

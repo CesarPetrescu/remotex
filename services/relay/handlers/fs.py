@@ -1,87 +1,44 @@
 """Filesystem proxy: forward fs/* requests to the daemon."""
 from __future__ import annotations
 
-import asyncio
 import base64
-import uuid
+import json
 
 from aiohttp import web
 
-from ..auth import require_user
-from ..hub import Hub
-from ..store import Store
+from ..limits import MAX_FILE_BYTES
+from .daemon_rpc import await_daemon_request
 
 
-# 50 MB cap on read/write — same as the daemon-side guard. Anything
-# larger needs explicit chunking, which is out of scope for v1.
-_MAX_FILE_BYTES = 50 * 1024 * 1024
-
-
-async def _await_daemon_request(
-    request: web.Request, host_id: str, frame: dict, *, timeout: float = 30.0,
-) -> dict:
-    """Common helper: ownership check, build a request_id, send to the
-    daemon, await the response future, return the parsed payload.
-    Raises HTTP errors directly so handlers stay flat."""
-    user = await require_user(request)
-    store: Store = request.app["store"]
-    hub: Hub = request.app["hub"]
-    if await store.host_owner(host_id) != user["token"]:
-        raise web.HTTPNotFound(reason="host not found")
-    daemon_ws = hub.daemon_for(host_id)
-    if daemon_ws is None or daemon_ws.closed:
-        raise web.HTTPBadGateway(reason="host offline")
-    req_id = f"req_{uuid.uuid4().hex[:12]}"
-    loop = asyncio.get_running_loop()
-    fut: asyncio.Future = loop.create_future()
-    hub.pending_admin[req_id] = fut
-    try:
-        await daemon_ws.send_json({**frame, "request_id": req_id})
-        try:
-            payload = await asyncio.wait_for(fut, timeout=timeout)
-        except asyncio.TimeoutError as exc:
-            raise web.HTTPGatewayTimeout(reason="daemon did not respond in time") from exc
-    finally:
-        hub.pending_admin.pop(req_id, None)
-    if "error" in payload:
-        raise web.HTTPBadGateway(reason=f"daemon error: {payload['error']}")
-    return payload
+def _too_large(size: int) -> web.HTTPRequestEntityTooLarge:
+    """Oversize is an answer, not a dropped socket — the caller gets JSON
+    it can render, with the ceiling that applied."""
+    return web.HTTPRequestEntityTooLarge(
+        max_size=MAX_FILE_BYTES,
+        actual_size=size,
+        text=json.dumps({
+            "error": "file too large",
+            "max_bytes": MAX_FILE_BYTES,
+            "size": size,
+        }),
+        content_type="application/json",
+    )
 
 
 async def list_host_fs(request: web.Request) -> web.Response:
     """Forward an fs/readDirectory to the daemon; return the entries as
     JSON. Clients use this to browse the daemon's filesystem before
     they pick a cwd for a new session."""
-    user = await require_user(request)
     host_id = request.match_info["host_id"]
-    store: Store = request.app["store"]
-    hub: Hub = request.app["hub"]
-    if await store.host_owner(host_id) != user["token"]:
-        raise web.HTTPNotFound(reason="host not found")
-    daemon_ws = hub.daemon_for(host_id)
-    if daemon_ws is None or daemon_ws.closed:
-        raise web.HTTPBadGateway(reason="host offline")
     path = request.query.get("path") or ""
     if not path:
         raise web.HTTPBadRequest(reason="path query parameter required")
-    req_id = f"req_{uuid.uuid4().hex[:12]}"
-    loop = asyncio.get_running_loop()
-    fut: asyncio.Future = loop.create_future()
-    hub.pending_admin[req_id] = fut
-    try:
-        await daemon_ws.send_json({
-            "type": "fs-read-request",
-            "request_id": req_id,
-            "path": path,
-        })
-        try:
-            payload = await asyncio.wait_for(fut, timeout=15.0)
-        except asyncio.TimeoutError as exc:
-            raise web.HTTPGatewayTimeout(reason="daemon did not respond in time") from exc
-    finally:
-        hub.pending_admin.pop(req_id, None)
-    if "error" in payload:
-        raise web.HTTPBadGateway(reason=f"daemon error: {payload['error']}")
+    payload = await await_daemon_request(
+        request,
+        host_id,
+        {"type": "fs-read-request", "path": path},
+        timeout=15.0,
+    )
     return web.json_response({
         "host_id": host_id,
         "path": payload.get("path", path),
@@ -92,15 +49,7 @@ async def list_host_fs(request: web.Request) -> web.Response:
 async def mkdir_host_fs(request: web.Request) -> web.Response:
     """Ask the daemon to create a new directory under a given parent.
     Body: {"path": "<parent>", "name": "<single-segment>"}."""
-    user = await require_user(request)
     host_id = request.match_info["host_id"]
-    store: Store = request.app["store"]
-    hub: Hub = request.app["hub"]
-    if await store.host_owner(host_id) != user["token"]:
-        raise web.HTTPNotFound(reason="host not found")
-    daemon_ws = hub.daemon_for(host_id)
-    if daemon_ws is None or daemon_ws.closed:
-        raise web.HTTPBadGateway(reason="host offline")
     try:
         body = await request.json()
     except Exception as exc:
@@ -111,25 +60,12 @@ async def mkdir_host_fs(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(reason="path is required")
     if not name or "/" in name or name in (".", ".."):
         raise web.HTTPBadRequest(reason="invalid folder name")
-    req_id = f"req_{uuid.uuid4().hex[:12]}"
-    loop = asyncio.get_running_loop()
-    fut: asyncio.Future = loop.create_future()
-    hub.pending_admin[req_id] = fut
-    try:
-        await daemon_ws.send_json({
-            "type": "fs-mkdir-request",
-            "request_id": req_id,
-            "path": parent,
-            "name": name,
-        })
-        try:
-            payload = await asyncio.wait_for(fut, timeout=10.0)
-        except asyncio.TimeoutError as exc:
-            raise web.HTTPGatewayTimeout(reason="daemon did not respond in time") from exc
-    finally:
-        hub.pending_admin.pop(req_id, None)
-    if "error" in payload:
-        raise web.HTTPBadGateway(reason=f"daemon error: {payload['error']}")
+    payload = await await_daemon_request(
+        request,
+        host_id,
+        {"type": "fs-mkdir-request", "path": parent, "name": name},
+        timeout=10.0,
+    )
     return web.json_response({
         "host_id": host_id,
         "path": payload.get("path"),
@@ -140,16 +76,20 @@ async def read_host_file(request: web.Request) -> web.Response:
     """Read a file from the daemon's filesystem. Streams base64 down
     so the client can either render it inline (text/images) or trigger
     a download (binary). Returns 413 if the file is larger than the
-    50MB cap."""
+    REMOTEX_MAX_FILE_BYTES cap (25MB by default) — the same ceiling the
+    websocket transport is sized for."""
     host_id = request.match_info["host_id"]
     path = (request.query.get("path") or "").strip()
     if not path:
         raise web.HTTPBadRequest(reason="path is required")
-    payload = await _await_daemon_request(
+    payload = await await_daemon_request(
         request,
         host_id,
-        {"type": "fs-readfile-request", "path": path, "max_bytes": _MAX_FILE_BYTES},
+        {"type": "fs-readfile-request", "path": path, "max_bytes": MAX_FILE_BYTES},
     )
+    size = int(payload.get("size") or 0)
+    if size > MAX_FILE_BYTES:
+        raise _too_large(size)
     return web.json_response({
         "host_id": host_id,
         "path": payload.get("path", path),
@@ -171,7 +111,7 @@ async def delete_host_file(request: web.Request) -> web.Response:
     path = (body.get("path") or "").strip()
     if not path:
         raise web.HTTPBadRequest(reason="path is required")
-    payload = await _await_daemon_request(
+    payload = await await_daemon_request(
         request, host_id, {"type": "fs-delete-request", "path": path},
     )
     return web.json_response({
@@ -191,7 +131,7 @@ async def rename_host_file(request: web.Request) -> web.Response:
     dst = (body.get("to") or "").strip()
     if not src or not dst:
         raise web.HTTPBadRequest(reason="both 'from' and 'to' are required")
-    payload = await _await_daemon_request(
+    payload = await await_daemon_request(
         request, host_id, {"type": "fs-rename-request", "from": src, "to": dst},
     )
     return web.json_response({
@@ -228,12 +168,8 @@ async def upload_host_file(request: web.Request) -> web.Response:
                 if not chunk:
                     break
                 total += len(chunk)
-                if total > _MAX_FILE_BYTES:
-                    raise web.HTTPRequestEntityTooLarge(
-                        max_size=_MAX_FILE_BYTES,
-                        actual_size=total,
-                        text=f"file exceeds {_MAX_FILE_BYTES} bytes",
-                    )
+                if total > MAX_FILE_BYTES:
+                    raise _too_large(total)
                 chunks.append(chunk)
             file_bytes = b"".join(chunks)
     if not target_dir:
@@ -245,7 +181,7 @@ async def upload_host_file(request: web.Request) -> web.Response:
         target_path = target_dir + file_name
     else:
         target_path = f"{target_dir}/{file_name}"
-    payload = await _await_daemon_request(
+    payload = await await_daemon_request(
         request,
         host_id,
         {

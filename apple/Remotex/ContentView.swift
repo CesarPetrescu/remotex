@@ -142,6 +142,7 @@ private struct SessionView: View {
                     }
                 }
             }
+            PendingPromptsPanel(viewModel: viewModel)
             Composer(viewModel: viewModel)
         }
         .background(Color.remotexBackground)
@@ -250,6 +251,8 @@ private struct StreamRow: View {
             return "sparkles"
         case .system:
             return "info.circle"
+        case .gap:
+            return "exclamationmark.triangle"
         }
     }
 
@@ -265,6 +268,8 @@ private struct StreamRow: View {
             return .remotexText
         case .system:
             return .remotexMuted
+        case .gap:
+            return .remotexWarn
         }
     }
 }
@@ -290,7 +295,13 @@ private struct Composer: View {
                 Image(systemName: viewModel.pending ? "hourglass" : "arrow.up.circle.fill")
                     .font(.system(size: 30))
             }
-            .disabled(viewModel.status != .connected || viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            // The relay rejects a second turn-start while one is running,
+            // so don't offer one.
+            .disabled(
+                viewModel.status != .connected
+                    || viewModel.pending
+                    || viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         }
         .padding(12)
         .background(Color.remotexBackground)

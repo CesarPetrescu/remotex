@@ -21,7 +21,7 @@ import app.remotex.model.UiEvent
 import app.remotex.ui.theme.InkDim
 
 private data class EventGroup(val kind: Kind, val events: List<UiEvent>) {
-    enum class Kind { USER, AGENT }
+    enum class Kind { USER, AGENT, GAP }
 }
 
 private fun groupUiEvents(events: List<UiEvent>): List<EventGroup> {
@@ -29,6 +29,12 @@ private fun groupUiEvents(events: List<UiEvent>): List<EventGroup> {
     for (e in events) {
         if (e is UiEvent.User) {
             out.add(EventGroup(EventGroup.Kind.USER, listOf(e)))
+            continue
+        }
+        // A replay gap is a marker about the transcript itself, not
+        // something the agent said — never fold it into an agent group.
+        if (e is UiEvent.Gap) {
+            out.add(EventGroup(EventGroup.Kind.GAP, listOf(e)))
             continue
         }
         val last = out.lastOrNull()
@@ -74,6 +80,7 @@ internal fun EventList(
         items(groups, key = { it.events.first().id }) { group ->
             when (group.kind) {
                 EventGroup.Kind.USER -> UserBubble(group.events.first() as UiEvent.User)
+                EventGroup.Kind.GAP -> GapMarker(group.events.first() as UiEvent.Gap)
                 EventGroup.Kind.AGENT -> AgentGroup(group.events, pending)
             }
         }

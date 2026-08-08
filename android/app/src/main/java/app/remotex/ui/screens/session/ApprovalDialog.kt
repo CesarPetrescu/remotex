@@ -24,10 +24,15 @@ import app.remotex.ui.theme.Line
 import app.remotex.ui.theme.Ok
 import app.remotex.ui.theme.Warn
 
+/**
+ * Renders the HEAD of the approval queue (contract F). [queuedBehind] is how
+ * many more approvals are waiting; answering this one reveals the next.
+ */
 @Composable
 fun ApprovalDialog(
     prompt: ApprovalPrompt,
     onDecision: (String) -> Unit,
+    queuedBehind: Int = 0,
 ) {
     val title = when (prompt.kind) {
         "command" -> "COMMAND APPROVAL"
@@ -52,6 +57,14 @@ fun ApprovalDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (queuedBehind > 0) {
+                    Text(
+                        "$queuedBehind more queued — answer this one to see the next",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                }
                 prompt.reason?.let {
                     Text(
                         it,

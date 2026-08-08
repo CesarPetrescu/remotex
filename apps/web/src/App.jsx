@@ -10,6 +10,7 @@ import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
 import { RightSidebar } from './components/RightSidebar';
 import { JumpPicker } from './components/JumpPicker';
+import { SettingsPanel } from './components/SettingsPanel';
 import { hostHomePath, hostDisplayName } from './util/host';
 import { recordVisit } from './util/folderHistory';
 
@@ -50,6 +51,7 @@ export default function App() {
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [jumpOpen, setJumpOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [jumpMode, setJumpMode] = useState('search');
   // Right sidebar: prompts | telemetry | off. Goal lives in the
   // composer now, so stale persisted "goal" values fall back to off.
@@ -62,7 +64,10 @@ export default function App() {
   }, []);
   const pendingPromptKey =
     state.pendingUserInput?.callId || state.pendingApproval?.approvalId || null;
-  const pendingPromptCount = (state.pendingUserInput ? 1 : 0) + (state.pendingApproval ? 1 : 0);
+  // Every unanswered prompt counts, not just the two on screen — the
+  // rest are queued behind them (contract F).
+  const pendingPromptCount =
+    state.pendingApprovals.length + state.pendingUserInputs.length;
   const hasPendingPrompt = pendingPromptCount > 0;
 
   const openRightView = useCallback((v) => {
@@ -182,6 +187,7 @@ export default function App() {
           closeDrawers();
         }}
         onNewSession={openNewSessionBrowser}
+        onOpenSettings={() => setSettingsOpen(true)}
         onResumeThread={(thread) => openSession({
           hostId: thread.host_id,
           threadId: thread.id,
@@ -243,6 +249,8 @@ export default function App() {
         selectedHost={selectedHost}
         pendingApproval={state.pendingApproval}
         pendingUserInput={state.pendingUserInput}
+        pendingApprovalCount={state.pendingApprovals.length}
+        pendingUserInputCount={state.pendingUserInputs.length}
         onResolveApproval={r.resolveApproval}
         onResolveUserInput={r.resolveUserInput}
         onCancelUserInput={r.cancelUserInput}
@@ -262,6 +270,14 @@ export default function App() {
           setJumpOpen(false);
           openSession({ cwd: p });
         }}
+      />
+
+      <SettingsPanel
+        open={settingsOpen}
+        token={state.userToken}
+        remember={state.rememberToken}
+        onSave={(token, remember) => r.setToken(token, remember)}
+        onClose={() => setSettingsOpen(false)}
       />
 
       <Toast message={state.error} tone="error" onDismiss={r.clearError} />

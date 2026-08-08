@@ -11,6 +11,10 @@ write to. This test resets ``inventory_*`` tables before it starts, so
 it also requires ``E2E_ALLOW_DESTRUCTIVE_RESET=1`` as a guardrail against
 accidentally pointing it at a live relay database.
 
+The demo user/bridge credentials this test drives are opt-in on the relay
+(``RELAY_SEED_DEMO``); the test turns them on for its own throwaway
+database.
+
 Run: python3 scripts/e2e_test.py
 """
 from __future__ import annotations
@@ -79,6 +83,10 @@ async def run_test() -> int:
         return 2
 
     await _reset_inventory(database_url)
+
+    # The relay only seeds the demo user/host/bridge key when asked. This
+    # database was just dropped, so there is nothing else to log in as.
+    os.environ["RELAY_SEED_DEMO"] = "1"
 
     web_root = PROJECT_ROOT / "web"
 

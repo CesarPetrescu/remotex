@@ -54,6 +54,7 @@ enum StreamRole: String {
     case tool
     case agent
     case system
+    case gap
 }
 
 struct StreamItem: Identifiable, Equatable {
@@ -63,4 +64,36 @@ struct StreamItem: Identifiable, Equatable {
     var text: String
     var detail: String = ""
     var completed: Bool = false
+}
+
+struct ApprovalPrompt: Identifiable, Equatable {
+    let approvalId: String
+    let kind: String?
+    let reason: String?
+    let command: String?
+    let cwd: String?
+    let decisions: [String]
+
+    var id: String { approvalId }
+}
+
+struct UserInputOption: Identifiable, Equatable {
+    let label: String
+    let description: String
+
+    var id: String { label }
+}
+
+struct UserInputQuestion: Identifiable, Equatable {
+    let id: String
+    let header: String
+    let question: String
+    let options: [UserInputOption]
+}
+
+struct UserInputPrompt: Identifiable, Equatable {
+    let callId: String
+    let questions: [UserInputQuestion]
+
+    var id: String { callId }
 }

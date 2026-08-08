@@ -88,11 +88,29 @@ so any web change requires a relay image rebuild.
 
 ## Relay URL (matters for Android builds)
 
-The relay binds inside docker on `:8080`; the host port is set in
-`deploy/.env` (currently `RELAY_HOST_PORT=18080`,
-`RELAY_HOST_BIND=0.0.0.0`). For LAN access from a phone:
-`http://<LAN-IP>:18080`. The Android build script handles this
-auto-magically — see `android/README.md`.
+The relay binds inside docker on `:8080`; the host port comes from
+`RELAY_HOST_PORT` / `RELAY_HOST_BIND` in `deploy/.env` (gitignored —
+this box uses `18080` on `0.0.0.0`; read the file, don't assume). For
+LAN access from a phone: `http://<LAN-IP>:<RELAY_HOST_PORT>`. The
+Android build script reads it for you — see `android/README.md`.
+
+The relay also needs `RELAY_DATABASE_URL`; it raises on startup without
+one. Compose supplies it, running `relay/app.py` from source does not.
+
+## Two env vars that will bite you
+
+- `RELAY_SEED_DEMO` — the `demo-user-token` / `demo-bridge-token` pair
+  is only seeded when this is truthy, and it defaults to **off** (the
+  tokens are public). A fresh database has no users at all. Set it for
+  a loopback dev relay; never in Compose or on anything reachable.
+- `REMOTEX_MAX_FILE_BYTES` — one ceiling (default 25 MiB) for every
+  byte path. The relay's HTTP body cap and both WS `max_msg_size`
+  values derive from it, and the daemon reads the same var. Change one
+  side without the other and an oversize frame kills the daemon socket
+  — taking every session on that host with it. Oversize must always
+  produce an explicit JSON error, and it has to be caught **before the
+  write**: aiohttp closes the socket before the receiving handler sees
+  an oversize frame, so only the sender can report it.
 
 ## Adapter / runtime test conventions
 
@@ -113,5 +131,9 @@ auto-magically — see `android/README.md`.
   rollout files, not part of the repo.
 - Don't add Android features that bypass `android/build.sh` — the
   default Gradle relayUrl is wrong for real devices.
+- Don't log a raw bearer or bridge token. Audit lines take
+  `user_hash=user_hash(token)` — the *raw* presented token, so it lines
+  up with `key_id`; passing the already-hashed `user["token"]` column
+  gives a hash of a hash. Bridge keys are named by `key_id`.
 - Don't trust your training-data memory of the codex JSON-RPC
   schema. Read `/tmp/codex/codex-rs/` (clone it if missing).

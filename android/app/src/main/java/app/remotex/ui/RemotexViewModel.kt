@@ -11,6 +11,7 @@ import app.remotex.model.FsEntry
 import app.remotex.model.Host
 import app.remotex.model.HostTelemetryData
 import app.remotex.model.HostTelemetrySnapshot
+import app.remotex.model.ModelInfo
 import app.remotex.model.TelemetryHistory
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
@@ -66,6 +67,7 @@ data class PendingImage(
     val mime: String,
     val base64: String,   // encoded payload for the wire
     val label: String,    // short filename for display
+    val bytes: Long = 0L, // decoded size, for the attachment ceiling
 )
 
 data class ApprovalPrompt(
@@ -76,6 +78,8 @@ data class ApprovalPrompt(
     val cwd: String?,
     val permissions: JsonElement? = null,
     val decisions: List<String>,
+    /** Relay-assigned queue position; null on live request frames. */
+    val order: Long? = null,
 )
 
 /** Codex's request_user_input prompt — shown as a modal dialog so the
@@ -97,6 +101,8 @@ data class UserInputPrompt(
     val callId: String,
     val turnId: String? = null,
     val questions: List<UserInputQuestion>,
+    /** Relay-assigned queue position; null on live request frames. */
+    val order: Long? = null,
 )
 
 data class ThreadGoal(
@@ -138,10 +144,12 @@ data class UiState(
     val recents: List<String> = emptyList(),    // recently-used cwd paths (per host)
     val pendingImages: List<PendingImage> = emptyList(),
     val permissions: PermissionsMode = PermissionsMode.Default,
-    val pendingApproval: ApprovalPrompt? = null,
-    /** Codex asked a multi-choice question (plan mode, ambiguous tools).
-     *  Cleared when [resolveUserInput]/[cancelUserInput] is called. */
-    val pendingUserInput: UserInputPrompt? = null,
+    /** Every unanswered approval, in arrival order (contract F). A second
+     *  concurrent prompt queues behind the first instead of replacing it. */
+    val pendingApprovals: List<ApprovalPrompt> = emptyList(),
+    /** Codex's multi-choice questions (plan mode, ambiguous tools), also
+     *  queued. Answering the head reveals the next. */
+    val pendingUserInputs: List<UserInputPrompt> = emptyList(),
     val slashFeedback: String? = null,
     val planMode: Boolean = false,   // true after /plan, cleared on /default
     val goal: ThreadGoal? = null,
@@ -157,10 +165,16 @@ data class UiState(
     val tokensCached: Long = 0L,
     val tokensReasoning: Long = 0L,
     val hostTelemetry: Map<String, HostTelemetrySnapshot> = emptyMap(),
-    // Picker list. Falls back to the embedded MODEL_OPTIONS list below
-    // until GET /api/models replaces it on first load.
+    // Picker list, most-specific source first (contract B): the selected
+    // host's own list, then the relay's static /api/models, then the
+    // embedded MODEL_OPTIONS fallback below.
     val modelOptions: List<ModelOption> = MODEL_OPTIONS,
-)
+) {
+    // Heads are derived, never stored, so they can't drift from the queue
+    // they front. The dialogs render these; the queues own the ordering.
+    val pendingApproval: ApprovalPrompt? get() = pendingApprovals.firstOrNull()
+    val pendingUserInput: UserInputPrompt? get() = pendingUserInputs.firstOrNull()
+}
 
 /**
  * Reasoning effort levels surfaced to the UI. Empty string = "don't
@@ -169,6 +183,19 @@ data class UiState(
  */
 const val EFFORT_DEFAULT = ""
 val ALL_EFFORTS = listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")
+
+// Client-side ceiling for anything that travels as bytes — image
+// attachments (base64 inside one turn-start frame) and workspace uploads.
+// Mirrors REMOTEX_MAX_FILE_BYTES on the relay and daemon (25 MB default)
+// and apps/web/src/config.js: over it the request is refused, or the
+// websocket frame is dropped and takes the socket with it.
+const val MAX_FILE_BYTES = 25L * 1024 * 1024
+
+fun formatBytes(n: Long): String = when {
+    n >= 1024 * 1024 -> "%.1f MB".format(n / (1024.0 * 1024.0))
+    n >= 1024 -> "${n / 1024} KB"
+    else -> "$n B"
+}
 
 /**
  * Visible models from `codex 0.122.0` model/list, with the exact
@@ -195,6 +222,126 @@ val MODEL_OPTIONS = listOf(
 /** Effort list the UI should show given the currently-picked model. */
 fun effortsFor(modelId: String, options: List<ModelOption> = MODEL_OPTIONS): List<String> =
     options.firstOrNull { it.id == modelId }?.efforts ?: ALL_EFFORTS
+
+// --- pending-prompt queues (contract F) -------------------------------------
+//
+// Mirrors apps/web/src/hooks/useRemotex.js. Prompts are keyed by
+// approval_id / call_id so a replayed or duplicated frame updates in place
+// instead of double-inserting. The head is what the UI renders; answering
+// it pops the head and reveals the next.
+
+fun <T : Any> enqueuePrompt(queue: List<T>, prompt: T?, keyOf: (T) -> String): List<T> {
+    if (prompt == null) return queue
+    val key = keyOf(prompt)
+    val idx = queue.indexOfFirst { keyOf(it) == key }
+    if (idx < 0) return queue + prompt
+    // Same prompt again (reconnect replay): refresh the payload, keep the slot.
+    return queue.toMutableList().also { it[idx] = prompt }
+}
+
+fun <T : Any> dequeuePrompt(queue: List<T>, key: String?, keyOf: (T) -> String): List<T> {
+    // A resolution frame without an id can only mean the head — that is the
+    // one every client is rendering.
+    if (key.isNullOrEmpty()) return queue.drop(1)
+    return queue.filter { keyOf(it) != key }
+}
+
+/**
+ * Merge a relay snapshot into the local queue. The snapshot decides
+ * MEMBERSHIP (a prompt another client answered is gone from it) and, when
+ * it carries the relay's `order`, ORDER too — that is what puts a claim the
+ * relay handed back after a failed forward into its original slot rather
+ * than behind a prompt that arrived later (contract F). Without `order`
+ * the local order stands.
+ */
+fun <T : Any> reconcileQueue(
+    queue: List<T>,
+    incoming: List<T>,
+    keyOf: (T) -> String,
+    orderOf: (T) -> Long? = { null },
+): List<T> {
+    val byKey = LinkedHashMap<String, T>()
+    incoming.forEach { byKey[keyOf(it)] = it }
+    val kept = mutableListOf<T>()
+    for (existing in queue) {
+        val replacement = byKey.remove(keyOf(existing)) ?: continue
+        kept += replacement
+    }
+    val merged = kept + byKey.values
+    return if (merged.isNotEmpty() && merged.all { orderOf(it) != null }) {
+        merged.sortedBy { orderOf(it)!! }
+    } else {
+        merged
+    }
+}
+
+val approvalKey: (ApprovalPrompt) -> String = { it.approvalId }
+val userInputKey: (UserInputPrompt) -> String = { it.callId }
+val approvalOrder: (ApprovalPrompt) -> Long? = { it.order }
+val userInputOrder: (UserInputPrompt) -> Long? = { it.order }
+
+/** Both halves of a relay `pending-prompts` snapshot, already normalised. */
+data class PromptSnapshot(
+    val approvals: List<ApprovalPrompt> = emptyList(),
+    val userInputs: List<UserInputPrompt> = emptyList(),
+)
+
+/** The relay's pending-prompts frame carries EVERY unanswered prompt, in
+ *  arrival order. Both stay lists — a second concurrent prompt must never
+ *  displace the first. */
+fun normalizePromptSnapshot(frame: JsonObject): PromptSnapshot = PromptSnapshot(
+    approvals = (frame["approvals"] as? JsonArray).orEmpty()
+        .mapNotNull { it as? JsonObject }
+        .mapNotNull { parseApprovalPrompt(it) },
+    userInputs = (frame["user_inputs"] as? JsonArray).orEmpty()
+        .mapNotNull { it as? JsonObject }
+        .mapNotNull { parseUserInputPrompt(it) },
+)
+
+fun parseApprovalPrompt(data: JsonObject): ApprovalPrompt? {
+    val approvalId = data.string("approval_id") ?: return null
+    val decisions = (data["decisions"] as? JsonArray)
+        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        ?: listOf("accept", "acceptForSession", "decline", "cancel")
+    return ApprovalPrompt(
+        approvalId = approvalId,
+        kind = data.string("kind") ?: "command",
+        reason = data.string("reason"),
+        command = data.string("command"),
+        cwd = data.string("cwd"),
+        permissions = data["permissions"],
+        decisions = decisions,
+        order = data.long("order"),
+    )
+}
+
+fun parseUserInputPrompt(data: JsonObject): UserInputPrompt? {
+    val callId = data.string("call_id") ?: return null
+    val questionsArr = data["questions"] as? JsonArray ?: return null
+    val questions = questionsArr.mapNotNull { qe ->
+        val qo = qe as? JsonObject ?: return@mapNotNull null
+        val qid = qo.string("id") ?: return@mapNotNull null
+        val opts = (qo["options"] as? JsonArray).orEmpty().mapNotNull { oe ->
+            val oo = oe as? JsonObject ?: return@mapNotNull null
+            val label = oo.string("label") ?: return@mapNotNull null
+            UserInputQuestionOption(label, oo.string("description").orEmpty())
+        }
+        UserInputQuestion(
+            id = qid,
+            header = qo.string("header").orEmpty(),
+            question = qo.string("question").orEmpty(),
+            isOther = qo["isOther"]?.jsonPrimitive?.contentOrNull == "true",
+            isSecret = qo["isSecret"]?.jsonPrimitive?.contentOrNull == "true",
+            options = opts,
+        )
+    }
+    return UserInputPrompt(
+        callId = callId,
+        turnId = data.string("turn_id"),
+        questions = questions,
+        order = data.long("order"),
+    )
+}
 
 class RemotexViewModel(
     application: Application,
@@ -238,6 +385,10 @@ class RemotexViewModel(
     private var userClosed: Boolean = false
     private var telemetryJob: Job? = null
     private var telemetryHostId: String? = null
+    private var modelFetchJob: Job? = null
+    // Host whose model list is currently in state; keeps repeated host
+    // selections from re-fetching the same list.
+    private var modelOptionsHostId: String? = null
     private val clientId: String = "android-${UUID.randomUUID().toString().take(12)}"
     private val lastSeqBySession: MutableMap<String, Long> = mutableMapOf()
 
@@ -246,29 +397,70 @@ class RemotexViewModel(
     }
 
     init {
-        // Fetch the canonical model list from the relay once. Failure is
-        // silent — the embedded fallback in MODEL_OPTIONS keeps the picker
-        // populated.
-        viewModelScope.launch {
-            try {
-                val remote = client.listModels()
-                if (remote.isNotEmpty()) {
-                    val converted = remote.map {
-                        ModelOption(
-                            id = it.id,
-                            label = it.label,
-                            hint = it.hint,
-                            efforts = if (it.efforts.isEmpty()) ALL_EFFORTS else it.efforts,
-                        )
+        // No host picked yet, so this can only reach the relay's static
+        // list; selecting a host re-asks that host (see [refreshModelOptions]).
+        refreshModelOptions(null)
+        observePendingForNotifications()
+        observeNotificationActions()
+    }
+
+    /**
+     * Model list, most-specific source first (contract B): what the selected
+     * host's codex actually offers → the relay's static /api/models →
+     * the embedded MODEL_OPTIONS already sitting in state. Every failure is
+     * silent; the picker is never left empty.
+     */
+    private fun refreshModelOptions(hostId: String?) {
+        if (hostId != null && hostId == modelOptionsHostId) return
+        modelFetchJob?.cancel()
+        modelFetchJob = viewModelScope.launch {
+            if (hostId != null) {
+                try {
+                    if (applyModelOptions(client.listHostModels(_state.value.userToken, hostId))) {
+                        modelOptionsHostId = hostId
+                        return@launch
                     }
-                    _state.update { it.copy(modelOptions = converted) }
+                } catch (_: Throwable) {
+                    // Host offline / old relay without the route — fall through.
+                    // modelOptionsHostId stays unset so a later selection retries.
                 }
+            }
+            try {
+                applyModelOptions(client.listModels())
             } catch (_: Throwable) {
                 // Keep fallback list; not fatal.
             }
         }
-        observePendingForNotifications()
-        observeNotificationActions()
+    }
+
+    /** Returns false (and changes nothing) for an empty list, so the caller
+     *  can fall through to the next source. */
+    private fun applyModelOptions(remote: List<ModelInfo>): Boolean {
+        if (remote.isEmpty()) return false
+        val converted = remote.map {
+            ModelOption(
+                id = it.id,
+                label = it.label,
+                hint = it.hint,
+                efforts = if (it.efforts.isEmpty()) ALL_EFFORTS else it.efforts,
+            )
+        }
+        // Same rule as the web MODEL_OPTIONS reducer: a host that doesn't
+        // offer the currently-picked model (or effort) would reject the
+        // turn, so fall back to "codex picks" rather than sending
+        // something we already know is invalid.
+        _state.update {
+            val model = if (converted.any { m -> m.id == it.model }) it.model else ""
+            val effort = if (it.effort in effortsFor(model, converted)) it.effort else EFFORT_DEFAULT
+            it.copy(modelOptions = converted, model = model, effort = effort)
+        }
+        return true
+    }
+
+    /** Host selection side-effects: telemetry poll + host-scoped model list. */
+    private fun onHostSelected(hostId: String) {
+        startTelemetryPoll(hostId)
+        refreshModelOptions(hostId)
     }
 
     /**
@@ -444,6 +636,9 @@ class RemotexViewModel(
         _state.update { it.copy(permissions = mode) }
     }
 
+    /** Answers the head of the approval queue; popping it reveals the next.
+     *  If the relay can't deliver the answer it re-pushes a pending-prompts
+     *  snapshot, which puts the prompt back. */
     fun resolveApproval(decision: String) {
         val pending = _state.value.pendingApproval ?: return
         val sock = socket ?: return
@@ -456,7 +651,13 @@ class RemotexViewModel(
             },
         )
         if (sock.sendJson(frame)) {
-            _state.update { it.copy(pendingApproval = null) }
+            _state.update {
+                it.copy(
+                    pendingApprovals = dequeuePrompt(
+                        it.pendingApprovals, pending.approvalId, approvalKey,
+                    ),
+                )
+            }
         }
     }
 
@@ -482,7 +683,13 @@ class RemotexViewModel(
             },
         )
         if (sock.sendJson(frame)) {
-            _state.update { it.copy(pendingUserInput = null) }
+            _state.update {
+                it.copy(
+                    pendingUserInputs = dequeuePrompt(
+                        it.pendingUserInputs, pending.callId, userInputKey,
+                    ),
+                )
+            }
         }
     }
 
@@ -512,7 +719,7 @@ class RemotexViewModel(
 
     fun selectHost(id: String) {
         _state.update { it.copy(selectedHostId = id) }
-        startTelemetryPoll(id)
+        onHostSelected(id)
     }
 
     /** Poll /api/hosts/{id}/telemetry every 3s. Replaces any prior job. */
@@ -587,6 +794,12 @@ class RemotexViewModel(
 
     suspend fun uploadWorkspaceFile(targetDir: String, fileName: String, bytes: ByteArray, mime: String) {
         val hostId = _state.value.session?.hostId ?: error("no host selected")
+        // Refused here rather than shipping bytes the relay answers with a
+        // 413 (mirrors the web uploader).
+        require(bytes.size <= MAX_FILE_BYTES) {
+            "$fileName is ${formatBytes(bytes.size.toLong())} — the upload limit is " +
+                formatBytes(MAX_FILE_BYTES)
+        }
         client.uploadFile(_state.value.userToken, hostId, targetDir, fileName, bytes, mime)
     }
 
@@ -665,10 +878,10 @@ class RemotexViewModel(
                 if (_state.value.selectedHostId == null) {
                     hosts.firstOrNull { it.online }?.let { h ->
                         _state.update { it.copy(selectedHostId = h.id) }
-                        startTelemetryPoll(h.id)
+                        onHostSelected(h.id)
                     }
                 } else {
-                    _state.value.selectedHostId?.let { startTelemetryPoll(it) }
+                    _state.value.selectedHostId?.let { onHostSelected(it) }
                 }
             } catch (t: Throwable) {
                 _state.update { it.copy(loading = false, error = t.message ?: "refresh failed") }
@@ -695,7 +908,7 @@ class RemotexViewModel(
         // this, the poll stayed on whatever host refresh() auto-selected
         // and the threads screen showed "no telemetry yet" forever for any
         // other host the user tapped into.
-        startTelemetryPoll(host.id)
+        onHostSelected(host.id)
         refreshThreads()
     }
 
@@ -741,8 +954,8 @@ class RemotexViewModel(
                 // is active in a brand-new thread that hasn't been put
                 // in plan mode yet.
                 planMode = false,
-                pendingApproval = null,
-                pendingUserInput = null,
+                pendingApprovals = emptyList(),
+                pendingUserInputs = emptyList(),
                 slashFeedback = null,
                 pendingImages = emptyList(),
                 resuming = false,
@@ -941,6 +1154,18 @@ class RemotexViewModel(
                         ?: throw IllegalStateException("empty stream for $uri")
                     bytes to resolved
                 }
+                val already = _state.value.pendingImages.sumOf { it.bytes }
+                if (already + bytes.size > MAX_FILE_BYTES) {
+                    // Images ride inside a single turn-start frame, so the
+                    // whole batch has to fit under the ceiling.
+                    _state.update {
+                        it.copy(
+                            error = "image: ${formatBytes(bytes.size.toLong())} exceeds the " +
+                                "${formatBytes(MAX_FILE_BYTES)} attachment limit",
+                        )
+                    }
+                    return@launch
+                }
                 val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                 val label = uri.lastPathSegment?.substringAfterLast('/') ?: "image"
                 _state.update {
@@ -950,6 +1175,7 @@ class RemotexViewModel(
                             mime = mime,
                             base64 = b64,
                             label = label.take(32),
+                            bytes = bytes.size.toLong(),
                         ),
                     )
                 }
@@ -980,8 +1206,8 @@ class RemotexViewModel(
                 status = Status.Idle,
                 pending = false,
                 planMode = false,
-                pendingApproval = null,
-                pendingUserInput = null,
+                pendingApprovals = emptyList(),
+                pendingUserInputs = emptyList(),
                 slashFeedback = null,
                 resuming = false,
                 resumingSinceMs = 0L,
@@ -1011,7 +1237,11 @@ class RemotexViewModel(
         }
         val seq = msg["seq"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
         val sid = msg.string("session_id") ?: _state.value.session?.sessionId
-        if (seq != null && sid != null && seq > (lastSeqBySession[sid] ?: 0L)) {
+        if (seq != null && sid != null) {
+            // Assigned, not max'd: seq is minted per relay process, so after
+            // a redeploy the new stream restarts at 1. A running max would
+            // hold the cursor above it forever and every later reconnect
+            // would silently replay nothing.
             lastSeqBySession[sid] = seq
         }
         when (msg.string("type")) {
@@ -1020,29 +1250,51 @@ class RemotexViewModel(
                 _state.update { it.copy(status = Status.Connecting, error = null) }
             }
             "approval-resolved" -> {
+                // Answered here or by a peer client — either way this prompt
+                // leaves the queue and the next one becomes the head.
                 val approvalId = msg.string("approval_id")
                 _state.update {
-                    if (approvalId == null || it.pendingApproval?.approvalId == approvalId) {
-                        it.copy(pendingApproval = null)
-                    } else {
-                        it
-                    }
+                    it.copy(
+                        pendingApprovals = dequeuePrompt(
+                            it.pendingApprovals, approvalId, approvalKey,
+                        ),
+                    )
                 }
             }
             "user-input-resolved" -> {
                 val callId = msg.string("call_id")
                 _state.update {
-                    if (callId == null || it.pendingUserInput?.callId == callId) {
-                        it.copy(pendingUserInput = null)
-                    } else {
-                        it
-                    }
+                    it.copy(
+                        pendingUserInputs = dequeuePrompt(
+                            it.pendingUserInputs, callId, userInputKey,
+                        ),
+                    )
                 }
             }
             "pending-prompts" -> applyPendingPrompts(msg)
+            "replay-gap" -> {
+                // Contract (C): the relay's replay buffer had already evicted
+                // part of what we asked for. Mark the hole so a truncated
+                // transcript never reads as a complete one.
+                val from = msg.long("missed_from") ?: 0L
+                val to = msg.long("missed_to") ?: 0L
+                appendEventOnce(
+                    UiEvent.Gap(
+                        id = "replay-gap-${msg.string("session_id").orEmpty()}-$from-$to",
+                        missedFrom = from,
+                        missedTo = to,
+                    ),
+                )
+            }
             "pong" -> Unit
             "session-closed" -> _state.update {
-                it.copy(status = Status.Disconnected, pending = false)
+                // Codex is gone; nothing can answer these any more.
+                it.copy(
+                    status = Status.Disconnected,
+                    pending = false,
+                    pendingApprovals = emptyList(),
+                    pendingUserInputs = emptyList(),
+                )
             }
             "session-event" -> {
                 val ev = msg["event"]?.jsonObject ?: return
@@ -1060,8 +1312,20 @@ class RemotexViewModel(
                 }
                 applyTelemetry(hostId, data)
             }
-            "error" -> _state.update {
-                it.copy(error = msg.string("error") ?: "relay error")
+            "error" -> {
+                if (msg["fatal"]?.jsonPrimitive?.contentOrNull == "true") {
+                    // The relay will refuse this session id on every
+                    // attempt (closed, gone, or not ours). Retrying is an
+                    // endless reconnect loop; only a new session helps.
+                    userClosed = true
+                    reconnectJob?.cancel()
+                }
+                _state.update {
+                    it.copy(
+                        error = msg.string("error") ?: "relay error",
+                        pending = false,
+                    )
+                }
             }
         }
     }
@@ -1072,66 +1336,21 @@ class RemotexViewModel(
         }
     }
 
+    /** Relay snapshot: authoritative about WHICH prompts are still open, so
+     *  it prunes prompts a peer client answered without discarding the local
+     *  ordering of the ones that remain. */
     private fun applyPendingPrompts(msg: JsonObject) {
-        val approval = (msg["approvals"] as? JsonArray)
-            .orEmpty()
-            .mapNotNull { it as? JsonObject }
-            .mapNotNull { parseApprovalPrompt(it) }
-            .firstOrNull()
-        val userInput = (msg["user_inputs"] as? JsonArray)
-            .orEmpty()
-            .mapNotNull { it as? JsonObject }
-            .mapNotNull { parseUserInputPrompt(it) }
-            .firstOrNull()
+        val snapshot = normalizePromptSnapshot(msg)
         _state.update {
             it.copy(
-                pendingApproval = approval,
-                pendingUserInput = userInput,
+                pendingApprovals = reconcileQueue(
+                    it.pendingApprovals, snapshot.approvals, approvalKey, approvalOrder,
+                ),
+                pendingUserInputs = reconcileQueue(
+                    it.pendingUserInputs, snapshot.userInputs, userInputKey, userInputOrder,
+                ),
             )
         }
-    }
-
-    private fun parseApprovalPrompt(data: JsonObject): ApprovalPrompt? {
-        val approvalId = data.string("approval_id") ?: return null
-        val decisions = (data["decisions"] as? JsonArray)
-            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-            ?: listOf("accept", "acceptForSession", "decline", "cancel")
-        return ApprovalPrompt(
-            approvalId = approvalId,
-            kind = data.string("kind") ?: "command",
-            reason = data.string("reason"),
-            command = data.string("command"),
-            cwd = data.string("cwd"),
-            permissions = data["permissions"],
-            decisions = decisions,
-        )
-    }
-
-    private fun parseUserInputPrompt(data: JsonObject): UserInputPrompt? {
-        val callId = data.string("call_id") ?: return null
-        val questionsArr = data["questions"] as? JsonArray ?: return null
-        val questions = questionsArr.mapNotNull { qe ->
-            val qo = qe as? JsonObject ?: return@mapNotNull null
-            val qid = qo.string("id") ?: return@mapNotNull null
-            val opts = (qo["options"] as? JsonArray).orEmpty().mapNotNull { oe ->
-                val oo = oe as? JsonObject ?: return@mapNotNull null
-                val label = oo.string("label") ?: return@mapNotNull null
-                UserInputQuestionOption(label, oo.string("description").orEmpty())
-            }
-            UserInputQuestion(
-                id = qid,
-                header = qo.string("header").orEmpty(),
-                question = qo.string("question").orEmpty(),
-                isOther = qo["isOther"]?.jsonPrimitive?.contentOrNull == "true",
-                isSecret = qo["isSecret"]?.jsonPrimitive?.contentOrNull == "true",
-                options = opts,
-            )
-        }
-        return UserInputPrompt(
-            callId = callId,
-            turnId = data.string("turn_id"),
-            questions = questions,
-        )
     }
 
     private fun applyEvent(kind: String, data: JsonObject) {
@@ -1222,7 +1441,15 @@ class RemotexViewModel(
                 }
             }
 
-            "turn-completed" -> _state.update { it.copy(pending = false) }
+            // The relay drops every outstanding prompt for the session when a
+            // turn ends, so both queues empty together.
+            "turn-completed" -> _state.update {
+                it.copy(
+                    pending = false,
+                    pendingApprovals = emptyList(),
+                    pendingUserInputs = emptyList(),
+                )
+            }
 
             "thread-status" -> {
                 when (data.string("status")) {
@@ -1291,12 +1518,24 @@ class RemotexViewModel(
 
             "approval-request" -> {
                 val prompt = parseApprovalPrompt(data) ?: return
-                _state.update { it.copy(pendingApproval = prompt) }
+                _state.update {
+                    it.copy(
+                        pendingApprovals = enqueuePrompt(
+                            it.pendingApprovals, prompt, approvalKey,
+                        ),
+                    )
+                }
             }
 
             "user-input-request" -> {
                 val prompt = parseUserInputPrompt(data) ?: return
-                _state.update { it.copy(pendingUserInput = prompt) }
+                _state.update {
+                    it.copy(
+                        pendingUserInputs = enqueuePrompt(
+                            it.pendingUserInputs, prompt, userInputKey,
+                        ),
+                    )
+                }
             }
 
             "slash-ack" -> {

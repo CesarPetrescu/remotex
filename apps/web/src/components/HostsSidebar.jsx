@@ -119,7 +119,13 @@ export function HostsSidebar({
       </div>
 
       <div className="sidebar-foot">
-        <span className="sidebar-foot-token">{state.userToken}</span>
+        {/* Masked: the footer is on screen during every screen-share and
+            screenshot, and this is a bearer credential. The full value is
+            editable behind the settings gear. */}
+        <span className="sidebar-foot-token" title="Access token (settings to change)">
+          {maskToken(state.userToken)}
+          {!state.rememberToken && <span className="sidebar-foot-ephemeral"> · this tab only</span>}
+        </span>
         {hostUserChip && <span className="sidebar-foot-host">{hostUserChip}</span>}
         {onOpenSettings && (
           <button
@@ -201,6 +207,12 @@ function SessionRow({ thread, active, onClick }) {
       </span>
     </button>
   );
+}
+
+function maskToken(token) {
+  const t = String(token || '');
+  if (!t) return 'no token';
+  return t.length <= 8 ? '••••' : `${t.slice(0, 4)}••••${t.slice(-2)}`;
 }
 
 function osUserChipFor(host) {

@@ -18,8 +18,10 @@ import uuid
 
 from aiohttp import WSMsgType, web
 
-from ..hub import Hub
-from ..logging import audit
+from ..hub import SEND_FAILED, SEND_OK, Hub, PendingPrompt
+from ..limits import WS_MAX_MSG_SIZE
+from ..logging import audit, user_hash
+from ..middleware.rate_limit import allow_ws_connection, client_remote
 from ..store import Store
 
 
@@ -48,15 +50,11 @@ async def _close_backend_session(app: web.Application, host_id: str, session_id:
         session_id,
         {"type": "session-closed", "session_id": session_id},
     )
-    daemon_ws = hub.daemon_for(host_id)
-    if daemon_ws is not None and not daemon_ws.closed:
-        try:
-            await daemon_ws.send_json({
-                "type": "session-close",
-                "session_id": session_id,
-            })
-        except Exception as exc:  # noqa: BLE001
-            log.debug("session-close forward failed", extra={"error": str(exc)})
+    if not await hub.forward_to_daemon(host_id, {
+        "type": "session-close",
+        "session_id": session_id,
+    }):
+        log.debug("session-close forward failed", extra={"session_id": session_id})
     await store.close_session(session_id)
     await hub.forget_session(session_id)
 
@@ -133,7 +131,14 @@ async def _schedule_backend_close(
 
 
 async def ws_client(request: web.Request) -> web.WebSocketResponse:
-    ws = web.WebSocketResponse(heartbeat=20)
+    remote = client_remote(request)
+    allowed, retry_after = allow_ws_connection(remote)
+    if not allowed:
+        raise web.HTTPTooManyRequests(
+            reason="too many websocket connections",
+            headers={"Retry-After": f"{max(1, int(retry_after))}"},
+        )
+    ws = web.WebSocketResponse(heartbeat=20, max_msg_size=WS_MAX_MSG_SIZE)
     await ws.prepare(request)
     store: Store = request.app["store"]
     hub: Hub = request.app["hub"]
@@ -151,29 +156,63 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
         token = data.get("token", "")
         user = await store.user_for_token(token)
         if not user:
-            await ws.send_json({"type": "error", "error": "invalid user token"})
+            await ws.send_json({
+                "type": "error", "error": "invalid user token", "fatal": True,
+            })
             await ws.close(code=4401, message=b"invalid token")
-            audit("auth.user.invalid", remote=request.remote)
+            audit("auth.user.invalid", remote=remote)
             return ws
         session_id = data.get("session_id")
         if not session_id:
-            await ws.send_json({"type": "error", "error": "session_id required"})
+            await ws.send_json({
+                "type": "error", "error": "session_id required", "fatal": True,
+            })
             await ws.close(code=1008, message=b"no session")
             return ws
+        # Claim the reservation before the store round-trip below. The
+        # sweeper decides a reservation is unattached from hub state that
+        # this handler only writes after that await, so leaving the entry
+        # in place lets a TTL sweep close the row out from under an attach
+        # that is already in flight.
+        (request.app.get("session_reservations") or {}).pop(session_id, None)
         client_id = (data.get("client_id") or "").strip() or f"client_{uuid.uuid4().hex[:12]}"
         client_name = (data.get("client_name") or "client").strip()[:64] or "client"
         try:
             last_seq = int(data.get("last_seq") or 0)
         except (TypeError, ValueError):
             last_seq = 0
-        host_id = hub.host_for_session(session_id)
-        if host_id is None:
-            session = await store.session_info(session_id)
-            if session is None or session["owner_token"] != user["token"]:
-                await ws.send_json({"type": "error", "error": "session not found"})
-                await ws.close(code=1008, message=b"bad session")
-                return ws
-            host_id = session["host_id"]
+        # Ownership is always decided by the store. The hub is a cache of
+        # the live host binding, never the authority on who may attach —
+        # a session being live is not permission to join it.
+        session = await store.session_info(session_id)
+        if session is None or session["owner_token"] != user["token"]:
+            await ws.send_json({
+                "type": "error", "error": "session not found", "fatal": True,
+            })
+            await ws.close(code=1008, message=b"bad session")
+            audit(
+                "session.attach.denied",
+                session_id=session_id,
+                user_hash=user_hash(token),
+                remote=remote,
+            )
+            return ws
+        if session.get("closed_at"):
+            # Distinct error string, and fatal: the client must start a new
+            # session rather than retry — retrying is an infinite reconnect
+            # loop — and must not resurrect a closed id into a brand-new
+            # codex thread.
+            await ws.send_json({
+                "type": "error", "error": "session closed", "fatal": True,
+            })
+            await ws.close(code=1008, message=b"session closed")
+            return ws
+        # seq is minted per relay process, so a cursor left over from before
+        # a redeploy can sit far ahead of the new counter. Treat it as a
+        # fresh attach instead of replaying nothing at all.
+        if last_seq > await hub.current_seq(session_id):
+            last_seq = 0
+        host_id = hub.host_for_session(session_id) or session["host_id"]
         peer_count = await hub.attach_client(
             session_id,
             host_id,
@@ -189,13 +228,24 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             "peer_count": peer_count,
         })
         await ws.send_json(await hub.pending_prompt_snapshot(session_id))
+        gap = await hub.replay_gap(session_id, last_seq)
+        if gap is not None:
+            # Told before the frames it precedes, so the client can render
+            # "earlier events unavailable" in the right place instead of
+            # stitching a truncated transcript together silently.
+            await ws.send_json({
+                "type": "replay-gap",
+                "session_id": session_id,
+                "missed_from": gap[0],
+                "missed_to": gap[1],
+            })
         for frame in await hub.replay_since(session_id, last_seq):
             await ws.send_json(frame)
         audit(
             "session.attached",
             session_id=session_id,
             host_id=host_id,
-            user=user["token"],
+            user_hash=user_hash(token),
             client_id=client_id,
             peer_count=peer_count,
         )
@@ -207,6 +257,16 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             return ws
         override_map: dict = request.app.setdefault("session_open_overrides", {})
         overrides = override_map.get(session_id, {}) or {}
+        if not overrides:
+            # No in-memory reservation: either the relay restarted or this
+            # is a reattach. Rebuild the overrides from the persisted row so
+            # the daemon resumes the original codex thread instead of
+            # silently starting a fresh one under the same session id.
+            overrides = {"kind": session.get("kind") or "codex"}
+            if session.get("thread_id"):
+                overrides["thread_id"] = session["thread_id"]
+            if session.get("cwd"):
+                overrides["cwd"] = session["cwd"]
         open_frame, created_open = await hub.ensure_session_open_frame(
             session_id,
             host_id,
@@ -214,9 +274,23 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
         )
         if created_open:
             override_map.pop(session_id, None)
-            await daemon_ws.send_json(open_frame)
+            await hub.forward_to_daemon(host_id, open_frame)
 
         async for msg in ws:
+            if msg.type == WSMsgType.ERROR:
+                # Most often an oversize frame (images past WS_MAX_MSG_SIZE).
+                # aiohttp has already closed the socket by the time we see
+                # it, so this is best-effort: say why, then stop.
+                log.warning(
+                    "client frame rejected",
+                    extra={"session_id": session_id, "error": str(msg.data)},
+                )
+                if not ws.closed:
+                    await ws.send_json({
+                        "type": "error",
+                        "error": f"frame rejected (max {WS_MAX_MSG_SIZE} bytes)",
+                    })
+                break
             if msg.type != WSMsgType.TEXT:
                 continue
             try:
@@ -270,9 +344,17 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                     host_id=host_id,
                     client_id=client_id,
                 )
+            # Claims are held (not dropped) until the response is actually
+            # on its way to the daemon — see the restore below.
+            approval_claim: PendingPrompt | None = None
+            user_input_claim: PendingPrompt | None = None
             if frame.get("type") == "approval-response":
                 approval_id = frame.get("approval_id")
-                if not approval_id or not await hub.resolve_approval(session_id, approval_id):
+                approval_claim = (
+                    await hub.resolve_approval(session_id, approval_id)
+                    if approval_id else None
+                )
+                if approval_claim is None:
                     await ws.send_json({
                         "type": "error",
                         "error": "approval already resolved",
@@ -281,15 +363,31 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                 frame["client_id"] = client_id
             if frame.get("type") == "user-input-response":
                 call_id = frame.get("call_id")
-                if not call_id or not await hub.resolve_user_input(session_id, call_id):
+                user_input_claim = (
+                    await hub.resolve_user_input(session_id, call_id)
+                    if call_id else None
+                )
+                if user_input_claim is None:
                     await ws.send_json({
                         "type": "error",
                         "error": "user input already resolved",
                     })
                     continue
                 frame["client_id"] = client_id
-            daemon_ws = hub.daemon_for(host_id)
-            if daemon_ws is None or daemon_ws.closed:
+            status = await hub.forward_to_daemon_status(host_id, frame)
+            if status != SEND_OK:
+                # Only a provably-unsent frame means codex still holds the
+                # prompt; hand the claim back so it stays answerable. A send
+                # that timed out is already on the transport and may still
+                # land — restoring it there would let the same approval be
+                # answered twice.
+                if status == SEND_FAILED:
+                    if approval_claim is not None:
+                        await hub.restore_approval(approval_claim)
+                    if user_input_claim is not None:
+                        await hub.restore_user_input(user_input_claim)
+                else:
+                    approval_claim = user_input_claim = None
                 if frame.get("type") == "turn-start":
                     hub.mark_turn_completed(session_id)
                     await hub.broadcast_to_session(session_id, {
@@ -301,22 +399,10 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                         },
                     })
                 await ws.send_json({"type": "error", "error": "host offline"})
-                continue
-            try:
-                await daemon_ws.send_json(frame)
-            except Exception as exc:  # noqa: BLE001
-                log.debug("client frame forward failed", extra={"error": str(exc)})
-                if frame.get("type") == "turn-start":
-                    hub.mark_turn_completed(session_id)
-                    await hub.broadcast_to_session(session_id, {
-                        "type": "session-event",
-                        "session_id": session_id,
-                        "event": {
-                            "kind": "turn-completed",
-                            "data": {"error": "host offline"},
-                        },
-                    })
-                await ws.send_json({"type": "error", "error": "host offline"})
+                if approval_claim is not None or user_input_claim is not None:
+                    # Re-push the queue so the client that just answered
+                    # re-renders the prompt it optimistically hid.
+                    await ws.send_json(await hub.pending_prompt_snapshot(session_id))
                 continue
             if frame.get("type") == "approval-response":
                 await hub.broadcast_to_session(session_id, {

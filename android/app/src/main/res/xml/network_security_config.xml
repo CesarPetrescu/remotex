@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Default (release) posture: no cleartext, anywhere. A shipped build talks
+  to the relay over https/wss; there is no product feature that needs
+  plaintext HTTP off the device.
+
+  The LAN development workflow (android/build.sh bakes an http://LAN-IP:PORT
+  relay URL into BuildConfig.RELAY_URL) is served by the debug-only override
+  in src/debug/res/xml/network_security_config.xml, which replaces this file
+  in debug builds only.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

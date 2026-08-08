@@ -48,4 +48,16 @@ sealed class UiEvent {
     ) : UiEvent()
 
     data class System(override val id: String, val label: String, val detail: String) : UiEvent()
+
+    /**
+     * Contract (C): the relay's replay buffer had already evicted frames this
+     * client asked for. Rendered as a divider in the transcript so a hole is
+     * never presented as the whole story. Not a codex event — the relay emits
+     * it as a top-level `replay-gap` frame.
+     */
+    data class Gap(
+        override val id: String,
+        val missedFrom: Long,
+        val missedTo: Long,
+    ) : UiEvent()
 }

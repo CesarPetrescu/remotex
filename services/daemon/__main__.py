@@ -19,6 +19,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         mode=args.mode,
         codex_binary=args.codex_binary,
         default_cwd=args.default_cwd or "",
+        allow_insecure=bool(args.allow_insecure),
     )
     path = Path(args.config) if args.config else default_config_path()
     cfg.write(path)
@@ -36,6 +37,19 @@ def _cmd_run(args: argparse.Namespace) -> int:
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
+    reason = cfg.insecure_relay_reason()
+    if reason:
+        if not cfg.allow_insecure:
+            print(
+                f"refusing to start: {reason}.\n"
+                f"Use a wss:// relay URL, or set `allow_insecure = true` under "
+                f"[daemon] in {path} to proceed anyway.",
+                file=sys.stderr,
+            )
+            return 2
+        logging.getLogger("daemon").warning(
+            "INSECURE RELAY: %s — continuing because allow_insecure = true", reason
+        )
     client = DaemonClient(cfg)
     try:
         asyncio.run(client.run())
@@ -73,6 +87,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--default-cwd",
         default=None,
         help="workspace dir Codex runs turns in (stdio mode). Empty → $HOME",
+    )
+    init.add_argument(
+        "--allow-insecure",
+        action="store_true",
+        help="allow a cleartext ws:// relay on a non-loopback host (token travels in the clear)",
     )
     init.add_argument("--config", default=None, help="override config path")
     init.set_defaults(func=_cmd_init)

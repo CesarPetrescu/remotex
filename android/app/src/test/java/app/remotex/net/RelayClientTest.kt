@@ -63,6 +63,35 @@ class RelayClientTest {
     }
 
     @Test
+    fun listHostModelsUsesTheHostScopedRouteWithAuth() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "host_id": "host_1",
+                      "source": "host",
+                      "models": [
+                        {"id": "gpt-5.5", "label": "gpt-5.5", "hint": "from host", "efforts": ["low", "high"]}
+                      ]
+                    }
+                    """.trimIndent(),
+                ),
+        )
+
+        val models = client.listHostModels("user-token", "host_1")
+
+        assertEquals(1, models.size)
+        assertEquals("gpt-5.5", models.single().id)
+        assertEquals(listOf("low", "high"), models.single().efforts)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/hosts/host_1/models", request.path)
+        assertEquals("Bearer user-token", request.getHeader("Authorization"))
+    }
+
+    @Test
     fun openSessionSendsCodexSessionPayload() = runTest {
         server.enqueue(
             MockResponse()

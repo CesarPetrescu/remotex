@@ -151,8 +151,17 @@ export function JumpPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, open, isPathQuery]);
 
-  const favorites = useMemo(() => getFavorites(hostId), [hostId, favTick, open]);
-  const recents = useMemo(() => getRecents(hostId), [hostId, favTick, open]);
+  // Favorites/recents live in localStorage, which useMemo can't observe.
+  // Re-read them on the events that can change them (host switch, a pin
+  // toggle via favTick, reopening the picker) instead of pretending they
+  // are pure derivations of those values.
+  const [favorites, setFavorites] = useState(() => getFavorites(hostId));
+  const [recents, setRecents] = useState(() => getRecents(hostId));
+  useEffect(() => {
+    setFavorites(getFavorites(hostId));
+    setRecents(getRecents(hostId));
+  }, [hostId, favTick, open]);
+
   const atLanding = path === landingRef.current;
 
   const sections = useMemo(() => {
@@ -297,7 +306,7 @@ export function JumpPicker({
         className="jp-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Choose working directory"
+        aria-label={hostName ? `Choose working directory on ${hostName}` : 'Choose working directory'}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="jp-input-row">

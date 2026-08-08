@@ -9,6 +9,13 @@ const relayWs = `ws://127.0.0.1:${relayPort}`;
 
 export default defineConfig({
   plugins: [react()],
+  // Unit tests only — pure helpers and the useRemotex reducer, which is
+  // exported precisely so it can be driven without a DOM. Nothing here
+  // renders components, so no jsdom dependency.
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.{js,jsx}'],
+  },
   server: {
     port: 5174,
     proxy: {

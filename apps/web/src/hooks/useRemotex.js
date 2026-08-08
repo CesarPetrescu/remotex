@@ -7,49 +7,60 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { RelayClient } from '../api/relayClient';
 import { SessionSocket } from '../api/sessionSocket';
-import { FALLBACK_MODEL_OPTIONS, SCREENS, STATUS, effortsFor } from '../config';
+import {
+  FALLBACK_MODEL_OPTIONS,
+  MAX_FILE_BYTES,
+  SCREENS,
+  STATUS,
+  effortsFor,
+  formatBytes,
+} from '../config';
 import { parseSlash } from '../util/slash';
 import { parentPath } from '../util/path';
 import { hostHomePath } from '../util/host';
 import { buildUrl, parseUrl } from '../util/url';
+import { loadRemember, loadToken, saveToken } from '../util/tokenStorage';
 
-const TOKEN_KEY = 'remotex.userToken';
 const PROMPT_BACKUP_PREFIX = 'remotex.pendingPrompts.';
-const loadToken = () => {
-  try {
-    return localStorage.getItem(TOKEN_KEY) || 'demo-user-token';
-  } catch {
-    return 'demo-user-token';
-  }
-};
 
 function promptBackupKey(sessionId) {
   return `${PROMPT_BACKUP_PREFIX}${sessionId}`;
 }
 
+// Backups are queue-shaped: {approvals: [...], userInputs: [...]}. The
+// pre-queue shape ({approval, userInput}) is still read so a tab that was
+// open across a deploy doesn't lose its unanswered prompt.
 function readPromptBackup(sessionId) {
   if (!sessionId) return null;
   try {
     const raw = sessionStorage.getItem(promptBackupKey(sessionId));
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      approvals: Array.isArray(parsed.approvals)
+        ? parsed.approvals
+        : [parsed.approval].filter(Boolean),
+      userInputs: Array.isArray(parsed.userInputs)
+        ? parsed.userInputs
+        : [parsed.userInput].filter(Boolean),
+    };
   } catch {
     return null;
   }
 }
 
-function writePromptBackup(sessionId, patch) {
+function writePromptBackup(sessionId, { approvals = [], userInputs = [] }) {
   if (!sessionId) return;
   try {
-    const prev = readPromptBackup(sessionId) || {};
-    const next = {
-      approval: 'approval' in patch ? patch.approval : prev.approval || null,
-      userInput: 'userInput' in patch ? patch.userInput : prev.userInput || null,
-    };
-    if (!next.approval && !next.userInput) {
+    if (approvals.length === 0 && userInputs.length === 0) {
       sessionStorage.removeItem(promptBackupKey(sessionId));
       return;
     }
-    sessionStorage.setItem(promptBackupKey(sessionId), JSON.stringify(next));
+    sessionStorage.setItem(
+      promptBackupKey(sessionId),
+      JSON.stringify({ approvals, userInputs }),
+    );
   } catch {
     // ignore private-mode/storage failures
   }
@@ -64,6 +75,10 @@ function clearPromptBackup(sessionId) {
   }
 }
 
+// Every decision codex accepts, for a prompt that didn't name its own.
+// Kept identical in RemotexViewModel.kt and RemotexViewModel.swift.
+export const DEFAULT_APPROVAL_DECISIONS = ['accept', 'acceptForSession', 'decline', 'cancel'];
+
 function normalizeApprovalPrompt(data = {}) {
   if (!data.approval_id) return null;
   return {
@@ -73,7 +88,9 @@ function normalizeApprovalPrompt(data = {}) {
     command: data.command,
     cwd: data.cwd,
     permissions: data.permissions,
-    decisions: data.decisions || ['accept', 'decline'],
+    decisions: data.decisions || DEFAULT_APPROVAL_DECISIONS,
+    // Relay-assigned queue position; absent on live request frames.
+    order: Number.isFinite(data.order) ? data.order : undefined,
   };
 }
 
@@ -83,15 +100,80 @@ function normalizeUserInputPrompt(data = {}) {
     callId: data.call_id,
     turnId: data.turn_id,
     questions: Array.isArray(data.questions) ? data.questions : [],
+    order: Number.isFinite(data.order) ? data.order : undefined,
   };
 }
 
+// The relay's pending-prompts frame carries EVERY unanswered prompt, in
+// arrival order. Both lists stay lists — a second concurrent prompt must
+// never displace the first (contract F).
 function normalizePromptSnapshot(frame = {}) {
-  const approvalData = Array.isArray(frame.approvals) ? frame.approvals[0] : null;
-  const inputData = Array.isArray(frame.user_inputs) ? frame.user_inputs[0] : null;
+  const approvals = Array.isArray(frame.approvals) ? frame.approvals : [];
+  const userInputs = Array.isArray(frame.user_inputs) ? frame.user_inputs : [];
   return {
-    approval: normalizeApprovalPrompt(approvalData || {}),
-    userInput: normalizeUserInputPrompt(inputData || {}),
+    approvals: approvals.map((d) => normalizeApprovalPrompt(d || {})).filter(Boolean),
+    userInputs: userInputs.map((d) => normalizeUserInputPrompt(d || {})).filter(Boolean),
+  };
+}
+
+// --- pending-prompt queues (contract F) ---
+//
+// Prompts are keyed by approval_id / call_id so a replayed or duplicated
+// frame updates in place instead of double-inserting. The head is what
+// the UI renders; answering it pops the head and reveals the next.
+
+export function enqueuePrompt(queue, prompt, keyOf) {
+  if (!prompt) return queue;
+  const idx = queue.findIndex((p) => keyOf(p) === keyOf(prompt));
+  if (idx === -1) return [...queue, prompt];
+  // Same prompt again (reconnect replay): refresh the payload, keep the slot.
+  const next = queue.slice();
+  next[idx] = prompt;
+  return next;
+}
+
+export function dequeuePrompt(queue, key, keyOf) {
+  // A resolution frame without an id can only mean the head — that is the
+  // one every client is rendering.
+  if (!key) return queue.slice(1);
+  return queue.filter((p) => keyOf(p) !== key);
+}
+
+// Merge a relay snapshot into the local queue. The snapshot decides
+// MEMBERSHIP (a prompt another client answered is gone from it) and, when
+// it carries the relay's `order`, ORDER too — that is what puts a claim
+// the relay handed back after a failed forward into its original slot
+// rather than behind a prompt that arrived later (contract F). Without
+// `order` (the tab's own sessionStorage backup) the local order stands.
+export function reconcileQueue(queue, incoming, keyOf) {
+  const byKey = new Map(incoming.map((p) => [keyOf(p), p]));
+  const kept = [];
+  for (const existing of queue) {
+    const key = keyOf(existing);
+    if (!byKey.has(key)) continue;
+    kept.push(byKey.get(key));
+    byKey.delete(key);
+  }
+  const merged = [...kept, ...byKey.values()];
+  if (merged.every((p) => Number.isFinite(p?.order))) {
+    merged.sort((a, b) => a.order - b.order);
+  }
+  return merged;
+}
+
+const approvalKey = (p) => p?.approvalId;
+const userInputKey = (p) => p?.callId;
+
+// Heads are derived, never stored twice: every queue write goes through
+// here so `pendingApproval` / `pendingUserInput` can't drift from the
+// queue they front.
+function withPromptQueues(state, approvals, userInputs) {
+  return {
+    ...state,
+    pendingApprovals: approvals,
+    pendingUserInputs: userInputs,
+    pendingApproval: approvals[0] || null,
+    pendingUserInput: userInputs[0] || null,
   };
 }
 
@@ -168,9 +250,12 @@ function appendSlashAckEvent(dispatch, cmd, ok, data = {}) {
   });
 }
 
-const initialState = {
+export const initialState = {
   screen: SCREENS.Hosts,
   userToken: loadToken(),
+  // "remember on this device": ON keeps the token in localStorage, OFF
+  // parks it in sessionStorage so it dies with the tab.
+  rememberToken: loadRemember(),
   hosts: [],
   hostsLoading: false,
   selectedHostId: null,
@@ -188,7 +273,12 @@ const initialState = {
   effort: 'medium',
   permissions: 'default',
   pendingImages: [],
+  // Ordered queues of unanswered codex prompts (contract F). pendingApproval
+  // / pendingUserInput are the rendered heads, derived from these.
+  pendingApprovals: [],
+  pendingUserInputs: [],
   pendingApproval: null,
+  pendingUserInput: null,
   slashFeedback: null,
   planMode: false,
   goal: null,
@@ -211,9 +301,9 @@ const initialState = {
   //   lastUpdate: epoch_ms
   // }
   hostTelemetry: {},
-  // Model picker list is fetched from the relay's /api/models endpoint
-  // on first paint and replaces this fallback. See services/relay/models.py
-  // for the canonical source of truth.
+  // Model picker list: asked of the selected host first, then the relay's
+  // static /api/models list, then this embedded fallback. See
+  // services/relay/models.py for the canonical source of truth.
   modelOptions: FALLBACK_MODEL_OPTIONS,
 };
 
@@ -221,10 +311,17 @@ const TELEMETRY_WINDOW_MS = 30000; // real 30-second sliding window
 
 // --- reducer ---
 
-function reducer(state, action) {
+export function reducer(state, action) {
   switch (action.type) {
     case 'SET_TOKEN':
-      return { ...state, userToken: action.token };
+      return {
+        ...state,
+        userToken: action.token,
+        rememberToken:
+          action.remember === undefined ? state.rememberToken : Boolean(action.remember),
+      };
+    case 'SET_REMEMBER_TOKEN':
+      return { ...state, rememberToken: Boolean(action.remember) };
     case 'SET_SCREEN':
       return { ...state, screen: action.screen };
     case 'SET_ERROR':
@@ -277,12 +374,10 @@ function reducer(state, action) {
       };
 
     case 'SESSION_RESET':
-      return {
+      return withPromptQueues({
         ...state,
         events: [],
         session: null,
-        pendingApproval: null,
-        pendingUserInput: null,
         slashFeedback: null,
         pendingImages: [],
         pending: false,
@@ -295,7 +390,7 @@ function reducer(state, action) {
         tokensReasoning: 0,
         status: action.status ?? STATUS.Idle,
         goal: null,
-      };
+      }, [], []);
     case 'GOAL_SET':
       return { ...state, goal: action.goal || null };
     case 'GOAL_CLEAR':
@@ -370,28 +465,54 @@ function reducer(state, action) {
       return { ...state, pendingImages: [] };
 
     case 'APPROVAL_REQUEST':
-      return { ...state, pendingApproval: action.prompt };
+      return withPromptQueues(
+        state,
+        enqueuePrompt(state.pendingApprovals, action.prompt, approvalKey),
+        state.pendingUserInputs,
+      );
     case 'APPROVAL_CLEAR':
-      return { ...state, pendingApproval: null };
+      return withPromptQueues(
+        state,
+        dequeuePrompt(state.pendingApprovals, action.approvalId, approvalKey),
+        state.pendingUserInputs,
+      );
 
     case 'USER_INPUT_REQUEST':
-      return { ...state, pendingUserInput: action.prompt };
+      return withPromptQueues(
+        state,
+        state.pendingApprovals,
+        enqueuePrompt(state.pendingUserInputs, action.prompt, userInputKey),
+      );
     case 'USER_INPUT_CLEAR':
-      return { ...state, pendingUserInput: null };
+      return withPromptQueues(
+        state,
+        state.pendingApprovals,
+        dequeuePrompt(state.pendingUserInputs, action.callId, userInputKey),
+      );
+    // Relay snapshot: authoritative about WHICH prompts are still open,
+    // so it prunes prompts a peer client answered without discarding the
+    // local ordering of the ones that remain.
     case 'PENDING_PROMPTS':
-      return {
-        ...state,
-        pendingApproval: action.approval || null,
-        pendingUserInput: action.userInput || null,
-      };
+      return withPromptQueues(
+        state,
+        reconcileQueue(state.pendingApprovals, action.approvals || [], approvalKey),
+        reconcileQueue(state.pendingUserInputs, action.userInputs || [], userInputKey),
+      );
 
     case 'SLASH_FEEDBACK':
       return { ...state, slashFeedback: action.text };
     case 'SET_PLAN':
       return { ...state, planMode: action.on };
 
-    case 'MODEL_OPTIONS':
-      return { ...state, modelOptions: action.options };
+    case 'MODEL_OPTIONS': {
+      const options = action.options;
+      // A host that doesn't offer the currently-picked model (or effort)
+      // would reject the turn, so fall back to "codex picks" rather than
+      // sending something we know is invalid.
+      const model = options.some((m) => m.id === state.model) ? state.model : '';
+      const effort = effortsFor(model, options).includes(state.effort) ? state.effort : '';
+      return { ...state, modelOptions: options, model, effort };
+    }
 
     case 'TELEMETRY': {
       const hostId = action.hostId;
@@ -460,6 +581,11 @@ export function useRemotex() {
   const reconnectRef = useRef(null);
   const reconnectAttemptRef = useRef(0);
   const userClosedRef = useRef(false);
+  // The session whose prompt queues are safe to persist. Set when the
+  // relay says "attached" — before that the queues are empty because the
+  // session just reset, and persisting that emptiness would wipe the very
+  // backup we are about to restore.
+  const promptBackupSessionRef = useRef(null);
   // Latest sendTurn inputs (model/effort/perms/images) — read lazily so
   // sendTurn doesn't invalidate on every picker tweak.
   const latestInputsRef = useRef({});
@@ -468,8 +594,8 @@ export function useRemotex() {
     effort: state.effort,
     permissions: state.permissions,
     pendingImages: state.pendingImages,
-    pendingApproval: state.pendingApproval,
-    pendingUserInput: state.pendingUserInput,
+    pendingApprovals: state.pendingApprovals,
+    pendingUserInputs: state.pendingUserInputs,
     browsePath: state.browsePath,
     selectedHostId: state.selectedHostId,
     userToken: state.userToken,
@@ -478,13 +604,9 @@ export function useRemotex() {
   };
 
   useEffect(() => {
-    try {
-      localStorage.setItem(TOKEN_KEY, state.userToken);
-    } catch {
-      // ignore
-    }
+    saveToken(state.userToken, state.rememberToken);
     apiRef.current.setToken(state.userToken);
-  }, [state.userToken]);
+  }, [state.userToken, state.rememberToken]);
 
   // --- helpers ---
 
@@ -499,6 +621,7 @@ export function useRemotex() {
       socketRef.current.close({ endSession: true });
       socketRef.current = null;
     }
+    promptBackupSessionRef.current = null;
     dispatch({ type: 'SESSION_RESET', status: STATUS.Idle });
   }, []);
 
@@ -514,8 +637,21 @@ export function useRemotex() {
       socketRef.current = null;
       sock.close();
     }
+    promptBackupSessionRef.current = null;
     dispatch({ type: 'SESSION_RESET', status });
   }, []);
+
+  // One writer for the sessionStorage backup, driven by the queues
+  // themselves. Doing it here rather than at each dispatch site means two
+  // prompts arriving in the same batch can't clobber each other's write.
+  useEffect(() => {
+    const sid = state.session?.sessionId;
+    if (!sid || promptBackupSessionRef.current !== sid) return;
+    writePromptBackup(sid, {
+      approvals: state.pendingApprovals,
+      userInputs: state.pendingUserInputs,
+    });
+  }, [state.session?.sessionId, state.pendingApprovals, state.pendingUserInputs]);
 
   const handleFrame = useCallback((frame) => {
     if (frame.type === 'attached') {
@@ -532,50 +668,68 @@ export function useRemotex() {
           hostId: frame.host_id,
         },
       });
+      // Restoring the tab's own backup is a stop-gap: the relay's
+      // pending-prompts frame lands a moment later and prunes anything a
+      // peer answered while we were away.
+      promptBackupSessionRef.current = frame.session_id;
       const backup = readPromptBackup(frame.session_id);
-      if (backup?.approval || backup?.userInput) {
+      if (backup && (backup.approvals.length || backup.userInputs.length)) {
         dispatch({
           type: 'PENDING_PROMPTS',
-          approval: backup.approval || null,
-          userInput: backup.userInput || null,
+          approvals: backup.approvals,
+          userInputs: backup.userInputs,
         });
       }
       return;
     }
     if (frame.type === 'pending-prompts') {
-      const prompts = normalizePromptSnapshot(frame);
-      if (prompts.approval || prompts.userInput) {
-        writePromptBackup(frame.session_id, prompts);
-      } else {
-        clearPromptBackup(frame.session_id);
-      }
-      dispatch({ type: 'PENDING_PROMPTS', ...prompts });
+      dispatch({ type: 'PENDING_PROMPTS', ...normalizePromptSnapshot(frame) });
+      return;
+    }
+    if (frame.type === 'replay-gap') {
+      // Contract (C): the replay buffer evicted frames we asked for. Mark
+      // the hole so a truncated transcript never reads as a complete one.
+      const from = Number(frame.missed_from || 0);
+      const to = Number(frame.missed_to || 0);
+      dispatch({
+        type: 'APPEND_EVENT',
+        event: {
+          id: `replay-gap-${frame.session_id || ''}-${from}-${to}`,
+          role: 'gap',
+          missedFrom: from,
+          missedTo: to,
+          completed: true,
+        },
+      });
       return;
     }
     if (frame.type === 'approval-resolved') {
-      const pending = latestInputsRef.current.pendingApproval;
-      if (!frame.approval_id || pending?.approvalId === frame.approval_id) {
-        writePromptBackup(frame.session_id || latestInputsRef.current.sessionId, { approval: null });
-        dispatch({ type: 'APPROVAL_CLEAR' });
-      }
+      // Answered here or by a peer client — either way this prompt leaves
+      // the queue and the next one becomes the head.
+      dispatch({ type: 'APPROVAL_CLEAR', approvalId: frame.approval_id });
       return;
     }
     if (frame.type === 'user-input-resolved') {
-      const pending = latestInputsRef.current.pendingUserInput;
-      if (!frame.call_id || pending?.callId === frame.call_id) {
-        writePromptBackup(frame.session_id || latestInputsRef.current.sessionId, { userInput: null });
-        dispatch({ type: 'USER_INPUT_CLEAR' });
-      }
+      dispatch({ type: 'USER_INPUT_CLEAR', callId: frame.call_id });
       return;
     }
     if (frame.type === 'session-closed') {
-      clearPromptBackup(frame.session_id || latestInputsRef.current.sessionId);
+      // Codex is gone; nothing can answer these any more.
+      dispatch({ type: 'PENDING_PROMPTS', approvals: [], userInputs: [] });
       dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
       dispatch({ type: 'PENDING', pending: false });
       return;
     }
     if (frame.type === 'error') {
       dispatch({ type: 'SET_ERROR', error: frame.error || 'relay error' });
+      if (frame.fatal) {
+        // The relay will refuse this session id on every attempt (closed,
+        // gone, or not ours). Retrying is an endless reconnect loop, so
+        // stop: only a new session can make progress.
+        userClosedRef.current = true;
+        dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
+        dispatch({ type: 'PENDING', pending: false });
+      }
       return;
     }
     if (frame.type === 'host-telemetry') {
@@ -650,8 +804,9 @@ export function useRemotex() {
         return;
       }
       case 'turn-completed':
-        clearPromptBackup(latestInputsRef.current.sessionId);
-        dispatch({ type: 'PENDING_PROMPTS', approval: null, userInput: null });
+        // The relay drops every outstanding prompt for the session when a
+        // turn ends, so both queues empty together.
+        dispatch({ type: 'PENDING_PROMPTS', approvals: [], userInputs: [] });
         dispatch({ type: 'PENDING', pending: false });
         if (data.error) dispatch({ type: 'SET_ERROR', error: data.error });
         return;
@@ -659,7 +814,6 @@ export function useRemotex() {
         {
           const prompt = normalizeApprovalPrompt(data);
           if (!prompt) return;
-          writePromptBackup(latestInputsRef.current.sessionId, { approval: prompt });
           dispatch({ type: 'APPROVAL_REQUEST', prompt });
         }
         return;
@@ -667,7 +821,6 @@ export function useRemotex() {
         {
           const prompt = normalizeUserInputPrompt(data);
           if (!prompt) return;
-          writePromptBackup(latestInputsRef.current.sessionId, { userInput: prompt });
           dispatch({ type: 'USER_INPUT_REQUEST', prompt });
         }
         return;
@@ -875,25 +1028,37 @@ export function useRemotex() {
     refreshHosts();
   }, [refreshHosts]);
 
-  // Fetch the canonical model list from the relay once on mount. The
-  // fallback constant in config.js stays in place if the fetch fails so
-  // the picker still renders something the user can pick from.
+  // Model list, most-specific source first (contract B): what the selected
+  // host's codex actually offers → the relay's static list → the fallback
+  // constant already sitting in state. Re-runs when the host changes, so
+  // switching hosts re-asks that host.
   useEffect(() => {
     let cancelled = false;
-    apiRef.current
-      .listModels()
-      .then((models) => {
-        if (!cancelled && Array.isArray(models) && models.length > 0) {
-          dispatch({ type: 'MODEL_OPTIONS', options: models });
+    const hostId = state.selectedHostId;
+    const apply = (models) => {
+      if (cancelled || !Array.isArray(models) || models.length === 0) return false;
+      dispatch({ type: 'MODEL_OPTIONS', options: models });
+      return true;
+    };
+    (async () => {
+      if (hostId) {
+        try {
+          const r = await apiRef.current.listHostModels(hostId);
+          if (apply(r.models)) return;
+        } catch {
+          // Host offline / old relay without the route — fall through.
         }
-      })
-      .catch(() => {
-        // Silent: fallback list already in state.
-      });
+      }
+      try {
+        if (apply(await apiRef.current.listModels())) return;
+      } catch {
+        // Silent: the embedded fallback list is already in state.
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [state.selectedHostId]);
 
   // Poll telemetry for whichever host is currently selected / online.
   // Push updates arrive over the session WS when a session is open; the
@@ -1037,6 +1202,13 @@ export function useRemotex() {
     return apiRef.current.renameFile(hostId, from, to);
   }, []);
   const workspaceUploadFile = useCallback(async (hostId, dir, file) => {
+    // Contract (A): reject oversize locally with a readable message
+    // instead of shipping bytes the relay will refuse mid-stream.
+    if (file && file.size > MAX_FILE_BYTES) {
+      throw new Error(
+        `${file.name} is ${formatBytes(file.size)} — the upload limit is ${formatBytes(MAX_FILE_BYTES)}`,
+      );
+    }
     return apiRef.current.uploadFile(hostId, dir, file);
   }, []);
 
@@ -1128,42 +1300,63 @@ export function useRemotex() {
     socketRef.current?.sendInterrupt();
   }, []);
 
+  // Answers the head of the approval queue; popping it reveals the next.
+  // If the relay can't deliver the answer it re-pushes a pending-prompts
+  // snapshot, which puts the prompt back.
   const resolveApproval = useCallback((decision) => {
-    const pending = latestInputsRef.current.pendingApproval;
+    const pending = latestInputsRef.current.pendingApprovals[0];
     if (!pending) return;
     if (socketRef.current?.sendApproval(pending.approvalId, decision)) {
-      writePromptBackup(latestInputsRef.current.sessionId, { approval: null });
-      dispatch({ type: 'APPROVAL_CLEAR' });
+      dispatch({ type: 'APPROVAL_CLEAR', approvalId: pending.approvalId });
     }
   }, []);
 
   // answers: { <question_id>: [string, ...] }
   const resolveUserInput = useCallback((answers) => {
-    const pending = latestInputsRef.current.pendingUserInput;
+    const pending = latestInputsRef.current.pendingUserInputs[0];
     if (!pending) return;
     if (socketRef.current?.sendUserInput(pending.callId, answers || {})) {
-      writePromptBackup(latestInputsRef.current.sessionId, { userInput: null });
-      dispatch({ type: 'USER_INPUT_CLEAR' });
+      dispatch({ type: 'USER_INPUT_CLEAR', callId: pending.callId });
     }
   }, []);
   const cancelUserInput = useCallback(() => {
-    const pending = latestInputsRef.current.pendingUserInput;
+    const pending = latestInputsRef.current.pendingUserInputs[0];
     if (!pending) return;
     // Empty answers map → daemon returns { answers: {} } and codex
     // treats every question as "skipped".
     if (socketRef.current?.sendUserInput(pending.callId, {})) {
-      writePromptBackup(latestInputsRef.current.sessionId, { userInput: null });
-      dispatch({ type: 'USER_INPUT_CLEAR' });
+      dispatch({ type: 'USER_INPUT_CLEAR', callId: pending.callId });
     }
   }, []);
 
   const attachImage = useCallback(async (file) => {
     try {
+      // Contract (A): one ceiling, checked before we spend memory on the
+      // base64 copy and before the relay would reject (or a too-large WS
+      // frame would kill the socket). Images ride inside a single
+      // turn-start frame, so the whole batch has to fit.
+      const already = latestInputsRef.current.pendingImages.reduce(
+        (n, img) => n + (img.bytes || 0),
+        0,
+      );
+      if (already + file.size > MAX_FILE_BYTES) {
+        dispatch({
+          type: 'SET_ERROR',
+          error: `image: ${formatBytes(file.size)} exceeds the ${formatBytes(MAX_FILE_BYTES)} attachment limit`,
+        });
+        return;
+      }
       const base64 = await readAsBase64(file);
       const dataUrl = `data:${file.type};base64,${base64}`;
       dispatch({
         type: 'ATTACH_IMAGE',
-        image: { dataUrl, mime: file.type, base64, label: file.name.slice(-32) },
+        image: {
+          dataUrl,
+          mime: file.type,
+          base64,
+          bytes: file.size,
+          label: file.name.slice(-32),
+        },
       });
     } catch (t) {
       dispatch({ type: 'SET_ERROR', error: `image: ${t.message || 'read failed'}` });
@@ -1186,6 +1379,7 @@ export function useRemotex() {
       socketRef.current.close();
       socketRef.current = null;
     }
+    promptBackupSessionRef.current = null;
     dispatch({ type: 'SESSION_RESET', status: STATUS.Opening });
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
     dispatch({
@@ -1270,7 +1464,8 @@ export function useRemotex() {
   return useMemo(
     () => ({
       state,
-      setToken: (t) => dispatch({ type: 'SET_TOKEN', token: t }),
+      setToken: (t, remember) => dispatch({ type: 'SET_TOKEN', token: t, remember }),
+      setRememberToken: (remember) => dispatch({ type: 'SET_REMEMBER_TOKEN', remember }),
       setModel: (m) => dispatch({ type: 'SET_MODEL', model: m }),
       setEffort: (e) => dispatch({ type: 'SET_EFFORT', effort: e }),
       setPermissions: (p) => dispatch({ type: 'SET_PERMS', permissions: p }),

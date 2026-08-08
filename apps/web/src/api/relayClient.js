@@ -43,6 +43,15 @@ export class RelayClient {
       .then((r) => r.models);
   }
 
+  // GET /api/hosts/{host_id}/models: what THIS host's codex offers.
+  // Authenticated (it touches a host you must own) and returns the same
+  // {id, label, hint, efforts} shape plus a `source` of "host" or
+  // "fallback" — the relay substitutes its static list when the host
+  // can't answer.
+  listHostModels(hostId) {
+    return this.#request(`/api/hosts/${encodeURIComponent(hostId)}/models`);
+  }
+
   listThreads(hostId, limit = 25) {
     return this.#request(
       `/api/hosts/${encodeURIComponent(hostId)}/threads?limit=${limit}`,

@@ -29,7 +29,17 @@ log = logging.getLogger("relay.hub")
 # the socket is closed with code 1013 (try-again-later) and the
 # offending side is expected to reconnect.
 _SEND_TIMEOUT_SECONDS = 5.0
-_SESSION_REPLAY_LIMIT = int(os.getenv("RELAY_SESSION_REPLAY_LIMIT", "1000"))
+# At least one frame: a maxlen-0 deque would make every eviction check
+# index an empty buffer, and every session frame would raise.
+_SESSION_REPLAY_LIMIT = max(1, int(os.getenv("RELAY_SESSION_REPLAY_LIMIT", "1000")))
+
+# Outcome of one bounded send. "unknown" is the timeout case: aiohttp
+# writes the frame to the transport *before* awaiting the drain, so a
+# timeout does not mean the peer never got it — callers that would
+# otherwise undo their side of the exchange must not.
+SEND_OK = "sent"
+SEND_FAILED = "unsent"
+SEND_UNKNOWN = "unknown"
 
 
 @dataclass
@@ -40,24 +50,51 @@ class ClientConnection:
     connected_at: float
 
 
-async def _bounded_send(ws: web.WebSocketResponse, frame: dict, *, role: str) -> bool:
-    """Send a JSON frame with a timeout. On timeout/closed, close the
-    socket and return False so the caller can drop further sends."""
+@dataclass
+class PendingPrompt:
+    """An unanswered approval / user-input request.
+
+    ``order`` is a global monotonic counter so clients can render the
+    prompts as a queue (oldest first) — and so a claim that has to be
+    handed back after a failed forward returns to its original position
+    instead of jumping to the tail.
+
+    ``gen`` is the session's prompt generation at the time the prompt was
+    recorded. A restore whose generation has moved on (the turn completed,
+    the session closed) is dropped rather than resurrecting a prompt codex
+    has already discarded.
+    """
+    prompt_id: str
+    session_id: str
+    data: dict
+    order: int
+    gen: int = 0
+
+
+async def _send_status(ws: web.WebSocketResponse, frame: dict, *, role: str) -> str:
+    """Send a JSON frame with a timeout, reporting what we know about
+    delivery. Closed/raising sockets are ``SEND_FAILED`` (nothing left);
+    a timeout is ``SEND_UNKNOWN`` — the frame is already on the transport
+    and may still arrive, so it must not be treated as undone."""
     if ws.closed:
-        return False
+        return SEND_FAILED
     try:
         await asyncio.wait_for(ws.send_json(frame), timeout=_SEND_TIMEOUT_SECONDS)
-        return True
+        return SEND_OK
     except asyncio.TimeoutError:
         log.warning("ws send timed out", extra={"role": role})
         try:
             await ws.close(code=1013, message=b"slow consumer")
         except Exception:  # noqa: BLE001
             pass
-        return False
+        return SEND_UNKNOWN
     except Exception as exc:  # noqa: BLE001
         log.debug("ws send failed", extra={"role": role, "error": str(exc)})
-        return False
+        return SEND_FAILED
+
+
+async def _bounded_send(ws: web.WebSocketResponse, frame: dict, *, role: str) -> bool:
+    return await _send_status(ws, frame, role=role) == SEND_OK
 
 
 class Hub:
@@ -71,9 +108,14 @@ class Hub:
         self.client_close_tasks: dict[str, asyncio.Task] = {}
         self.session_seq: dict[str, int] = {}
         self.session_replay: dict[str, deque[dict]] = {}
+        # session_id → highest seq that fell out of the replay deque, so a
+        # reconnecting client can be told what it will never receive.
+        self.session_replay_evicted: dict[str, int] = {}
         self._lock = asyncio.Lock()
-        # request_id → Future awaiting the daemon's response frame
-        self.pending_admin: dict[str, asyncio.Future] = {}
+        # (host_id, request_id) → Future awaiting the daemon's response
+        # frame. Keyed by host so a daemon can only answer its own host's
+        # in-flight REST requests.
+        self.pending_admin: dict[tuple[str, str], asyncio.Future] = {}
         # Latest telemetry snapshot per host (with relay-side receive ts)
         self.host_telemetry: dict[str, dict] = {}
         # Short rolling history (~30s) per host so a freshly-connected client
@@ -94,15 +136,20 @@ class Hub:
         # session_id → (host_id, thread_id) reverse so forget_session can
         # clean up the index efficiently.
         self.session_thread: dict[str, tuple[str, str]] = {}
-        # approval_id → session_id while an approval is still answerable.
-        # First response wins; later responses are ignored by ws_client.
-        self.pending_approvals: dict[str, str] = {}
-        # call_id → session_id while a Codex request_user_input prompt is
-        # still answerable. Mirrors pending_approvals so replayed/stale
-        # plan-mode dialogs cannot be answered twice by different clients.
-        self.pending_user_inputs: dict[str, str] = {}
-        self.pending_approval_events: dict[str, dict] = {}
-        self.pending_user_input_events: dict[str, dict] = {}
+        # (session_id, approval_id) → the unanswered prompt. First response
+        # wins; later responses are ignored by ws_client. Keyed by session
+        # for the same reason pending_admin is keyed by host: the id comes
+        # off a daemon frame, so a flat namespace would let one user's
+        # daemon clobber (and permanently wedge) another user's prompt.
+        self.pending_approvals: dict[tuple[str, str], PendingPrompt] = {}
+        # (session_id, call_id) → prompt for Codex request_user_input.
+        # Mirrors pending_approvals so replayed/stale plan-mode dialogs
+        # cannot be answered twice by different clients.
+        self.pending_user_inputs: dict[tuple[str, str], PendingPrompt] = {}
+        # session_id → prompt generation, bumped whenever a session's
+        # prompts are invalidated wholesale (turn completed, session gone).
+        self.session_prompt_gen: dict[str, int] = {}
+        self._prompt_counter = 0
 
     async def attach_daemon(self, host_id: str, ws: web.WebSocketResponse) -> web.WebSocketResponse | None:
         async with self._lock:
@@ -189,24 +236,8 @@ class Hub:
                 return conn.ws
         return None
 
-    def client_count(self, session_id: str) -> int:
-        return sum(
-            1
-            for conn in self.session_clients.get(session_id, {}).values()
-            if not conn.ws.closed
-        )
-
     def host_for_session(self, session_id: str) -> str | None:
         return self.session_host.get(session_id)
-
-    def clients_for_host(self, host_id: str) -> list[web.WebSocketResponse]:
-        """All client sockets currently attached to a session on this host."""
-        return [
-            conn.ws
-            for sid, clients in self.session_clients.items()
-            for conn in clients.values()
-            if self.session_host.get(sid) == host_id and not conn.ws.closed
-        ]
 
     def record_telemetry(self, host_id: str, received_at: float, data: dict) -> None:
         # maxlen 20 ~= 60s at the daemon's 3s cadence; reads window to 30s.
@@ -300,6 +331,10 @@ class Hub:
                 session_id,
                 deque(maxlen=_SESSION_REPLAY_LIMIT),
             )
+            if replay and replay.maxlen is not None and len(replay) == replay.maxlen:
+                # This append evicts the oldest frame; remember how far the
+                # buffer has been truncated so replay_gap() can report it.
+                self.session_replay_evicted[session_id] = int(replay[0].get("seq") or 0)
             replay.append(copy.deepcopy(out))
             return out
 
@@ -310,6 +345,32 @@ class Hub:
                 for frame in self.session_replay.get(session_id, ())
                 if int(frame.get("seq") or 0) > last_seq
             ]
+
+    async def current_seq(self, session_id: str) -> int:
+        """Highest seq this Hub has stamped on the session, 0 if none.
+
+        ``seq`` is minted per Hub instance, so a client that stored a
+        cursor before a relay restart can present one far ahead of the new
+        counter. Callers use this to detect that and reset to 0 instead of
+        silently replaying nothing.
+        """
+        async with self._lock:
+            return self.session_seq.get(session_id, 0)
+
+    async def replay_gap(self, session_id: str, last_seq: int) -> tuple[int, int] | None:
+        """Frames the client asked for that the buffer no longer holds.
+
+        Returns ``(missed_from, missed_to)`` inclusive, or None when the
+        replay is complete. ``last_seq <= 0`` still reports a gap when the
+        buffer has evicted anything: a client asking for everything from
+        the start gets the tail, and a truncated transcript must never
+        render as a complete one (contract C).
+        """
+        async with self._lock:
+            evicted = self.session_replay_evicted.get(session_id, 0)
+        if evicted <= max(last_seq, 0):
+            return None
+        return max(last_seq, 0) + 1, evicted
 
     async def broadcast_to_session(
         self,
@@ -334,11 +395,58 @@ class Hub:
         )
         return any(results)
 
-    async def forward_to_daemon(self, host_id: str, frame: dict) -> bool:
+    async def broadcast_to_host_clients(self, host_id: str, frame: dict) -> bool:
+        """Send a host-scoped frame (telemetry) to every client attached to
+        any session on that host. Same bounded-send policy as
+        ``broadcast_to_session``: a slow consumer gets closed, it never
+        stalls the daemon's frame loop. Not sequenced — host frames are
+        top-level, not session events."""
+        async with self._lock:
+            targets: dict[int, web.WebSocketResponse] = {}
+            for sid, clients in self.session_clients.items():
+                if self.session_host.get(sid) != host_id:
+                    continue
+                for conn in clients.values():
+                    if not conn.ws.closed:
+                        targets[id(conn.ws)] = conn.ws
+        if not targets:
+            return False
+        results = await asyncio.gather(
+            *(_bounded_send(ws, frame, role="client") for ws in targets.values()),
+            return_exceptions=False,
+        )
+        return any(results)
+
+    async def forward_to_daemon_status(self, host_id: str, frame: dict) -> str:
+        """Forward to a host's daemon, reporting delivery as one of
+        ``SEND_OK`` / ``SEND_FAILED`` / ``SEND_UNKNOWN``. Callers that would
+        undo state on failure need the distinction — only ``SEND_FAILED``
+        means the frame provably never left this process."""
         ws = self.daemons.get(host_id)
         if ws is None or ws.closed:
+            return SEND_FAILED
+        return await _send_status(ws, frame, role="daemon")
+
+    async def forward_to_daemon(self, host_id: str, frame: dict) -> bool:
+        return await self.forward_to_daemon_status(host_id, frame) == SEND_OK
+
+    def register_admin_request(self, host_id: str, request_id: str) -> asyncio.Future:
+        """Register a REST→daemon request and return the future its response
+        will resolve. Keyed by (host, request_id) so only the daemon that
+        was asked can answer."""
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self.pending_admin[(host_id, request_id)] = fut
+        return fut
+
+    def discard_admin_request(self, host_id: str, request_id: str) -> None:
+        self.pending_admin.pop((host_id, request_id), None)
+
+    def resolve_admin_request(self, host_id: str, request_id: str, frame: dict) -> bool:
+        fut = self.pending_admin.get((host_id, request_id))
+        if fut is None or fut.done():
             return False
-        return await _bounded_send(ws, frame, role="daemon")
+        fut.set_result(frame)
+        return True
 
     async def forget_session(self, session_id: str) -> None:
         current = asyncio.current_task()
@@ -349,16 +457,11 @@ class Hub:
             close_task = self.client_close_tasks.pop(session_id, None)
             self.session_seq.pop(session_id, None)
             self.session_replay.pop(session_id, None)
+            self.session_replay_evicted.pop(session_id, None)
             self.turn_in_flight.pop(session_id, None)
             self.session_activity.pop(session_id, None)
-            for approval_id, sid in list(self.pending_approvals.items()):
-                if sid == session_id:
-                    self.pending_approvals.pop(approval_id, None)
-                    self.pending_approval_events.pop(approval_id, None)
-            for call_id, sid in list(self.pending_user_inputs.items()):
-                if sid == session_id:
-                    self.pending_user_inputs.pop(call_id, None)
-                    self.pending_user_input_events.pop(call_id, None)
+            self._drop_session_prompts(session_id)
+            self.session_prompt_gen.pop(session_id, None)
             key = self.session_thread.pop(session_id, None)
             if key is not None:
                 # Only drop the index entry if it still points at us;
@@ -382,16 +485,25 @@ class Hub:
         self.turn_in_flight[session_id] = False
         self.bump_activity(session_id)
 
+    def _drop_session_prompts(self, session_id: str) -> None:
+        """Forget every prompt for a session. Caller holds the lock."""
+        for key in [k for k in self.pending_approvals if k[0] == session_id]:
+            self.pending_approvals.pop(key, None)
+        for key in [k for k in self.pending_user_inputs if k[0] == session_id]:
+            self.pending_user_inputs.pop(key, None)
+
     async def clear_session_prompts(self, session_id: str) -> None:
+        """Invalidate a session's prompts (the turn ended, or codex is gone).
+
+        Bumping the generation is what stops an in-flight ``restore_*`` from
+        resurrecting one afterwards: codex has already discarded the
+        request, so a restored prompt could never be answered.
+        """
         async with self._lock:
-            for approval_id, sid in list(self.pending_approvals.items()):
-                if sid == session_id:
-                    self.pending_approvals.pop(approval_id, None)
-                    self.pending_approval_events.pop(approval_id, None)
-            for call_id, sid in list(self.pending_user_inputs.items()):
-                if sid == session_id:
-                    self.pending_user_inputs.pop(call_id, None)
-                    self.pending_user_input_events.pop(call_id, None)
+            self._drop_session_prompts(session_id)
+            self.session_prompt_gen[session_id] = (
+                self.session_prompt_gen.get(session_id, 0) + 1
+            )
 
     async def try_begin_turn(self, session_id: str) -> bool:
         """Reserve the single active turn slot for a session."""
@@ -402,6 +514,40 @@ class Hub:
             self.session_activity[session_id] = time.monotonic()
             return True
 
+    def _note_prompt(
+        self,
+        pending: dict[tuple[str, str], PendingPrompt],
+        session_id: str,
+        prompt_id: str,
+        data: dict | None,
+    ) -> None:
+        """Record an unanswered prompt. Caller holds the lock."""
+        self._prompt_counter += 1
+        pending[(session_id, prompt_id)] = PendingPrompt(
+            prompt_id=prompt_id,
+            session_id=session_id,
+            data=copy.deepcopy(data or {}),
+            order=self._prompt_counter,
+            gen=self.session_prompt_gen.setdefault(session_id, 0),
+        )
+
+    def _restore_prompt(
+        self,
+        pending: dict[tuple[str, str], PendingPrompt],
+        prompt: PendingPrompt,
+    ) -> None:
+        """Put a claim back. Caller holds the lock.
+
+        Dropped when the session's prompts have been invalidated since the
+        claim was taken — the generation moved (turn completed) or the
+        session was forgotten entirely (no generation at all). Re-inserting
+        then would leave a prompt nobody can ever answer, and for a dead
+        session it would leak past every cleanup path.
+        """
+        if self.session_prompt_gen.get(prompt.session_id) != prompt.gen:
+            return
+        pending.setdefault((prompt.session_id, prompt.prompt_id), prompt)
+
     async def note_approval_request(
         self,
         session_id: str,
@@ -409,17 +555,20 @@ class Hub:
         data: dict | None = None,
     ) -> None:
         async with self._lock:
-            self.pending_approvals[approval_id] = session_id
-            self.pending_approval_events[approval_id] = copy.deepcopy(data or {})
+            self._note_prompt(self.pending_approvals, session_id, approval_id, data)
 
-    async def resolve_approval(self, session_id: str, approval_id: str) -> bool:
-        """Claim an approval. Returns False if another client got there first."""
+    async def resolve_approval(self, session_id: str, approval_id: str) -> PendingPrompt | None:
+        """Claim an approval. Returns the stored prompt, or None if another
+        client got there first. Hand the claim back with
+        ``restore_approval`` if the forward to the daemon fails."""
         async with self._lock:
-            if self.pending_approvals.get(approval_id) != session_id:
-                return False
-            self.pending_approvals.pop(approval_id, None)
-            self.pending_approval_events.pop(approval_id, None)
-            return True
+            return self.pending_approvals.pop((session_id, approval_id), None)
+
+    async def restore_approval(self, prompt: PendingPrompt) -> None:
+        """Un-claim an approval whose response never reached the daemon, so
+        any client can answer it again. Keeps its original queue position."""
+        async with self._lock:
+            self._restore_prompt(self.pending_approvals, prompt)
 
     async def note_user_input_request(
         self,
@@ -428,17 +577,18 @@ class Hub:
         data: dict | None = None,
     ) -> None:
         async with self._lock:
-            self.pending_user_inputs[call_id] = session_id
-            self.pending_user_input_events[call_id] = copy.deepcopy(data or {})
+            self._note_prompt(self.pending_user_inputs, session_id, call_id, data)
 
-    async def resolve_user_input(self, session_id: str, call_id: str) -> bool:
+    async def resolve_user_input(self, session_id: str, call_id: str) -> PendingPrompt | None:
         """Claim a request_user_input prompt. First response wins."""
         async with self._lock:
-            if self.pending_user_inputs.get(call_id) != session_id:
-                return False
-            self.pending_user_inputs.pop(call_id, None)
-            self.pending_user_input_events.pop(call_id, None)
-            return True
+            return self.pending_user_inputs.pop((session_id, call_id), None)
+
+    async def restore_user_input(self, prompt: PendingPrompt) -> None:
+        """Un-claim a user-input prompt whose response never reached the
+        daemon. Keeps its original queue position."""
+        async with self._lock:
+            self._restore_prompt(self.pending_user_inputs, prompt)
 
     async def pending_prompt_snapshot(self, session_id: str) -> dict:
         """Return current unresolved prompt requests for an attaching client.
@@ -446,23 +596,33 @@ class Hub:
         Replay is sequence-based, so a browser refresh after seeing a prompt
         would otherwise skip the old request while losing its React state.
         This synthetic frame is not recorded and does not advance seq.
+
+        Both lists are queues, oldest first: clients render the head and a
+        second concurrent prompt must never hide the first.
         """
         async with self._lock:
+            pending_approvals = [
+                p for key, p in self.pending_approvals.items() if key[0] == session_id
+            ]
+            pending_inputs = [
+                p for key, p in self.pending_user_inputs.items() if key[0] == session_id
+            ]
             approvals: list[dict] = []
             user_inputs: list[dict] = []
-            for approval_id, sid in self.pending_approvals.items():
-                if sid != session_id:
-                    continue
-                data = copy.deepcopy(self.pending_approval_events.get(approval_id) or {})
-                data.setdefault("approval_id", approval_id)
+            for prompt in sorted(pending_approvals, key=lambda p: p.order):
+                data = copy.deepcopy(prompt.data)
+                data.setdefault("approval_id", prompt.prompt_id)
                 data["replayed"] = True
+                # The relay's arrival order travels with the queue: a claim
+                # handed back after a failed forward has to land back in its
+                # old slot on every client, not at the tail (contract F).
+                data["order"] = prompt.order
                 approvals.append(data)
-            for call_id, sid in self.pending_user_inputs.items():
-                if sid != session_id:
-                    continue
-                data = copy.deepcopy(self.pending_user_input_events.get(call_id) or {})
-                data.setdefault("call_id", call_id)
+            for prompt in sorted(pending_inputs, key=lambda p: p.order):
+                data = copy.deepcopy(prompt.data)
+                data.setdefault("call_id", prompt.prompt_id)
                 data["replayed"] = True
+                data["order"] = prompt.order
                 user_inputs.append(data)
             return {
                 "type": "pending-prompts",
