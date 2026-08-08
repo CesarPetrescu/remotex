@@ -43,10 +43,19 @@ container).
 ## Session reconnect grace
 
 `RELAY_CLIENT_RECONNECT_GRACE_SECONDS` controls how long the relay keeps
-a daemon session alive after a web or mobile socket disappears. The
-default is 75 seconds, which covers phone sleep, Wi-Fi/LTE switches, and
-browser reloads without leaving abandoned Codex processes around for
-long.
+an **idle** daemon session alive after a web or mobile socket
+disappears. The default is 75 seconds, which covers phone sleep,
+Wi-Fi/LTE switches, and browser reloads without leaving abandoned Codex
+processes around for long.
+
+A session with a turn still in flight is exempt: it stays alive as long
+as the daemon keeps emitting events, and is only reaped after
+`RELAY_SESSION_STALL_CEILING_SECONDS` (default 7200) of complete
+silence. So a long agent run survives you closing the tab.
+
+`RELAY_SESSION_REPLAY_LIMIT` (default 1000) is how many events per
+session the relay buffers for reconnecting clients to catch up on. It's
+in-memory — a relay restart drops it.
 
 ## Quickstart - with TLS (Caddy + Let's Encrypt)
 
@@ -135,8 +144,13 @@ Docker Compose gets you a self-hosted demo, not a hardened service.
 Open items tracked against the roadmap:
 
 - Keycloak / OIDC auth (currently demo bearer tokens seeded on first run).
-- Audit log + metrics.
-- Bounded queues / backpressure on session fan-out.
+- Audit retention + metrics. Audit lines are emitted on `logger=audit`
+  in the relay's JSON logs, but nothing collects them.
 - Real bridge-key lifecycle: revoke, expire, audit.
+- Single-replica only — the routing hub is process-local, so you can't
+  scale the relay horizontally without sticky routing or a shared bus.
 
-Item ordering lives in the root `README.md`.
+Backpressure is handled: a client that can't accept a frame within 5s is
+closed with code 1013 rather than stalling the relay.
+
+Full list and ordering: `services/docs/production_plan.md`.

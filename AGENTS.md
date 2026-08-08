@@ -100,9 +100,15 @@ It **is**:
 - `adapters/admin.py` — long-lived codex used for cheap read-only
   ops (thread/list, fs/read).
 - `adapters/items.py` — translates codex item types to our wire
-  shape.
+  shape (`commandExecution` → `tool_call`, etc).
 - `adapters/permissions.py` — maps UI permission chip → codex
   `sandboxPolicy` + `approvalPolicy`.
+- `adapters/rollout.py` — reads `~/.codex/sessions` rollout files so a
+  resumed thread renders before codex finishes rehydrating.
+- `adapters/reasoning.py` — summarizes reasoning content blocks.
+- `adapters/codex_config.py` — flips the codex `goals` feature on in
+  `~/.codex/config.toml`.
+- `telemetry.py` — CPU/memory/GPU/network sampling, pushed every 3s.
 
 **`apps/web/`** (Vite + React, bundled into relay docker image)
 - `src/hooks/useRemotex.js` — single big reducer + WebSocket
@@ -113,10 +119,16 @@ It **is**:
 - `src/components/Composer.jsx` — chip row + textarea + send/stop.
 - `src/components/Pickers.jsx` — model/effort/permissions
   chip components.
-- `src/components/{Approval,UserInput,FolderPicker,Toast}.jsx` —
-  modals; **all rendered through `createPortal(document.body)`**
-  because `.dashboard-layout > * { position: relative }` would
-  otherwise kick their `position: fixed` into a stray grid cell.
+- `src/components/PendingPromptsPanel.jsx` — approval + user-input
+  dialogs.
+- `src/components/JumpPicker.jsx` — the folder picker (search /
+  `/path` teleport / tree browse).
+- **Anything that overlays the page must be rendered through
+  `createPortal(node, document.body)`** — today that's `Toast.jsx`,
+  `JumpPicker.jsx`, and the `Pickers.jsx` dropdowns. The rule
+  `.dashboard-layout > * { position: relative }` in `styles.css`
+  would otherwise kick a `position: fixed` overlay into a stray grid
+  cell.
 
 **`android/`** (Kotlin + Jetpack Compose)
 - `app/src/main/java/app/remotex/ui/RemotexViewModel.kt` —
@@ -254,32 +266,57 @@ Skip it for:
   "type": "session-event",
   "session_id": "sess_…",
   "event": {
-    "kind": "session-started" | "turn-started" | "item-started" |
-            "item-delta" | "item-completed" | "turn-completed" |
+    "kind": "session-started" | "turn-started" | "turn-completed" |
+            "item-started" | "item-delta" | "item-completed" |
             "approval-request" | "user-input-request" |
-            "host-telemetry" | "session-closed",
+            "thread-status" | "token-usage" |
+            "goal-snapshot" | "goal-updated" | "goal-cleared" |
+            "slash-ack" | "collab-modes" |
+            "history-begin" | "history-end",
     "data": { … kind-specific … },
     "ts": 1234567890.123
   }
 }
 ```
 
+`session-closed` and `host-telemetry` are **top-level frame types**, not
+session-event kinds — don't add them to the `kind` switch.
+
+The relay stamps a per-session `seq` on every frame it forwards, and
+keeps the last 1000 in a replay buffer for reconnecting clients.
+
 ### Relay → daemon (session control)
 
+The session-open frame is built in `hub.ensure_session_open_frame()` and
+carries **only** these keys — model/effort/permissions ride on each
+`turn-start` instead, not on session-open:
+
 ```json
-{ "type": "session-open",  "session_id": "...", "kind": "codex", "cwd": "...", "thread_id": "...", "task": "...", "model": "...", "effort": "...", "permissions": "...", "approval_policy": "..." }
+{ "type": "session-open",  "session_id": "...", "resume_thread_id": "...", "cwd": "...", "kind": "codex" }
 { "type": "session-close", "session_id": "..." }
 ```
+
+`resume_thread_id` and `cwd` are only present when the client passed
+them to `POST /api/sessions`. Note the key is `resume_thread_id`, not
+`thread_id`.
 
 ### Client → relay (input)
 
 ```json
-{ "type": "turn-start", "input": "user prompt", "model": "...", "effort": "...", "permissions": "...", "images": [{"data": "base64", "mime": "image/png"}] }
+{ "type": "turn-start", "input": "user prompt", "model": "...", "effort": "...", "permissions": "...", "approvalPolicy": "...", "collaborationMode": "plan", "images": [{"data": "base64", "mime": "image/png"}] }
 { "type": "turn-interrupt" }
 { "type": "approval-response", "approval_id": "appr_…", "decision": "accept"|"acceptForSession"|"decline"|"cancel" }
-{ "type": "user-input-response", "call_id": "ui_…", "answers": { ... } }
-{ "type": "slash-command", "command": "plan"|"default"|"cd"|"pwd"|"compact", "args": "..." }
+{ "type": "user-input-response", "call_id": "ui_…", "answers": { "<qid>": {"answers": ["..."]} } }
+{ "type": "slash-command", "command": "plan"|"default"|"cd"|"pwd"|"compact"|"goal"|"collab", "args": "..." }
+{ "type": "goal-set", "objective": "...", "status": "active", "token_budget": 500000 }
+{ "type": "goal-get" }
+{ "type": "goal-clear" }
+{ "type": "session-close" }
+{ "type": "ping", "ts": 123 }
 ```
+
+Web routes `/goal` through `slash-command`; Android sends the `goal-*`
+frames directly. The daemon handles both.
 
 ### Daemon ↔ codex (stdio JSON-RPC)
 
@@ -318,6 +355,17 @@ For exact field shapes, see the canonical reference:
   docker daemon.
 - `kind` is on the wire in `session-started.data.kind`. Both
   clients consume it; don't remove it without updating both.
+- The relay **will not start without `RELAY_DATABASE_URL`** —
+  `Store.start()` raises. Compose supplies it; running
+  `python3 relay/app.py` from source does not.
+- The relay does read `event.kind` and a few ids off session events
+  (turn state, approvals, thread indexing) even though it never
+  interprets `event.data`. Adding a new kind that affects turn
+  lifecycle means touching `handlers/ws_daemon.py` too.
+- `apps/web` is its own npm project. There is no root `package.json`,
+  so `npm ci` at the repo root fails.
+- CI builds the Android APK but never runs `./gradlew test`. Run the
+  JVM unit tests locally before claiming they pass.
 
 ---
 

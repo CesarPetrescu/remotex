@@ -88,11 +88,14 @@ so any web change requires a relay image rebuild.
 
 ## Relay URL (matters for Android builds)
 
-The relay binds inside docker on `:8080`; the host port is set in
-`deploy/.env` (currently `RELAY_HOST_PORT=18080`,
-`RELAY_HOST_BIND=0.0.0.0`). For LAN access from a phone:
-`http://<LAN-IP>:18080`. The Android build script handles this
-auto-magically — see `android/README.md`.
+The relay binds inside docker on `:8080`; the host port comes from
+`RELAY_HOST_PORT` / `RELAY_HOST_BIND` in `deploy/.env` (gitignored —
+this box uses `18080` on `0.0.0.0`; read the file, don't assume). For
+LAN access from a phone: `http://<LAN-IP>:<RELAY_HOST_PORT>`. The
+Android build script reads it for you — see `android/README.md`.
+
+The relay also needs `RELAY_DATABASE_URL`; it raises on startup without
+one. Compose supplies it, running `relay/app.py` from source does not.
 
 ## Adapter / runtime test conventions
 

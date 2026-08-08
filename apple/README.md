@@ -30,13 +30,16 @@ The default relay URL is `http://127.0.0.1:8080`, which works for the iOS
 simulator when the relay is running on the same Mac. For a real iPhone,
 use a LAN or public relay URL from inside the app.
 
-For a real iPhone on your LAN, start the relay on a reachable interface:
+For a real iPhone on your LAN, start the relay on a reachable interface.
+The relay needs a Postgres DSN — it refuses to start without one:
 
 ```bash
 cd services
+export RELAY_DATABASE_URL=postgresql://remotex:remotex-dev@127.0.0.1:5432/remotex
 python3 relay/app.py --host 0.0.0.0 --port 8080
 ```
 
+See `services/README.md` for a one-liner that brings up the database.
 Then enter `http://<your-mac-lan-ip>:8080` in the app.
 
 The default user token is the prototype token:
@@ -66,6 +69,13 @@ Still to add for Android parity:
 - Turn interrupt
 - Reconnect backoff
 - Push notifications for approval requests
+
+## CI
+
+The `ios` job in `.github/workflows/ci.yml` builds against an iPhone
+simulator on `macos-15`. Because those minutes are expensive it's gated
+by a paths filter — it only runs when `apple/**` or the workflow file
+itself changed — and caches DerivedData between runs.
 
 ## Layout
 
