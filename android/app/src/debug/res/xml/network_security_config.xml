@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only override of src/main/res/xml/network_security_config.xml.
+
+  The documented dev workflow is a plaintext relay on the local network:
+  `10.0.2.2:8080` from the emulator, `http://<LAN-IP>:<RELAY_HOST_PORT>`
+  from a real phone (android/build.sh picks the address at build time, so
+  it differs per machine and per network).
+
+  Android's network security config matches literal hostnames/IPs only — it
+  has no CIDR syntax — so "the private LAN ranges" cannot be enumerated as
+  domain-config entries. A blanket base-config is therefore the only thing
+  that lets an arbitrary RFC1918 relay address work; per-domain entries
+  would be dead weight next to it (10.0.2.2 for the emulator, 10.0.3.2 for
+  Genymotion, localhost/127.0.0.1 are all already covered by it).
+
+  This applies to the debug build type ONLY; release builds inherit
+  src/main's config and refuse cleartext entirely.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

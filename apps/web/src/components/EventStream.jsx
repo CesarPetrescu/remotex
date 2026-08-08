@@ -11,6 +11,12 @@ function groupEvents(events) {
       groups.push({ kind: 'user', events: [e] });
       continue;
     }
+    // A replay gap is a marker about the transcript itself, not a codex
+    // step — it stands alone rather than joining a CODEX block.
+    if (e.role === 'gap') {
+      groups.push({ kind: 'gap', events: [e] });
+      continue;
+    }
     const prev = groups[groups.length - 1];
     if (prev && prev.kind === 'agent') {
       prev.events.push(e);
@@ -37,7 +43,7 @@ export function EventStream({ events, pending, placeholder }) {
   return (
     <div className="stream">
       {groups.map((g, gi) => {
-        if (g.kind === 'user') {
+        if (g.kind === 'user' || g.kind === 'gap') {
           const e = g.events[0];
           return <EventRow key={e.id} event={e} pending={pending} grouped={false} />;
         }

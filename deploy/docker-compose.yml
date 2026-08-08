@@ -38,6 +38,22 @@ services:
     environment:
       TZ: ${TZ:-Etc/UTC}
       RELAY_CLIENT_RECONNECT_GRACE_SECONDS: ${RELAY_CLIENT_RECONNECT_GRACE_SECONDS:-75}
+      # How long a POSTed session reservation survives with no client
+      # attached before the relay reaps it (row, overrides, thread index).
+      RELAY_SESSION_RESERVATION_TTL_SECONDS: ${RELAY_SESSION_RESERVATION_TTL_SECONDS:-600}
+      # Largest file the relay will proxy in either direction. The HTTP
+      # body cap and both WebSocket frame caps are derived from it, so
+      # raising it also raises per-connection memory.
+      REMOTEX_MAX_FILE_BYTES: ${REMOTEX_MAX_FILE_BYTES:-26214400}
+      # Demo user/bridge tokens are public (they live in this repo), so
+      # seeding stays OFF here. Only ever turn it on for a throwaway box.
+      RELAY_SEED_DEMO: ${RELAY_SEED_DEMO:-0}
+      # Rate limiting keys on the TCP peer, which is the caddy container
+      # for every caller once the `tls` profile is up — one shared bucket.
+      # Set RELAY_TRUST_PROXY=1 in .env when you run behind caddy (or your
+      # own proxy) so the relay reads X-Forwarded-For instead. Never set it
+      # when the relay is exposed directly: the header is caller-supplied.
+      RELAY_TRUST_PROXY: ${RELAY_TRUST_PROXY:-0}
       # Inventory (users/hosts/sessions) lives in the Postgres container.
       RELAY_DATABASE_URL: postgresql://${POSTGRES_USER:-remotex}:${POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${POSTGRES_DB:-remotex}
     ports:
@@ -46,12 +62,10 @@ services:
       # port with RELAY_HOST_PORT=… if :8080 is already taken.
       - "${RELAY_HOST_BIND:-127.0.0.1}:${RELAY_HOST_PORT:-8080}:8080"
     volumes:
-      # Legacy: pre-Postgres installs stored inventory in
-      # /data/relay.db (SQLite). The relay's startup migrator imports
-      # it once into Postgres and renames the file to .migrated so
-      # subsequent boots skip the import. Safe to omit on fresh
-      # installs; required to avoid silent data loss when upgrading
-      # an old box.
+      # Scratch volume kept from pre-Postgres installs, where inventory
+      # lived in /data/relay.db (SQLite). Nothing reads or imports it any
+      # more — inventory is Postgres-only. Kept so an upgraded box does
+      # not lose the old file before someone has copied anything out.
       - relay-data:/data
     networks:
       - remotex

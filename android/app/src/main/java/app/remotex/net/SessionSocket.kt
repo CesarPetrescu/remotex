@@ -1,9 +1,8 @@
 package app.remotex.net
 
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -20,7 +19,7 @@ sealed interface SocketEvent {
 
 /**
  * Thin wrapper over OkHttp's WebSocket. Exposes incoming traffic as a
- * [SharedFlow] and lets callers push frames back through [sendJson].
+ * [Flow] and lets callers push frames back through [sendJson].
  * Caller owns the lifecycle via [close].
  */
 class SessionSocket(
@@ -35,12 +34,16 @@ class SessionSocket(
         .retryOnConnectionFailure(true)
         .build(),
 ) {
-    private val _events = MutableSharedFlow<SocketEvent>(
-        replay = 0,
-        extraBufferCapacity = 64,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val events: SharedFlow<SocketEvent> = _events.asSharedFlow()
+    // Unbounded mailbox, not a SharedFlow: the socket is opened in `init`,
+    // so the relay's opening burst (attached → pending-prompts → replay →
+    // session-started) lands before the collector is running, and every one
+    // of those frames is load-bearing. A Channel buffers from open onward
+    // and hands the backlog to the single collector in arrival order —
+    // nothing is dropped and nothing is reordered. `receiveAsFlow` is
+    // single-consumer, which matches the one-collector-per-socket lifecycle
+    // in RemotexViewModel.attachSocket.
+    private val _events = Channel<SocketEvent>(Channel.UNLIMITED)
+    val events: Flow<SocketEvent> = _events.receiveAsFlow()
 
     private val socket: WebSocket
 
@@ -56,18 +59,26 @@ class SessionSocket(
                 )
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
-                _events.tryEmit(SocketEvent.Frame(text))
+                _events.trySend(SocketEvent.Frame(text))
             }
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                _events.tryEmit(SocketEvent.Frame(bytes.utf8()))
+                _events.trySend(SocketEvent.Frame(bytes.utf8()))
             }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                _events.tryEmit(SocketEvent.Closed(reason))
+                finish(SocketEvent.Closed(reason))
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                _events.tryEmit(SocketEvent.Failure(t))
+                finish(SocketEvent.Failure(t))
             }
         })
+    }
+
+    // Terminal event, then close the mailbox so the collector completes
+    // once it has drained whatever was still buffered behind it. Closing
+    // for send keeps already-queued frames deliverable.
+    private fun finish(event: SocketEvent) {
+        _events.trySend(event)
+        _events.close()
     }
 
     fun sendJson(json: String): Boolean {

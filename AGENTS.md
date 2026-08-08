@@ -63,7 +63,7 @@ It **is**:
 2. Client sends `{"type": "turn-start", "input": "...", ...}` over
    the WebSocket to the relay.
 3. Relay forwards the frame to the daemon for that session
-   (`hub.broadcast_to_daemon`).
+   (`hub.forward_to_daemon`).
 4. Daemon's `StdioCodexAdapter.handle()` translates the frame into
    `turn/start` JSON-RPC and writes it to codex's stdin.
 5. Codex emits a stream of notifications: `turn/started`,
@@ -81,14 +81,25 @@ It **is**:
 **`services/relay/`** (aiohttp inside docker `remotex-relay-1`)
 - `app.py` — HTTP routes + WebSocket entry points.
 - `handlers/sessions.py` — `POST /api/sessions` (reserves session
-  IDs, picks `kind`, stashes per-session overrides).
+  IDs, picks `kind`, stashes per-session overrides) plus the TTL
+  sweeper that reaps reservations nobody attached to.
 - `handlers/ws_daemon.py` — daemon WebSocket; receives
   session-event frames and broadcasts to attached clients.
 - `handlers/ws_client.py` — client WebSocket; manages attach/grace,
-  fans out to multiple peers, replays buffered events on reconnect.
+  fans out to multiple peers, replays buffered events on reconnect
+  (and emits `replay-gap` when the buffer fell short).
+- `handlers/daemon_rpc.py` — the shared REST→daemon round-trip
+  (ownership check, `request_id`, parked future). `threads.py`,
+  `fs.py`, and the host-models route all go through it.
 - `hub.py` — in-memory state: which daemons are online, which
-  sessions are open, attach maps, replay buffers.
-- `store.py` — Postgres access (sessions, hosts).
+  sessions are open, attach maps, replay buffers, pending-prompt
+  queues.
+- `limits.py` — `REMOTEX_MAX_FILE_BYTES` and the HTTP-body /
+  WS-frame ceilings derived from it. `daemon/limits.py` is its twin;
+  changing one means changing both.
+- `store.py` — Postgres access (users, hosts, bridge keys,
+  sessions). Tokens are stored as `sha256(token)` — every lookup
+  hashes its input, so never compare a raw token to a column.
 
 **`services/daemon/`** (Python systemd user unit `remotex-daemon`)
 - `client.py` — outbound WebSocket to relay; receives session-open
@@ -98,7 +109,9 @@ It **is**:
 - `adapters/stdio.py` — bridges one codex subprocess to relay
   frames. The "main" file in the daemon (~700 lines).
 - `adapters/admin.py` — long-lived codex used for cheap read-only
-  ops (thread/list, fs/read).
+  ops (`thread/list`, `model/list`, `fs/readDirectory`), plus the
+  `model/list` → `{id, label, hint, efforts}` mapping the relay's
+  host-models route serves.
 - `adapters/items.py` — translates codex item types to our wire
   shape (`commandExecution` → `tool_call`, etc).
 - `adapters/permissions.py` — maps UI permission chip → codex
@@ -123,9 +136,12 @@ It **is**:
   dialogs.
 - `src/components/JumpPicker.jsx` — the folder picker (search /
   `/path` teleport / tree browse).
+- `src/components/SettingsPanel.jsx` — the settings overlay (token
+  storage preference lives here).
 - **Anything that overlays the page must be rendered through
   `createPortal(node, document.body)`** — today that's `Toast.jsx`,
-  `JumpPicker.jsx`, and the `Pickers.jsx` dropdowns. The rule
+  `JumpPicker.jsx`, `SettingsPanel.jsx`, and the `Pickers.jsx`
+  dropdowns. The rule
   `.dashboard-layout > * { position: relative }` in `styles.css`
   would otherwise kick a `position: fixed` overlay into a stray grid
   cell.
@@ -160,8 +176,8 @@ Then grep the source. The files you'll need most often:
 
 | You're working on | Read |
 |---|---|
-| New JSON-RPC method or notification | `/tmp/codex/codex-rs/app-server-protocol/src/protocol/v2.rs` (the canonical wire definition) and `/tmp/codex/codex-rs/app-server-protocol/src/protocol/common.rs` (method name → enum mapping) |
-| Item types codex emits | `/tmp/codex/codex-rs/app-server-protocol/src/protocol/v2.rs` (`enum ThreadItem`) + `/tmp/codex/codex-rs/protocol/src/items.rs` |
+| New JSON-RPC method or notification | `/tmp/codex/codex-rs/app-server-protocol/src/protocol/v2/` (the canonical wire definitions, split per area — `item.rs`, `model.rs`, `permissions.rs`, …) and `/tmp/codex/codex-rs/app-server-protocol/src/protocol/common.rs` (method name → enum mapping) |
+| Item types codex emits | `/tmp/codex/codex-rs/app-server-protocol/src/protocol/v2/item.rs` (`enum ThreadItem`) + `/tmp/codex/codex-rs/protocol/src/items.rs` |
 | Approval / sandbox / permissions | `/tmp/codex/codex-rs/protocol/src/{approvals,permissions,request_user_input}.rs` and `/tmp/codex/codex-rs/codex-mcp/src/mcp/mod.rs` (auto-approve rules) |
 | MCP tool calls (codex acting as MCP client) | `/tmp/codex/codex-rs/core/src/mcp_tool_call.rs` and `/tmp/codex/codex-rs/codex-mcp/src/` |
 | Plan mode / collaboration mode | `/tmp/codex/codex-rs/protocol/src/plan_tool.rs` and `collaboration_mode_kind` references in `core/` |
@@ -279,11 +295,42 @@ Skip it for:
 }
 ```
 
-`session-closed` and `host-telemetry` are **top-level frame types**, not
-session-event kinds — don't add them to the `kind` switch.
+`session-closed`, `host-telemetry`, `pending-prompts` and `replay-gap`
+are **top-level frame types**, not session-event kinds — don't add them
+to the `kind` switch.
 
 The relay stamps a per-session `seq` on every frame it forwards, and
-keeps the last 1000 in a replay buffer for reconnecting clients.
+keeps the last 1000 in a replay buffer for reconnecting clients. When a
+client's `last_seq` predates what the buffer still holds, the relay sends
+
+```json
+{ "type": "replay-gap", "session_id": "...", "missed_from": 41, "missed_to": 108 }
+```
+
+*before* the frames it replays, and every client renders a visible
+"earlier events unavailable" marker there. `last_seq: 0` is not exempt —
+a client asking for everything still only gets the tail once the buffer
+has wrapped. `seq` restarts at 1 in every new relay process, so a
+`last_seq` above the session's current seq is treated as a fresh attach
+and clients store the last seq they *saw*, never a running maximum.
+
+`pending-prompts` carries **queues**, not slots:
+
+```json
+{ "type": "pending-prompts", "session_id": "...", "approvals": [...], "user_inputs": [...] }
+```
+
+Both lists are oldest-first and each entry carries the relay's `order`.
+Clients render the head of each and popping it reveals the next — a second
+concurrent prompt must never overwrite or hide an earlier unanswered one,
+and a claim the relay hands back after a failed forward returns to its
+old slot rather than the tail. The relay's `order` is authoritative
+whenever it is present; entries are deduped by `approval_id` / `call_id`.
+That invariant is mirrored in `useRemotex.js`, `RemotexViewModel.kt`, and
+`RemotexViewModel.swift`; if you change it in one, change it in all three.
+
+A prompt with no `decisions` list falls back to the full set —
+`accept`, `acceptForSession`, `decline`, `cancel` — in all three clients.
 
 ### Relay → daemon (session control)
 
@@ -334,7 +381,7 @@ Received from codex: `turn/started`, `turn/completed`,
 `thread/tokenUsage/updated`, `thread/started`, etc.
 
 For exact field shapes, see the canonical reference:
-`/tmp/codex/codex-rs/app-server-protocol/src/protocol/v2.rs`.
+`/tmp/codex/codex-rs/app-server-protocol/src/protocol/v2/`.
 
 ---
 
@@ -358,14 +405,47 @@ For exact field shapes, see the canonical reference:
 - The relay **will not start without `RELAY_DATABASE_URL`** —
   `Store.start()` raises. Compose supplies it; running
   `python3 relay/app.py` from source does not.
+- **`demo-user-token` no longer exists unless you ask for it.**
+  Seeding is gated on `RELAY_SEED_DEMO` (truthy = `1`/`true`/`yes`),
+  default off, because the tokens are public. A fresh relay with an
+  empty database has zero users; every request 401s until you seed or
+  insert a row. Never turn it on in Compose or in a doc example that
+  isn't explicitly loopback-only.
+- **Never log a raw token.** Audit lines take
+  `user_hash=user_hash(token)` (`relay/logging.py`) with the *raw*
+  presented token, so it equals the first 12 chars of the stored hash —
+  the same identifier as a bridge key's `key_id`. Don't pass
+  `user["token"]`; that column is already hashed and would give you a
+  hash of a hash that joins to nothing.
+- One ceiling governs every byte path: `REMOTEX_MAX_FILE_BYTES`
+  (default 25 MiB). The relay's `client_max_size`, both relay WS
+  `max_msg_size` values, and the daemon's `ws_connect` all derive from
+  it. Oversize must be caught **before the write**: aiohttp closes the
+  socket before the receiving handler ever sees an oversize frame, so
+  the error frame the WS handlers attempt on `WSMsgType.ERROR` is
+  best-effort only. The daemon measures every outbound frame in
+  `DaemonClient._run_once`'s `send()` and substitutes an error payload;
+  web and Android cap attachments/uploads client-side. Without that, one
+  oversize frame kills the daemon socket and every session on that host.
+- The daemon refuses to `run` against cleartext `ws://` to a
+  non-loopback host unless `allow_insecure = true` is set in
+  `~/.remotex/config.toml`.
+- Relay→client errors that the client must not retry carry
+  `"fatal": true` (bad/closed/foreign session, bad token). Web and
+  Android stop their reconnect loop on it; without that the client
+  reconnects forever against an id the relay will never accept.
 - The relay does read `event.kind` and a few ids off session events
   (turn state, approvals, thread indexing) even though it never
   interprets `event.data`. Adding a new kind that affects turn
   lifecycle means touching `handlers/ws_daemon.py` too.
 - `apps/web` is its own npm project. There is no root `package.json`,
-  so `npm ci` at the repo root fails.
-- CI builds the Android APK but never runs `./gradlew test`. Run the
-  JVM unit tests locally before claiming they pass.
+  so `npm ci` at the repo root fails. Its tests are vitest in the
+  `node` environment (no jsdom): pure helpers plus the `useRemotex`
+  reducer, which is exported precisely so it can be driven headless.
+  `npm run test:run` is what CI runs.
+- CI runs `./gradlew assembleDebug`, `./gradlew test` and
+  `./gradlew lint` for Android, and the iPhone job is gated on
+  `apple/**` changes (it burns macOS minutes).
 
 ---
 

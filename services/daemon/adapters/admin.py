@@ -8,6 +8,11 @@ import shlex
 
 log = logging.getLogger("daemon.adapters.admin")
 
+# The relay's model list uses "" as the "let codex decide" sentinel for
+# both the model id and the effort; keep the host list identical in
+# shape so clients can swap one for the other.
+_EFFORT_DEFAULT = ""
+
 
 async def _read_line_unbounded(stream: asyncio.StreamReader) -> bytes:
     """Read one newline-delimited JSON-RPC frame without asyncio's 64KB cap."""
@@ -20,6 +25,56 @@ async def _read_line_unbounded(stream: asyncio.StreamReader) -> bytes:
             parts.append(await stream.readexactly(exc.consumed))
         except asyncio.IncompleteReadError as exc:
             return b"".join(parts) + exc.partial
+
+
+def model_options_from_codex(result: dict) -> list[dict]:
+    """Map codex's ``model/list`` result onto the relay's model shape.
+
+    Codex returns ``{data: [Model], nextCursor}``; a Model carries
+    ``model`` (the slug turn/start wants), ``displayName``,
+    ``description`` and ``supportedReasoningEfforts`` — a list of
+    ``{reasoningEffort, description}``. We collapse that to the
+    ``{id, label, hint, efforts}`` objects the relay serves from
+    ``/api/models``, keeping the empty-string "let codex pick" sentinel
+    at the head of both the model list and every effort list, exactly
+    as the static fallback does.
+    """
+    options: list[dict] = [
+        {"id": "", "label": "default", "hint": "codex picks", "efforts": [_EFFORT_DEFAULT]},
+    ]
+    seen = {""}
+    for model in result.get("data") or []:
+        if not isinstance(model, dict) or model.get("hidden"):
+            continue
+        slug = str(model.get("model") or model.get("id") or "").strip()
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        efforts = [_EFFORT_DEFAULT]
+        for entry in model.get("supportedReasoningEfforts") or []:
+            effort = entry.get("reasoningEffort") if isinstance(entry, dict) else entry
+            effort = str(effort or "").strip()
+            if effort and effort not in efforts:
+                efforts.append(effort)
+        options.append({
+            "id": slug,
+            "label": str(model.get("displayName") or slug).strip(),
+            "hint": str(model.get("description") or model.get("modelSpecialty") or "").strip(),
+            "efforts": efforts,
+        })
+    options[0]["efforts"] = _merged_efforts(options)
+    return options
+
+
+def _merged_efforts(options: list[dict]) -> list[str]:
+    """Every effort any model accepts — the "default" row can't know
+    which model codex will pick, so it offers the union."""
+    merged = [_EFFORT_DEFAULT]
+    for option in options[1:]:
+        for effort in option["efforts"]:
+            if effort and effort not in merged:
+                merged.append(effort)
+    return merged
 
 
 class AdminCodex:
@@ -37,6 +92,7 @@ class AdminCodex:
         self._codex_binary = codex_binary
         self._proc: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task | None = None
+        self._stderr_task: asyncio.Task | None = None
         self._pending: dict[int, asyncio.Future] = {}
         self._next_id = 0
         self._lock = asyncio.Lock()
@@ -54,6 +110,19 @@ class AdminCodex:
         return await self._call(
             "thread/list",
             self._build_list_params(limit, cursor),
+            timeout=25.0,
+        )
+
+    async def list_models(self, limit: int | None = None, cursor: str | None = None) -> dict:
+        """Return codex's raw model/list result ({data, nextCursor} body).
+
+        codex 0.129's ModelListParams is {cursor, limit, includeHidden};
+        all three are sent explicitly (nulls included) to match the wire
+        shape in app-server-protocol/src/protocol/common.rs.
+        """
+        return await self._call(
+            "model/list",
+            {"cursor": cursor, "limit": limit, "includeHidden": False},
             timeout=25.0,
         )
 
@@ -100,6 +169,10 @@ class AdminCodex:
             stderr=asyncio.subprocess.PIPE,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
+        # Nobody else reads stderr, so without this the pipe fills at
+        # ~64KB, codex blocks on the write and stops servicing stdin —
+        # every admin call then times out until the next tear-down.
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
         # Perform the init/initialized handshake once per spawn.
         await self._request("initialize", {
             "clientInfo": {
@@ -115,6 +188,9 @@ class AdminCodex:
         if self._reader_task:
             self._reader_task.cancel()
             self._reader_task = None
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            self._stderr_task = None
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(RuntimeError("admin codex torn down"))
@@ -148,6 +224,19 @@ class AdminCodex:
         line = json.dumps(obj) + "\n"
         self._proc.stdin.write(line.encode())
         await self._proc.stdin.drain()
+
+    async def _drain_stderr(self) -> None:
+        assert self._proc and self._proc.stderr
+        try:
+            while True:
+                line = await _read_line_unbounded(self._proc.stderr)
+                if not line:
+                    return
+                log.info("admin codex stderr: %s", line.decode(errors="replace").rstrip())
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — never let the drain die quietly
+            log.warning("admin codex stderr drain failed: %s", exc)
 
     async def _read_loop(self) -> None:
         assert self._proc and self._proc.stdout

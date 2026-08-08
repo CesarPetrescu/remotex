@@ -89,6 +89,38 @@ anything you add actually took effect.
 
 Plus JSON-RPC *responses* to server-initiated requests — see Approvals.
 
+### The admin codex (`adapters/admin.py`)
+
+Read-only host queries do **not** go through a session adapter. The daemon
+keeps one extra long-lived `codex app-server` resident — cold-spawning
+codex costs 2-5s, and overlapping spawns used to push the daemon past the
+relay's HTTP timeouts — and drives it with the same handshake:
+
+| Method | Serves |
+|---|---|
+| `thread/list` | `GET /api/hosts/{id}/threads` (25s call timeout) |
+| `model/list` | `GET /api/hosts/{id}/models` |
+| `fs/readDirectory` | `GET /api/hosts/{id}/fs` |
+
+`model/list` params are `{cursor, limit, includeHidden}`, all sent
+explicitly including nulls (`ModelListParams` in
+`app-server-protocol/src/protocol/v2/model.rs`). The result is
+`{data: [Model], nextCursor}`; each `Model` carries `model` (the slug
+`turn/start` wants), `displayName`, `description`, `hidden`, and
+`supportedReasoningEfforts` — a list of `{reasoningEffort, description}`.
+`model_options_from_codex()` collapses that into the relay's
+`{id, label, hint, efforts[]}` shape, keeps the empty-string "let codex
+pick" sentinel at the head of both the model list and every effort list,
+and gives that sentinel row the union of every effort any model accepts.
+Hidden models are dropped. Anything that fails becomes a
+`models-list-response {error}` and the relay falls back to its static
+list, so this path is never fatal.
+
+Any failed admin call tears the subprocess down so the next one respawns
+rather than timing out against a wedged process. Its stderr is drained
+continuously — nobody else reads that pipe, and at ~64KB codex blocks on
+the write and stops servicing stdin.
+
 ### `turn/start` parameters
 
 `{threadId, input, cwd, summary}` always. Optionally `model`, `effort`,

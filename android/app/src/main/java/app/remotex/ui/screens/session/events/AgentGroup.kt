@@ -151,7 +151,8 @@ private fun AgentSubEvent(event: UiEvent, pending: Boolean) {
             Spacer(Modifier.height(3.dp))
             BodyText(event.detail.ifEmpty { event.label })
         }
-        is UiEvent.User -> Unit
+        // Rendered by EventList as its own group, never inside an agent turn.
+        is UiEvent.User, is UiEvent.Gap -> Unit
     }
 }
 

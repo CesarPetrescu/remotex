@@ -60,6 +60,9 @@ fun UserInputDialog(
     prompt: UserInputPrompt,
     onSubmit: (Map<String, List<String>>) -> Unit,
     onCancel: () -> Unit,
+    /** How many more user-input prompts are queued behind this one
+     *  (contract F) — answering the head reveals the next. */
+    queuedBehind: Int = 0,
 ) {
     val questions = prompt.questions
     if (questions.isEmpty()) return
@@ -110,6 +113,14 @@ fun UserInputDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (queuedBehind > 0) {
+                    Text(
+                        "$queuedBehind more queued — answer this one to see the next",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                }
                 if (current.header.isNotBlank()) {
                     Text(
                         current.header,

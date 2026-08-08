@@ -16,15 +16,38 @@ import time
 from aiohttp import WSMsgType, web
 
 from ..hub import Hub
+from ..limits import WS_MAX_MSG_SIZE
 from ..logging import audit
+from ..middleware.rate_limit import allow_ws_connection, client_remote
 from ..store import Store
 
 
 log = logging.getLogger("relay.ws.daemon")
 
 
+async def _owns_session(hub: Hub, store: Store, host_id: str, session_id: str) -> bool:
+    """Is this session really served by the daemon that just sent a frame?
+
+    A valid bridge key for one host must not let it write into — or close —
+    another host's sessions. The hub's live binding answers first; the
+    store answers for sessions the hub has not cached (or has forgotten).
+    """
+    cached = hub.host_for_session(session_id)
+    if cached is not None:
+        return cached == host_id
+    session = await store.session_info(session_id)
+    return session is not None and session["host_id"] == host_id
+
+
 async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
-    ws = web.WebSocketResponse(heartbeat=20)
+    remote = client_remote(request)
+    allowed, retry_after = allow_ws_connection(remote)
+    if not allowed:
+        raise web.HTTPTooManyRequests(
+            reason="too many websocket connections",
+            headers={"Retry-After": f"{max(1, int(retry_after))}"},
+        )
+    ws = web.WebSocketResponse(heartbeat=20, max_msg_size=WS_MAX_MSG_SIZE)
     await ws.prepare(request)
     store: Store = request.app["store"]
     hub: Hub = request.app["hub"]
@@ -44,7 +67,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
         if not host_id:
             await ws.send_json({"type": "error", "error": "invalid bridge token"})
             await ws.close(code=4401, message=b"invalid token")
-            audit("auth.bridge.invalid", remote=request.remote)
+            audit("auth.bridge.invalid", remote=remote)
             return ws
 
         await store.update_host_identity(
@@ -71,6 +94,19 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             await ws.send_json(open_frame)
 
         async for msg in ws:
+            if msg.type == WSMsgType.ERROR:
+                # Usually an oversize frame (a file read past
+                # WS_MAX_MSG_SIZE). aiohttp closes the socket before we see
+                # it; say why on the way out rather than dropping silently.
+                log.warning("daemon frame rejected", extra={
+                    "host_id": host_id, "error": str(msg.data),
+                })
+                if not ws.closed:
+                    await ws.send_json({
+                        "type": "error",
+                        "error": f"frame rejected (max {WS_MAX_MSG_SIZE} bytes)",
+                    })
+                break
             if msg.type != WSMsgType.TEXT:
                 continue
             try:
@@ -80,7 +116,13 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             ftype = frame.get("type")
             sid = frame.get("session_id")
             if ftype in {"session-event", "session-closed"} and sid:
-                session = await store.session_info(sid)
+                if not await _owns_session(hub, store, host_id, sid):
+                    log.warning("daemon frame for foreign session", extra={
+                        "host_id": host_id, "session_id": sid, "frame_type": ftype,
+                    })
+                    audit("daemon.session.foreign",
+                          host_id=host_id, session_id=sid, frame_type=ftype)
+                    continue
                 # Track turn lifecycle + per-session activity so the
                 # client-grace loop knows whether a session is idle or
                 # actively producing output. Any daemon frame counts as
@@ -110,11 +152,19 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 # Bounded fanout: close slow clients rather than letting
                 # the daemon's event loop stall behind one consumer.
                 await hub.broadcast_to_session(sid, frame)
-                if session and ftype == "session-event":
+                if ftype == "session-event":
                     event = frame.get("event") or {}
                     data = event.get("data") or {}
                     if event.get("kind") == "session-started" and isinstance(data, dict):
                         await hub.update_session_resume(
+                            sid,
+                            thread_id=data.get("thread_id"),
+                            cwd=data.get("cwd"),
+                        )
+                        # Durable too: a relay restart must be able to
+                        # rebuild the session-open frame from the row
+                        # instead of resuming nothing.
+                        await store.update_session_resume(
                             sid,
                             thread_id=data.get("thread_id"),
                             cwd=data.get("cwd"),
@@ -131,6 +181,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     audit("session.closed", session_id=sid, host_id=host_id)
             elif ftype in (
                 "threads-list-response",
+                "models-list-response",
                 "fs-read-response",
                 "fs-mkdir-response",
                 "fs-readfile-response",
@@ -139,9 +190,10 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 "fs-write-response",
             ):
                 req_id = frame.get("request_id")
-                fut = hub.pending_admin.get(req_id) if req_id else None
-                if fut is not None and not fut.done():
-                    fut.set_result(frame)
+                # Bound to this host: a daemon can only answer requests
+                # that were addressed to it.
+                if req_id:
+                    hub.resolve_admin_request(host_id, req_id, frame)
             elif ftype == "host-telemetry":
                 data = frame.get("data") or {}
                 snapshot = {
@@ -159,11 +211,10 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     "data": data,
                     "ts": snapshot["received_at"],
                 }
-                for client_ws in hub.clients_for_host(host_id):
-                    try:
-                        await client_ws.send_json(forward)
-                    except Exception as exc:  # noqa: BLE001
-                        log.debug("telemetry fanout failed", extra={"error": str(exc)})
+                # Bounded + concurrent, same as session fanout: one slow
+                # client gets closed instead of stalling this daemon's
+                # frame loop behind a 3s telemetry cadence.
+                await hub.broadcast_to_host_clients(host_id, forward)
             elif ftype == "ping":
                 await ws.send_json({"type": "pong"})
     except asyncio.TimeoutError:

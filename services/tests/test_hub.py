@@ -74,7 +74,6 @@ async def test_multiple_clients_attach_to_same_session_without_replacement():
 
     web.close.assert_not_awaited()
     android.close.assert_not_awaited()
-    assert set(hub.clients_for_host("host_x")) == {web, android}
 
     assert await hub.detach_client("sess_1", "web", web) is False
     assert hub.client_for("sess_1") is android
@@ -122,6 +121,66 @@ async def test_broadcast_records_sequence_and_replays_to_late_client():
 
 
 @pytest.mark.asyncio
+async def test_replay_gap_reports_evicted_frames(monkeypatch):
+    """A client whose cursor predates the oldest retained frame must be
+    told, not silently handed a truncated transcript."""
+    import relay.hub as hub_mod
+
+    monkeypatch.setattr(hub_mod, "_SESSION_REPLAY_LIMIT", 3)
+    hub = Hub()
+
+    for _ in range(5):
+        await hub.record_session_frame("sess_1", {"type": "session-event"})
+
+    # Buffer holds seq 3,4,5; 1 and 2 were evicted.
+    # A client asking for everything from the start still only gets the
+    # tail, so it is owed a marker too (contract C).
+    assert await hub.replay_gap("sess_1", 0) == (1, 2)
+    assert await hub.replay_gap("sess_1", 1) == (2, 2)
+    assert await hub.replay_gap("sess_1", 2) is None      # has everything still buffered
+    assert await hub.replay_gap("sess_1", 4) is None
+    assert [f["seq"] for f in await hub.replay_since("sess_1", 1)] == [3, 4, 5]
+
+
+@pytest.mark.asyncio
+async def test_replay_gap_cleared_with_session():
+    hub = Hub()
+    hub.session_replay_evicted["sess_1"] = 10
+    assert await hub.replay_gap("sess_1", 1) == (2, 10)
+    await hub.forget_session("sess_1")
+    assert await hub.replay_gap("sess_1", 1) is None
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_host_clients_is_bounded_and_host_scoped():
+    hub = Hub()
+    mine = _ws_mock()
+    other = _ws_mock()
+    await hub.attach_client("sess_1", "host_x", "web", mine)
+    await hub.attach_client("sess_2", "host_y", "web", other)
+
+    assert await hub.broadcast_to_host_clients("host_x", {"type": "host-telemetry"}) is True
+
+    mine.send_json.assert_awaited_once()
+    other.send_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_requests_are_bound_to_the_host_they_were_sent_to():
+    hub = Hub()
+    fut = hub.register_admin_request("host_x", "req_1")
+
+    # A daemon authenticated for another host cannot answer it.
+    assert hub.resolve_admin_request("host_y", "req_1", {"threads": []}) is False
+    assert not fut.done()
+    assert hub.resolve_admin_request("host_x", "req_1", {"threads": []}) is True
+    assert (await fut) == {"threads": []}
+
+    hub.discard_admin_request("host_x", "req_1")
+    assert hub.pending_admin == {}
+
+
+@pytest.mark.asyncio
 async def test_turn_slot_is_single_writer_until_completed():
     hub = Hub()
 
@@ -135,9 +194,11 @@ async def test_turn_slot_is_single_writer_until_completed():
 async def test_approval_resolution_is_first_writer_wins():
     hub = Hub()
 
-    await hub.note_approval_request("sess_1", "appr_1")
-    assert await hub.resolve_approval("sess_1", "appr_1") is True
-    assert await hub.resolve_approval("sess_1", "appr_1") is False
+    await hub.note_approval_request("sess_1", "appr_1", {"reason": "approve"})
+    claim = await hub.resolve_approval("sess_1", "appr_1")
+    assert claim is not None
+    assert claim.data == {"reason": "approve"}
+    assert await hub.resolve_approval("sess_1", "appr_1") is None
 
 
 @pytest.mark.asyncio
@@ -145,9 +206,111 @@ async def test_user_input_resolution_is_first_writer_wins():
     hub = Hub()
 
     await hub.note_user_input_request("sess_1", "call_1")
-    assert await hub.resolve_user_input("other_sess", "call_1") is False
-    assert await hub.resolve_user_input("sess_1", "call_1") is True
-    assert await hub.resolve_user_input("sess_1", "call_1") is False
+    assert await hub.resolve_user_input("other_sess", "call_1") is None
+    assert await hub.resolve_user_input("sess_1", "call_1") is not None
+    assert await hub.resolve_user_input("sess_1", "call_1") is None
+
+
+@pytest.mark.asyncio
+async def test_restored_approval_claim_can_be_answered_again():
+    """A response that never reached the daemon must leave the prompt
+    answerable — codex is still holding the request."""
+    hub = Hub()
+
+    await hub.note_approval_request("sess_1", "appr_1", {"reason": "approve"})
+    claim = await hub.resolve_approval("sess_1", "appr_1")
+    assert claim is not None
+    assert await hub.resolve_approval("sess_1", "appr_1") is None
+
+    await hub.restore_approval(claim)
+
+    snapshot = await hub.pending_prompt_snapshot("sess_1")
+    assert [a["approval_id"] for a in snapshot["approvals"]] == ["appr_1"]
+    again = await hub.resolve_approval("sess_1", "appr_1")
+    assert again is not None
+    assert again.data == {"reason": "approve"}
+
+
+@pytest.mark.asyncio
+async def test_restored_user_input_keeps_its_queue_position():
+    """Contract (F): restoring a claim must not push it behind a prompt
+    that arrived later."""
+    hub = Hub()
+
+    await hub.note_user_input_request("sess_1", "call_1", {"call_id": "call_1"})
+    await hub.note_user_input_request("sess_1", "call_2", {"call_id": "call_2"})
+
+    claim = await hub.resolve_user_input("sess_1", "call_1")
+    assert claim is not None
+    await hub.restore_user_input(claim)
+
+    snapshot = await hub.pending_prompt_snapshot("sess_1")
+    assert [u["call_id"] for u in snapshot["user_inputs"]] == ["call_1", "call_2"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_ids_are_scoped_to_their_session():
+    """Prompt ids come off a daemon frame, so a flat namespace would let
+    one host's daemon overwrite — and permanently wedge — a prompt on a
+    session it has nothing to do with."""
+    hub = Hub()
+
+    await hub.note_approval_request("sess_a", "appr_1", {"reason": "mine"})
+    await hub.note_approval_request("sess_b", "appr_1", {"reason": "theirs"})
+
+    snapshot = await hub.pending_prompt_snapshot("sess_a")
+    assert [a["reason"] for a in snapshot["approvals"]] == ["mine"]
+
+    claim = await hub.resolve_approval("sess_a", "appr_1")
+    assert claim is not None and claim.data["reason"] == "mine"
+    # Closing sess_b must not take sess_a's prompt with it.
+    await hub.forget_session("sess_b")
+    assert await hub.resolve_approval("sess_b", "appr_1") is None
+
+
+@pytest.mark.asyncio
+async def test_restore_is_dropped_once_the_prompt_was_invalidated():
+    """turn-completed / session-closed mean codex has discarded the
+    request; a restore racing them would leave a prompt nobody can
+    ever answer."""
+    hub = Hub()
+
+    await hub.note_approval_request("sess_1", "appr_1", {"approval_id": "appr_1"})
+    claim = await hub.resolve_approval("sess_1", "appr_1")
+    assert claim is not None
+
+    await hub.clear_session_prompts("sess_1")
+    await hub.restore_approval(claim)
+
+    assert (await hub.pending_prompt_snapshot("sess_1"))["approvals"] == []
+
+
+@pytest.mark.asyncio
+async def test_restore_after_forget_session_does_not_leak():
+    hub = Hub()
+
+    await hub.note_user_input_request("sess_1", "call_1", {"call_id": "call_1"})
+    claim = await hub.resolve_user_input("sess_1", "call_1")
+    assert claim is not None
+
+    await hub.forget_session("sess_1")
+    await hub.restore_user_input(claim)
+
+    assert hub.pending_user_inputs == {}
+
+
+@pytest.mark.asyncio
+async def test_snapshot_carries_relay_queue_order():
+    """Clients re-sort by it so a restored claim lands back in its old
+    slot instead of behind a prompt that arrived later (contract F)."""
+    hub = Hub()
+
+    await hub.note_approval_request("sess_1", "appr_1", {"approval_id": "appr_1"})
+    await hub.note_approval_request("sess_1", "appr_2", {"approval_id": "appr_2"})
+
+    snapshot = await hub.pending_prompt_snapshot("sess_1")
+    orders = [a["order"] for a in snapshot["approvals"]]
+    assert orders == sorted(orders)
 
 
 @pytest.mark.asyncio
@@ -159,8 +322,8 @@ async def test_forget_session_clears_pending_prompt_claims():
 
     await hub.forget_session("sess_1")
 
-    assert await hub.resolve_approval("sess_1", "appr_1") is False
-    assert await hub.resolve_user_input("sess_1", "call_1") is False
+    assert await hub.resolve_approval("sess_1", "appr_1") is None
+    assert await hub.resolve_user_input("sess_1", "call_1") is None
 
 
 @pytest.mark.asyncio
@@ -186,7 +349,7 @@ async def test_pending_prompt_snapshot_is_independent_of_seq():
     assert snapshot["approvals"][0]["approval_id"] == "appr_1"
     assert snapshot["user_inputs"][0]["questions"][0]["id"] == "q1"
 
-    assert await hub.resolve_user_input("sess_1", "call_1") is True
+    assert await hub.resolve_user_input("sess_1", "call_1") is not None
     snapshot = await hub.pending_prompt_snapshot("sess_1")
     assert len(snapshot["approvals"]) == 1
     assert snapshot["user_inputs"] == []

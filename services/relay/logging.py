@@ -10,6 +10,7 @@ They cover authentication, host attach/detach, and session lifecycle.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -63,10 +64,21 @@ def configure_json_logging(level: int = logging.INFO) -> None:
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
 
+def user_hash(token: str) -> str:
+    """Stable, non-reversible identifier for a credential.
+
+    Audit lines must never carry a bearer or bridge token; log this
+    instead. Tokens are already stored hashed, so this is a short digest
+    either way — the point is that nothing usable ever reaches a log sink.
+    """
+    return hashlib.sha256((token or "").encode()).hexdigest()[:12]
+
+
 def audit(event: str, **fields: Any) -> None:
     """Emit one structured audit log line.
 
     ``event`` becomes the message; ``fields`` are passed through verbatim
-    as extra keys on the JSON object.
+    as extra keys on the JSON object. Never pass a raw token — pass
+    ``user_hash=user_hash(token)``.
     """
     logging.getLogger("audit").info(event, extra=fields)

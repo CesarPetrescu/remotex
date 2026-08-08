@@ -48,6 +48,27 @@ class RelayClient(
         }
     }
 
+    /**
+     * GET /api/hosts/{host_id}/models — the model list the host's own codex
+     * reports (contract B). Falls back to [listModels] at the call site when
+     * the host is offline, the relay predates the route, or the list is empty.
+     */
+    suspend fun listHostModels(
+        userToken: String,
+        hostId: String,
+    ): List<ModelInfo> = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$baseUrl/api/hosts/$hostId/models")
+            .header("Authorization", "Bearer $userToken")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            check(resp.isSuccessful) { "listHostModels: ${resp.code} ${resp.message}" }
+            val body = resp.body?.string().orEmpty()
+            json.decodeFromString(ModelsResponse.serializer(), body).models
+        }
+    }
+
     suspend fun listHosts(userToken: String): List<Host> = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("$baseUrl/api/hosts")

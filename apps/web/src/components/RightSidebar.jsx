@@ -12,6 +12,8 @@ export function RightSidebar({
   selectedHost,
   pendingApproval,
   pendingUserInput,
+  pendingApprovalCount,
+  pendingUserInputCount,
   onResolveApproval,
   onResolveUserInput,
   onCancelUserInput,
@@ -25,6 +27,8 @@ export function RightSidebar({
           <PendingPromptsPanel
             approval={pendingApproval}
             userInput={pendingUserInput}
+            approvalQueueLength={pendingApprovalCount}
+            userInputQueueLength={pendingUserInputCount}
             onApprovalDecision={onResolveApproval}
             onUserInputSubmit={onResolveUserInput}
             onUserInputCancel={onCancelUserInput}

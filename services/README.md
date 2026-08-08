@@ -13,22 +13,25 @@ services/
 │   ├── hub.py                  in-memory routing: daemons, clients, replay buffers, pending prompts
 │   ├── store.py                asyncpg inventory (users, hosts, bridge keys, sessions)
 │   ├── auth.py                 bearer-token extraction + `require_user`
-│   ├── models.py               model/effort catalogue served at /api/models
-│   ├── logging.py              JSON formatter + `audit()`
-│   ├── middleware/rate_limit.py   per-token bucket, 429 + Retry-After
+│   ├── limits.py               REMOTEX_MAX_FILE_BYTES → HTTP body + WS frame caps
+│   ├── models.py               fallback model/effort catalogue served at /api/models
+│   ├── logging.py              JSON formatter + `audit()` + `user_hash()`
+│   ├── middleware/rate_limit.py   per-token REST bucket + per-remote WS connect bucket
 │   └── handlers/
 │       ├── ws_daemon.py        daemon socket: hello → welcome → frame loop
 │       ├── ws_client.py        client socket: attach, replay, forward, grace watchdog
-│       ├── sessions.py         POST /api/sessions (id reservation + thread reuse)
-│       ├── hosts.py            host CRUD, bridge-key issuance, cached telemetry
+│       ├── sessions.py         POST /api/sessions (id reservation, thread reuse, TTL sweeper)
+│       ├── hosts.py            host CRUD, bridge-key issue/list/revoke, cached telemetry
+│       ├── daemon_rpc.py       shared REST→daemon request/response plumbing
 │       ├── threads.py          proxied thread/list
 │       ├── fs.py               proxied filesystem ops
-│       ├── models_route.py     GET /api/models
+│       ├── models_route.py     GET /api/models + GET /api/hosts/{id}/models
 │       └── static.py           SPA + asset serving
 ├── daemon/
 │   ├── __main__.py             CLI: init / run / status
-│   ├── config.py               TOML config, cross-platform paths
-│   ├── client.py               outbound WSS client, per-session runners, fs handlers
+│   ├── config.py               TOML config, cross-platform paths, insecure-relay guard
+│   ├── limits.py               same REMOTEX_MAX_FILE_BYTES ceiling as the relay
+│   ├── client.py               outbound WSS client, per-session runners, fs + model handlers
 │   ├── telemetry.py            CPU/memory/GPU/network sampling (psutil, /proc fallback)
 │   └── adapters/
 │       ├── base.py             SessionEvent envelope + SessionAdapter ABC
@@ -36,17 +39,19 @@ services/
 │       ├── stdio.py            the real bridge to `codex app-server` (the big one)
 │       ├── mock.py             scripted events for tests and offline demos
 │       ├── admin.py            long-lived codex for cheap read-only ops
+│       │                       (thread/list, model/list, fs/readDirectory)
 │       ├── items.py            Codex item type → relay item_type, field flattening
 │       ├── reasoning.py        reasoning-content summarization
 │       ├── permissions.py      UI permission chip → sandboxPolicy/approvalPolicy
 │       ├── rollout.py          reads ~/.codex/sessions rollout files for local replay
 │       └── codex_config.py     enables the Codex `goals` feature in config.toml
-├── tests/                      pytest suite (hub, rate limit, logging, models, daemon helpers)
+├── tests/                      pytest suite (hub, ws attach/binding, prompt queues,
+│                               session reservations, rate limit, size limits + fs,
+│                               logging, both model endpoints, store + daemon helpers)
 ├── scripts/e2e_test.py         in-process relay ↔ daemon ↔ client end-to-end test
 └── docs/
-    ├── architecture.md         topology, frames, lifecycle, failure modes
-    ├── codex_app_server_protocol.md   what the daemon actually sends/receives
-    └── production_plan.md      what's left before real users
+    ├── architecture.md         topology, frames, lifecycle, failure modes, known gaps
+    └── codex_app_server_protocol.md   what the daemon actually sends/receives
 ```
 
 ## Requirements
@@ -74,11 +79,13 @@ docker run --rm -d --name remotex-pg -p 5432:5432 \
 
 ```bash
 export RELAY_DATABASE_URL=postgresql://remotex:remotex-dev@127.0.0.1:5432/remotex
+export RELAY_SEED_DEMO=1        # opt-in; see "Demo credentials" below
 python3 relay/app.py --host 127.0.0.1 --port 8080
 ```
 
-It serves the API and, if you've built `apps/web`, the UI. On first run
-against an empty database it seeds the demo credentials below.
+It serves the API and, if you've built `apps/web`, the UI. Without
+`RELAY_SEED_DEMO` an empty database stays empty and there is nothing to
+log in as.
 
 ### 3. Daemon
 
@@ -97,10 +104,17 @@ python3 -m daemon run --config ./demo-config.toml
 UI without a real Codex. `python3 -m daemon status` prints the loaded
 config and the host identity it will report.
 
+`run` refuses to start when `relay_url` is cleartext `ws://` to anything
+but loopback — that would ship the bridge token and every prompt in the
+clear. Use `wss://`, or pass `--allow-insecure` at `init` time (it sets
+`allow_insecure = true` in the config and logs a warning on every start).
+The loopback URL above needs no flag.
+
 ### 4. Client
 
-Open <http://127.0.0.1:8080/> and paste `demo-user-token`, or run the
-Vite dev server from `apps/web` (see that README) for hot reload.
+Open <http://127.0.0.1:8080/> and paste `demo-user-token` (the seeded one
+from step 2 — it exists only because `RELAY_SEED_DEMO=1` was set), or run
+the Vite dev server from `apps/web` (see that README) for hot reload.
 
 ## Tests
 
@@ -114,6 +128,9 @@ E2E_DATABASE_URL=postgresql://remotex:remotex-dev@127.0.0.1:5432/remotex \
 E2E_ALLOW_DESTRUCTIVE_RESET=1 \
 python3 scripts/e2e_test.py
 ```
+
+The e2e drives the relay with the demo credentials, so it sets
+`RELAY_SEED_DEMO=1` for itself — you don't have to.
 
 The e2e boots relay + daemon in-process, drives the REST API and a client
 WebSocket, and asserts the scripted event sequence arrives in order. It
@@ -129,26 +146,47 @@ hand instead (see `docs/codex_app_server_protocol.md`).
 
 ## Demo credentials
 
-On first run against an empty database the relay seeds a user, a host
-row, and a bridge key so you can try the flow without a setup dance:
+Seeding is **opt-in and off by default**. Start the relay with
+`RELAY_SEED_DEMO=1` (`1` / `true` / `yes`) and, on an empty database, it
+creates a user, a host row, and a bridge key so you can try the flow
+without a setup dance:
 
 - user token: `demo-user-token`
 - bridge token: `demo-bridge-token` (bound to the seeded host)
 
-These are prototype conveniences. `docs/production_plan.md` covers
-replacing them with OIDC-issued credentials.
+> **Both tokens are hardcoded in this public repo.** A reachable relay
+> that seeds them is a relay anyone on the internet can drive: they can
+> list your hosts, open sessions, and run turns on them. Only ever set
+> `RELAY_SEED_DEMO` on loopback or on a throwaway box. Leave it unset in
+> Compose and anywhere behind Caddy.
+
+For a real deployment, insert your own user row and mint bridge keys with
+`POST /api/hosts/{id}/api-key`. Tokens are stored as `sha256(token)`, so a
+minted key's plaintext is shown exactly once — afterwards only its
+`key_id` (first 12 chars of the hash) is visible, which is also what
+`GET /api/hosts/{id}/api-key` lists and what
+`POST /api/hosts/{id}/api-key/revoke` accepts. Replacing these with
+OIDC-issued credentials is the top item under "Known gaps" in
+`docs/architecture.md`.
 
 ## What's real
 
-- **Relay transport** — real. WS routing, Postgres inventory, bearer
-  auth, rate limiting, REST proxying to the daemon, sequenced replay.
+- **Relay transport** — real. WS routing, Postgres inventory, bearer auth
+  (hashed at rest), rate limiting, REST proxying to the daemon, sequenced
+  replay with an explicit `replay-gap` when the buffer fell short, and one
+  `REMOTEX_MAX_FILE_BYTES` ceiling shared by the HTTP body cap and every
+  websocket leg.
 - **Daemon → relay** — real. Outbound WSS with exponential backoff and
   jitter, session runners, host telemetry.
 - **Codex integration** — real, and the default. `StdioCodexAdapter`
   spawns `codex app-server`, performs the handshake, streams turns, and
   handles approvals, user-input prompts, slash commands, thread goals,
   token usage, image attachments, and thread resume.
+- **Model list** — real, and host-scoped. `GET /api/hosts/{id}/models`
+  asks that host's codex (`model/list` through the admin adapter); the
+  static list in `relay/models.py` is only the fallback when the host is
+  offline, errors, or is slow.
 - **Mock adapter** — still ships, opt-in via `--mode mock`. The e2e test
   drives it so CI needs no codex binary.
-- **User auth** — token lookup against Postgres. No OIDC yet; that's the
-  top item in `docs/production_plan.md`.
+- **User auth** — hashed token lookup against Postgres. No OIDC yet;
+  that's the top item under "Known gaps" in `docs/architecture.md`.

@@ -39,10 +39,31 @@ final class SessionSocket {
         receive()
     }
 
-    func sendTurn(_ input: String) {
+    func sendTurn(_ input: String, clientMessageId: String) {
         send([
             "type": "turn-start",
             "input": input,
+            "client_message_id": clientMessageId,
+        ])
+    }
+
+    func sendApproval(approvalId: String, decision: String) {
+        send([
+            "type": "approval-response",
+            "approval_id": approvalId,
+            "decision": decision,
+        ])
+    }
+
+    // Reply to codex's request_user_input prompt. `answers` is shaped
+    //   { <question_id>: ["selected label", "freeform notes"] }
+    // and goes on the wire as { <question_id>: {"answers": [...]} }.
+    func sendUserInput(callId: String, answers: [String: [String]]) {
+        let wire: [String: [String: [String]]] = answers.mapValues { ["answers": $0] }
+        send([
+            "type": "user-input-response",
+            "call_id": callId,
+            "answers": wire,
         ])
     }
 

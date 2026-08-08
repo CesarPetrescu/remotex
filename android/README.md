@@ -14,7 +14,9 @@ What works:
   MCP tool calls, and agent messages, grouped per turn with markdown
   rendering.
 - Composer with model, reasoning-effort, and permission pickers, image
-  attachments, send/stop, and turn interrupt.
+  attachments, send/stop, and turn interrupt. The model list comes from
+  `GET /api/hosts/{host_id}/models`, falling back to `GET /api/models`
+  and then the embedded list.
 - Approval dialogs and Codex user-input dialogs.
 - Slash commands (`/plan`, `/default`, `/cd`, `/pwd`, `/compact`,
   `/goal`, `/collab`) plus direct `goal-get` / `goal-set` / `goal-clear`
@@ -25,8 +27,8 @@ What works:
   notifications so a long turn survives the app being backgrounded, with
   a cancel-turn action from the notification.
 
-Not done — tracked in the root `README.md` and
-`services/docs/production_plan.md`:
+Not done — tracked in the root `README.md` and under "Known gaps" in
+`services/docs/architecture.md`:
 
 - FCM push for approvals that arrive while the app is closed.
 - OIDC login — the token is still a plain bearer string.
@@ -77,6 +79,24 @@ Bare Gradle is fine for an emulator, or when you pass the URL yourself:
 The value is baked into `BuildConfig.RELAY_URL` at compile time — there's
 no runtime relay picker, so switching servers means rebuild + reinstall.
 
+`-PversionName=<label>` sets the APK's internal version (the release
+workflow passes the tag or the nightly label); without it the build falls
+back to `0.1.0`. `versionCode` is derived from a `vX.Y.Z` name
+(`v1.2.3` → `10203`) and stays `1` for nightlies and local builds;
+`-PversionCode=<int>` overrides it.
+
+### Cleartext HTTP is debug-only
+
+The app ships a network security config instead of a blanket
+`usesCleartextTraffic`: release builds refuse plaintext HTTP entirely
+(`src/main/res/xml/network_security_config.xml`), and the debug build type
+overrides it (`src/debug/res/xml/network_security_config.xml`) so the
+`http://<LAN-IP>:<PORT>` and `10.0.2.2` workflows above keep working.
+Android's config matches literal hosts only — it has no CIDR syntax — so
+the debug override permits cleartext broadly rather than trying to
+enumerate RFC1918 ranges. A relay reachable over `https://` needs no
+exception in either build type.
+
 Find the pieces by hand if you need them:
 
 ```bash
@@ -105,7 +125,9 @@ android/
     ├── build.gradle.kts
     ├── proguard-rules.pro
     └── src/
-        ├── test/java/app/remotex/     JVM tests: RelayClient, SessionSocket, Markdown
+        ├── debug/res/xml/             debug-only network security config
+        ├── test/java/app/remotex/     JVM tests: RelayClient, SessionSocket,
+        │                              PromptQueue, Markdown
         └── main/
             ├── AndroidManifest.xml
             ├── res/                    values (strings, colors, themes), xml, mipmaps
@@ -125,7 +147,7 @@ android/
                     ├── RemotexViewModel.kt    mirrors apps/web useRemotex.js
                     ├── Markdown.kt
                     ├── app/                   RemotexBar, StatusBadge
-                    ├── components/            pickers, token field, status bar
+                    ├── components/            token field, status bar, formatters
                     ├── theme/Theme.kt
                     └── screens/
                         ├── hosts/             HostsScreen, HostRow
@@ -142,6 +164,10 @@ android/
 `RemotexViewModel.kt` is a deliberate mirror of
 `apps/web/src/hooks/useRemotex.js` — same event reducer, same state
 shape. Changing frame handling in one usually means changing it in both.
+That includes the pending-prompt queues (`pendingApprovals` /
+`pendingUserInputs`: every unanswered prompt is kept in arrival order and
+only the head is rendered) and the `replay-gap` marker the relay sends
+when its replay buffer no longer covers a reconnecting client's cursor.
 
 ## CI
 
@@ -155,6 +181,8 @@ shape. Changing frame handling in one usually means changing it in both.
 4. `./gradlew assembleDebug --no-daemon --stacktrace`.
 5. Uploads `app-debug.apk` as a workflow artifact — grab it from the
    Actions run summary without a local toolchain.
+6. `./gradlew test` (JVM unit tests) and `./gradlew lint`. A lint failure
+   uploads `android/app/build/reports/` as an artifact, since the summary
+   line alone never says which file.
 
-Failing the Android build fails the PR status check. Note that CI builds
-the APK but does **not** run `./gradlew test`; run the unit tests locally.
+Failing any of those fails the PR status check.

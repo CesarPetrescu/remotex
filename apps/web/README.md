@@ -15,10 +15,15 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
   reasoning, tool calls, file changes, MCP tool calls, and agent messages
   with delta streaming and syntax-highlighted markdown.
 - Sends turns with optional image attachments, model, reasoning effort,
-  and permission chips (fetched from `/api/models`, with an embedded
-  fallback in `src/config.js`).
-- Handles approval prompts and Codex user-input dialogs, including
-  first-response-wins arbitration when several clients are attached.
+  and permission chips. The model list comes from
+  `/api/hosts/{host_id}/models` (what that host's codex actually offers),
+  falling back to `/api/models` and then to `FALLBACK_MODEL_OPTIONS` in
+  `src/config.js`.
+- Queues approval prompts and Codex user-input dialogs — a second
+  concurrent prompt lines up behind the first instead of replacing it —
+  with first-response-wins arbitration when several clients are attached.
+- Marks a replay gap in the stream when the relay's buffer no longer has
+  the events a reconnecting client asked for.
 - Interrupts a running turn; runs slash commands (`/plan`, `/default`,
   `/cd`, `/pwd`, `/compact`, `/goal`, `/collab`); sets and clears thread
   goals with a token budget.
@@ -28,8 +33,15 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
 - Reconnects with `last_seq` so a refresh or a sleeping phone catches up
   on missed events instead of losing the stream.
 - Alerts on turn completion when the tab is backgrounded.
-- Persists the user token, sidebar layout, and folder history in
-  `localStorage`.
+- Persists sidebar layout and folder history in `localStorage`. The
+  bearer token goes to `localStorage` only when "remember on this device"
+  is on (the default, behind the sidebar's ⚙); with it off the token
+  lives in `sessionStorage` and dies with the tab. The prefilled
+  `demo-user-token` only authenticates against a relay started with
+  `RELAY_SEED_DEMO=1` — seeding is off by default.
+- Refuses image attachments and workspace uploads over
+  `MAX_FILE_BYTES` (25 MB, matching the relay's `REMOTEX_MAX_FILE_BYTES`)
+  with a readable error instead of a failed request.
 
 ## Dev
 
@@ -48,6 +60,8 @@ a Postgres DSN.
 
 ```bash
 npm run lint     # eslint
+npm run test     # vitest, watch mode
+npm run test:run # vitest, one shot
 npm run build    # → apps/web/dist/
 npm run preview  # serve the built bundle
 ```
@@ -69,7 +83,7 @@ apps/web/
 └── src/
     ├── main.jsx
     ├── App.jsx               app shell: screen routing, sidebars, Jump picker wiring
-    ├── config.js             screens, statuses, permission chips, fallback model list
+    ├── config.js             screens, statuses, permission chips, fallback model list, size cap
     ├── styles.css            the entire stylesheet
     ├── api/
     │   ├── relayClient.js    REST wrapper around the relay
@@ -88,13 +102,24 @@ apps/web/
     │   ├── EventStream.jsx, EventRow.jsx
     │   ├── PendingPromptsPanel.jsx   approvals + user-input dialogs
     │   ├── JumpPicker.jsx        folder picker (search / teleport / browse)
+    │   ├── SettingsPanel.jsx     token + "remember on this device"
     │   ├── WorkspaceFilesDrawer.jsx, FileRow.jsx
     │   ├── HostsSidebar.jsx, HostRow.jsx, DashboardHeader.jsx
     │   ├── RightSidebar.jsx, TelemetrySidebar.jsx, Sparkline.jsx
     │   ├── ResumingBanner.jsx, CopyButton.jsx, Toast.jsx
     └── util/
         markdown.jsx, path.js, slash.js, url.js, fuzzy.js,
-        copy.js, time.js, host.js, folderHistory.js
+        copy.js, time.js, host.js, folderHistory.js, tokenStorage.js
+```
+
+Tests live next to what they cover (`src/**/*.test.js`) and run in
+vitest's `node` environment — the pure helpers plus the `useRemotex`
+reducer, which is exported for exactly that reason. No jsdom, no
+component rendering:
+
+```
+src/util/{slash,path,fuzzy,url}.test.js
+src/hooks/useRemotex.test.js       reducer: prompt queues, model list, token pref
 ```
 
 `useRemotex.js` is the single source of truth for app state — a reducer
@@ -113,7 +138,10 @@ document.body)`. Add new overlays the same way.
 
 ## Still to do
 
-Tracked in the root `README.md` and `services/docs/production_plan.md`:
+Tracked in the root `README.md` and under "Known gaps" in
+`services/docs/architecture.md`:
 
-- Real OIDC login, replacing the demo bearer token.
+- Real OIDC login, replacing the demo bearer token. "Remember on this
+  device" only narrows the window a long-lived bearer token is readable
+  in; it does not fix the underlying model.
 - Push notifications for approvals that arrive while the tab is closed.

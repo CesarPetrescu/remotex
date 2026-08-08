@@ -1,20 +1,33 @@
 import { useEffect, useState } from 'react';
 
+// Renders the HEAD of each pending-prompt queue (contract F). Answering
+// the head pops it and the next one takes its place — a second concurrent
+// prompt never hides the first, and the header says how many are waiting.
 export function PendingPromptsPanel({
   approval,
   userInput,
+  approvalQueueLength = approval ? 1 : 0,
+  userInputQueueLength = userInput ? 1 : 0,
   onApprovalDecision,
   onUserInputSubmit,
   onUserInputCancel,
 }) {
   if (!approval && !userInput) return null;
-  const count = (approval ? 1 : 0) + (userInput ? 1 : 0);
+  const count = approvalQueueLength + userInputQueueLength;
+  const waiting = count - ((approval ? 1 : 0) + (userInput ? 1 : 0));
   return (
     <section className="pending-prompts-panel" aria-label="Pending Codex prompts">
       <div className="pending-prompts-head">
-        <span className="pending-prompts-title">Pending prompt</span>
+        <span className="pending-prompts-title">
+          {count === 1 ? 'Pending prompt' : 'Pending prompts'}
+        </span>
         <span className="pending-prompts-count">{count}</span>
       </div>
+      {waiting > 0 && (
+        <div className="pending-prompts-queued">
+          {waiting} more queued — answer this one to see the next
+        </div>
+      )}
       {approval && (
         <ApprovalPromptCard prompt={approval} onDecision={onApprovalDecision} />
       )}

@@ -6,15 +6,53 @@ import json
 import logging
 import os
 import random
+import time
 from typing import Awaitable, Callable
 
 import aiohttp
 
-from .adapters import AdminCodex, SessionAdapter, build_adapter
+from .adapters import (
+    AdminCodex,
+    SessionAdapter,
+    build_adapter,
+    model_options_from_codex,
+)
 from .config import Config
+from .limits import MAX_FILE_BYTES, WS_MAX_MSG_SIZE
 from .telemetry import TelemetryCollector, telemetry_loop
 
 log = logging.getLogger("daemon.client")
+
+# Bound on model/list pagination: enough for any real catalog, and a
+# hostile or looping cursor can't spin the daemon forever.
+_MODEL_LIST_MAX_PAGES = 10
+
+
+def _oversize_error_frame(frame: dict, size: int) -> dict:
+    """Replace a frame too big for the websocket with an error of the same
+    shape, so the peer still gets an answer on the socket it is waiting on.
+
+    Contract (A): oversize must produce an explicit error, never a silent
+    socket drop. The routing fields (type, session_id, request_id, event
+    kind) are kept so the relay and the clients route it as they would the
+    real thing; only the payload is dropped.
+    """
+    error = (
+        f"payload is {size} bytes; over the {WS_MAX_MSG_SIZE} byte websocket "
+        "ceiling (REMOTEX_MAX_FILE_BYTES)"
+    )
+    out: dict = {"type": frame.get("type"), "error": error}
+    for key in ("session_id", "request_id", "path"):
+        if frame.get(key):
+            out[key] = frame[key]
+    if frame.get("type") == "session-event":
+        event = frame.get("event") or {}
+        out["event"] = {
+            "kind": event.get("kind"),
+            "data": {"error": error},
+            "ts": event.get("ts") or time.time(),
+        }
+    return out
 
 
 class DaemonClient:
@@ -49,7 +87,11 @@ class DaemonClient:
     async def _run_once(self) -> None:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=15)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.ws_connect(self.config.relay_url, heartbeat=20) as ws:
+            async with session.ws_connect(
+                self.config.relay_url,
+                heartbeat=20,
+                max_msg_size=WS_MAX_MSG_SIZE,
+            ) as ws:
                 await ws.send_json({
                     "type": "hello",
                     "token": self.config.bridge_token,
@@ -73,8 +115,20 @@ class DaemonClient:
                 send_lock = asyncio.Lock()
 
                 async def send(frame: dict) -> None:
+                    # Size is enforced here, on the sending side, because
+                    # the receiving side cannot report it: aiohttp closes
+                    # the socket before the handler sees the oversize
+                    # frame, and that takes every session on this host with
+                    # it. Substituting an error keeps the socket alive.
+                    payload = json.dumps(frame)
+                    if len(payload) > WS_MAX_MSG_SIZE:
+                        log.warning(
+                            "frame %s is %d bytes; over the %d byte ceiling",
+                            frame.get("type"), len(payload), WS_MAX_MSG_SIZE,
+                        )
+                        payload = json.dumps(_oversize_error_frame(frame, len(payload)))
                     async with send_lock:
-                        await ws.send_json(frame)
+                        await ws.send_str(payload)
 
                 telemetry_task = asyncio.create_task(
                     telemetry_loop(self._telemetry, send),
@@ -82,6 +136,12 @@ class DaemonClient:
                 )
                 try:
                     async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.ERROR:
+                            # Almost always an oversize relay→daemon frame.
+                            # Raise so run() logs a reason and backs off,
+                            # instead of returning as if the relay had
+                            # closed cleanly.
+                            raise RuntimeError(f"relay frame rejected: {msg.data}")
                         if msg.type != aiohttp.WSMsgType.TEXT:
                             continue
                         try:
@@ -119,6 +179,9 @@ class DaemonClient:
         if ftype == "threads-list-request":
             asyncio.create_task(self._handle_threads_list(frame, send))
             return
+        if ftype == "models-list-request":
+            asyncio.create_task(self._handle_models_list(frame, send))
+            return
         if ftype == "fs-read-request":
             asyncio.create_task(self._handle_fs_read(frame, send))
             return
@@ -140,6 +203,44 @@ class DaemonClient:
         if ftype == "session-open" and sid:
             if sid in self._sessions:
                 return
+            await self._open_session(sid, frame, send)
+        elif ftype == "session-close" and sid:
+            runner = self._sessions.pop(sid, None)
+            if runner:
+                asyncio.create_task(runner.stop())
+        elif sid and sid in self._sessions:
+            runner = self._sessions[sid]
+            try:
+                await runner.handle(frame)
+            except Exception as exc:  # noqa: BLE001
+                # Contain the blast radius to this session: an adapter
+                # raising here used to escape the ws read loop and take
+                # every other session on the host down with it.
+                log.warning(
+                    "session %s: frame %s failed (%s: %s)",
+                    sid, ftype, type(exc).__name__, exc,
+                )
+                self._sessions.pop(sid, None)
+                await self._send_session_error(sid, send, exc)
+                # runner.stop() ends the pump, whose finally emits the
+                # terminal session-closed frame for this session.
+                asyncio.create_task(runner.stop())
+        else:
+            log.debug("ignoring frame %s", frame)
+
+    async def _open_session(
+        self,
+        sid: str,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        """Build + start one session's adapter, keeping any failure local.
+
+        A bad cwd, a missing codex binary or a codex that never answers
+        `initialize` must fail this session only — never the websocket
+        loop, and never the other sessions on this host.
+        """
+        try:
             adapter = build_adapter(
                 self.config.mode,
                 self.config.codex_binary,
@@ -149,17 +250,63 @@ class DaemonClient:
                 resume_thread_id=frame.get("resume_thread_id") or None,
                 kind=(frame.get("kind") or "codex"),
             )
-            runner = _SessionRunner(sid, adapter, send, on_exit=lambda: self._sessions.pop(sid, None))
-            self._sessions[sid] = runner
+        except Exception as exc:  # noqa: BLE001
+            log.warning("session %s: adapter build failed (%s: %s)", sid, type(exc).__name__, exc)
+            await self._send_session_error(sid, send, exc, closed=True)
+            return
+
+        runner = _SessionRunner(sid, adapter, send, on_exit=lambda: self._sessions.pop(sid, None))
+        try:
             await runner.start()
-        elif ftype == "session-close" and sid:
-            runner = self._sessions.pop(sid, None)
-            if runner:
-                asyncio.create_task(runner.stop())
-        elif sid and sid in self._sessions:
-            await self._sessions[sid].handle(frame)
-        else:
-            log.debug("ignoring frame %s", frame)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("session %s: start failed (%s: %s)", sid, type(exc).__name__, exc)
+            # start() failed before the pump existed, so nothing else will
+            # emit session-closed — and a half-spawned codex child would
+            # otherwise be left running.
+            try:
+                await asyncio.wait_for(adapter.stop(), timeout=5.0)
+            except Exception as stop_exc:  # noqa: BLE001
+                log.debug("session %s: cleanup after failed start: %s", sid, stop_exc)
+            await self._send_session_error(sid, send, exc, closed=True)
+            return
+        # Only track a runner that actually started; a failed start must
+        # not leave a zombie entry that swallows later session-opens.
+        self._sessions[sid] = runner
+
+    async def _send_session_error(
+        self,
+        sid: str,
+        send: Callable[[dict], Awaitable[None]],
+        exc: BaseException,
+        *,
+        closed: bool = False,
+    ) -> None:
+        """Tell the client why its session died.
+
+        turn-completed is the kind every client already renders (and it
+        releases the relay's in-flight turn slot), so the error rides on
+        that rather than a kind older clients would drop. ``closed``
+        adds the terminal session-closed frame for the paths where no
+        pump exists to emit it.
+        """
+        detail = str(exc) or type(exc).__name__
+        frames: list[dict] = [{
+            "type": "session-event",
+            "session_id": sid,
+            "event": {
+                "kind": "turn-completed",
+                "data": {"error": f"session failed: {detail}"},
+                "ts": time.time(),
+            },
+        }]
+        if closed:
+            frames.append({"type": "session-closed", "session_id": sid})
+        for frame in frames:
+            try:
+                await send(frame)
+            except Exception as send_exc:  # noqa: BLE001 — ws teardown race
+                log.debug("session %s: could not report error: %s", sid, send_exc)
+                return
 
     async def _handle_fs_read(
         self,
@@ -237,15 +384,20 @@ class DaemonClient:
     ) -> None:
         """Read a file off the daemon's local filesystem and return it
         base64-encoded so the relay can hand it to a client. Capped at
-        50MB; bigger files come back with an error rather than being
-        truncated, so the client can decide whether to chunk or skip."""
+        REMOTEX_MAX_FILE_BYTES (25MB default); bigger files come back
+        with an error rather than being truncated, so the client can
+        decide whether to chunk or skip. The cap is what keeps the
+        base64 payload inside the websocket message ceiling — a bigger
+        frame would be dropped by aiohttp, killing the connection and
+        every session on this host with it."""
         import base64
         import mimetypes
         import os
 
         request_id = frame.get("request_id")
         path = frame.get("path") or ""
-        max_bytes = int(frame.get("max_bytes") or 50 * 1024 * 1024)
+        requested = int(frame.get("max_bytes") or MAX_FILE_BYTES)
+        max_bytes = min(requested, MAX_FILE_BYTES)
         try:
             if not path or not os.path.isfile(path):
                 raise FileNotFoundError(path or "<empty path>")
@@ -361,10 +513,22 @@ class DaemonClient:
         try:
             if not path:
                 raise ValueError("path is required")
+            # base64 decodes to ~3/4 of its length; reject before we
+            # allocate the decoded copy.
+            if len(b64) // 4 * 3 > MAX_FILE_BYTES:
+                raise ValueError(
+                    f"upload exceeds the {MAX_FILE_BYTES} byte limit "
+                    "(REMOTEX_MAX_FILE_BYTES)"
+                )
             parent = os.path.dirname(path) or "."
             if not os.path.isdir(parent):
                 raise FileNotFoundError(f"parent directory does not exist: {parent}")
             data = base64.b64decode(b64, validate=False)
+            if len(data) > MAX_FILE_BYTES:
+                raise ValueError(
+                    f"upload is {len(data)} bytes; max is {MAX_FILE_BYTES} "
+                    "(REMOTEX_MAX_FILE_BYTES)"
+                )
             # Atomic-ish write: write to .partial, fsync, rename.
             tmp = path + ".partial"
             with open(tmp, "wb") as fh:
@@ -415,6 +579,47 @@ class DaemonClient:
                 "error": error,
             })
 
+    async def _handle_models_list(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        """Answer the relay's models-list-request from this host's codex.
+
+        The relay keeps its static list as the fallback, so an error here
+        is not fatal — it just means the picker shows the built-in list.
+        """
+        request_id = frame.get("request_id")
+        try:
+            # codex pages model/list with an opaque nextCursor and picks its
+            # own page size; stopping at page one would serve a silently
+            # truncated list as if it were the host's whole catalog.
+            data: list = []
+            cursor: str | None = None
+            for _ in range(_MODEL_LIST_MAX_PAGES):
+                page = await self._admin.list_models(cursor=cursor)
+                data.extend(page.get("data") or [])
+                cursor = page.get("nextCursor") or None
+                if not cursor:
+                    break
+            models = model_options_from_codex({"data": data})
+            if len(models) <= 1:
+                # Only the "codex picks" sentinel came back — nothing
+                # worth overriding the relay's static list with.
+                raise RuntimeError("codex returned no models")
+            await send({
+                "type": "models-list-response",
+                "request_id": request_id,
+                "models": models,
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.warning("model/list failed: %s", exc)
+            await send({
+                "type": "models-list-response",
+                "request_id": request_id,
+                "error": str(exc) or type(exc).__name__,
+            })
+
 
 class _SessionRunner:
     def __init__(
@@ -451,7 +656,23 @@ class _SessionRunner:
                 await self._send(ev.to_frame(self.session_id))
         except asyncio.CancelledError:
             pass
+        except Exception as exc:  # noqa: BLE001
+            # Nothing awaits this task, so an escaping exception would only
+            # ever surface as a GC-time warning — and the finally below
+            # would drop the runner while codex kept running.
+            log.warning(
+                "session %s: event pump failed (%s: %s)",
+                self.session_id, type(exc).__name__, exc,
+            )
         finally:
+            # stop() is the only thing that terminates the codex child, and
+            # on the exception path nobody else will call it: the runner is
+            # about to be dropped from _sessions, so _close_all_sessions
+            # would never see it.
+            try:
+                await asyncio.wait_for(self.adapter.stop(), timeout=5.0)
+            except Exception as stop_exc:  # noqa: BLE001
+                log.debug("session %s: adapter stop failed: %s", self.session_id, stop_exc)
             try:
                 await self._send({"type": "session-closed", "session_id": self.session_id})
             except Exception:  # noqa: BLE001 — shutdown race with the ws is expected

@@ -4,7 +4,9 @@ Inventory tables are prefixed with ``inventory_``.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import secrets
 import time
 import uuid
@@ -14,6 +16,27 @@ log = logging.getLogger("relay.store")
 
 DEMO_USER_TOKEN = "demo-user-token"
 DEMO_BRIDGE_TOKEN = "demo-bridge-token"
+
+_TRUTHY = {"1", "true", "yes"}
+
+
+def seed_demo_enabled() -> bool:
+    """Demo credentials are opt-in. The tokens are public (they're in the
+    repo), so a relay that seeds them by default is a relay anyone owns."""
+    return os.getenv("RELAY_SEED_DEMO", "").strip().lower() in _TRUTHY
+
+
+def hash_token(token: str) -> str:
+    """Tokens are stored hashed. Plaintext only ever exists in the request
+    that presented it and in the one response that issued it."""
+    return hashlib.sha256((token or "").encode()).hexdigest()
+
+
+def key_id(token: str) -> str:
+    """Short, non-secret handle for a bridge key — the first 12 chars of
+    its stored hash. Safe to show in a UI and to revoke by."""
+    return hash_token(token)[:12]
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS inventory_users (
@@ -49,7 +72,27 @@ CREATE TABLE IF NOT EXISTS inventory_sessions (
   closed_at    BIGINT
 );
 ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'codex';
+-- Resume state. Without these a relay restart loses the codex thread a
+-- session was bound to, and a reconnecting client silently gets a fresh
+-- thread under its old session id.
+ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS thread_id TEXT;
+ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS cwd TEXT;
 CREATE INDEX IF NOT EXISTS inventory_hosts_owner_idx ON inventory_hosts(owner_token, created_at DESC);
+-- Tokens are hashed at rest. The owner_token FK has to cascade before the
+-- users PK can be rewritten in place; sessions.owner_token has no FK, so it
+-- is rewritten explicitly. The 64-hex guard makes each UPDATE idempotent —
+-- note it would skip a plaintext token that is itself 64 lowercase hex
+-- chars, which nothing in this repo issues.
+ALTER TABLE inventory_hosts DROP CONSTRAINT IF EXISTS inventory_hosts_owner_token_fkey;
+ALTER TABLE inventory_hosts ADD CONSTRAINT inventory_hosts_owner_token_fkey
+  FOREIGN KEY (owner_token) REFERENCES inventory_users(token)
+  ON DELETE CASCADE ON UPDATE CASCADE;
+UPDATE inventory_users       SET token       = encode(sha256(token::bytea), 'hex')
+  WHERE token       !~ '^[0-9a-f]{64}$';
+UPDATE inventory_bridge_keys SET token       = encode(sha256(token::bytea), 'hex')
+  WHERE token       !~ '^[0-9a-f]{64}$';
+UPDATE inventory_sessions    SET owner_token = encode(sha256(owner_token::bytea), 'hex')
+  WHERE owner_token !~ '^[0-9a-f]{64}$';
 """
 
 
@@ -84,7 +127,8 @@ class Store:
         )
         async with self._pool.acquire() as conn:
             await conn.execute(SCHEMA)
-        await self._seed_demo()
+        if seed_demo_enabled():
+            await self._seed_demo()
 
     async def stop(self) -> None:
         if self._pool is not None:
@@ -94,7 +138,7 @@ class Store:
     async def _seed_demo(self) -> None:
         async with self._pool.acquire() as conn:
             existing = await conn.fetchrow(
-                "SELECT 1 FROM inventory_users WHERE token = $1", DEMO_USER_TOKEN,
+                "SELECT 1 FROM inventory_users WHERE token = $1", hash_token(DEMO_USER_TOKEN),
             )
             if existing:
                 return
@@ -103,27 +147,26 @@ class Store:
             async with conn.transaction():
                 await conn.execute(
                     "INSERT INTO inventory_users(token, email, created_at) VALUES ($1,$2,$3)",
-                    DEMO_USER_TOKEN, "demo@local", now,
+                    hash_token(DEMO_USER_TOKEN), "demo@local", now,
                 )
                 await conn.execute(
                     "INSERT INTO inventory_hosts(id, owner_token, nickname, created_at) VALUES ($1,$2,$3,$4)",
-                    host_id, DEMO_USER_TOKEN, "demo-host", now,
+                    host_id, hash_token(DEMO_USER_TOKEN), "demo-host", now,
                 )
                 await conn.execute(
                     "INSERT INTO inventory_bridge_keys(token, host_id, created_at) VALUES ($1,$2,$3)",
-                    DEMO_BRIDGE_TOKEN, host_id, now,
+                    hash_token(DEMO_BRIDGE_TOKEN), host_id, now,
                 )
-        log.info(
-            "seeded demo user (%s) + host %s + bridge token (%s)",
-            DEMO_USER_TOKEN, host_id, DEMO_BRIDGE_TOKEN,
-        )
+        # Never log the token values — RELAY_SEED_DEMO is documentation enough.
+        log.info("seeded demo user + host %s (RELAY_SEED_DEMO)", host_id)
 
     # --- users ---
 
     async def user_for_token(self, token: str) -> dict | None:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT token, email FROM inventory_users WHERE token = $1", token,
+                "SELECT token, email FROM inventory_users WHERE token = $1",
+                hash_token(token),
             )
         return dict(row) if row else None
 
@@ -186,11 +229,13 @@ class Store:
     # --- bridge keys ---
 
     async def issue_bridge_key(self, host_id: str) -> str:
+        """Mint a bridge key. The plaintext is returned exactly once —
+        only its hash is stored, so a lost key must be reissued."""
         token = f"brg_live_{secrets.token_urlsafe(24)}"
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO inventory_bridge_keys(token, host_id, created_at) VALUES ($1,$2,$3)",
-                token, host_id, _now(),
+                hash_token(token), host_id, _now(),
             )
         return token
 
@@ -198,9 +243,47 @@ class Store:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT host_id FROM inventory_bridge_keys WHERE token = $1 AND revoked_at IS NULL",
-                token,
+                hash_token(token),
             )
         return row["host_id"] if row else None
+
+    async def list_bridge_keys(self, host_id: str) -> list[dict]:
+        """Non-revoked keys for a host, identified by their key id (the
+        first 12 chars of the stored hash) — never by anything usable."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT substr(token, 1, 12) AS key_id, created_at"
+                " FROM inventory_bridge_keys"
+                " WHERE host_id = $1 AND revoked_at IS NULL"
+                " ORDER BY created_at DESC",
+                host_id,
+            )
+        return [dict(r) for r in rows]
+
+    async def revoke_bridge_key(
+        self,
+        host_id: str,
+        *,
+        token: str | None = None,
+        key_id: str | None = None,
+    ) -> int:
+        """Revoke one of a host's bridge keys, by plaintext token or by key
+        id. Returns the number of keys revoked (0 if already revoked or not
+        this host's)."""
+        if token:
+            match_col, match_val = "token", hash_token(token)
+        elif key_id:
+            match_col, match_val = "substr(token, 1, 12)", key_id
+        else:
+            return 0
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE inventory_bridge_keys SET revoked_at = $1"
+                f" WHERE host_id = $2 AND {match_col} = $3 AND revoked_at IS NULL",
+                _now(), host_id, match_val,
+            )
+        # asyncpg returns the command tag, e.g. "UPDATE 1".
+        return int(result.rsplit(" ", 1)[-1]) if result else 0
 
     # --- sessions ---
 
@@ -210,15 +293,36 @@ class Store:
         owner_token: str,
         *,
         kind: str = "codex",
+        thread_id: str | None = None,
+        cwd: str | None = None,
     ) -> str:
         sid = _new_id("sess")
         async with self._pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO inventory_sessions(id, host_id, owner_token, opened_at, kind)"
-                " VALUES ($1,$2,$3,$4,$5)",
-                sid, host_id, owner_token, _now(), kind,
+                "INSERT INTO inventory_sessions(id, host_id, owner_token, opened_at, kind, thread_id, cwd)"
+                " VALUES ($1,$2,$3,$4,$5,$6,$7)",
+                sid, host_id, owner_token, _now(), kind, thread_id, cwd,
             )
         return sid
+
+    async def update_session_resume(
+        self,
+        session_id: str,
+        *,
+        thread_id: str | None,
+        cwd: str | None,
+    ) -> None:
+        """Persist the live codex thread/cwd so a relay restart can rebuild
+        the session-open frame instead of starting a fresh thread."""
+        if not thread_id and not cwd:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE inventory_sessions"
+                " SET thread_id = COALESCE($2, thread_id), cwd = COALESCE($3, cwd)"
+                " WHERE id = $1",
+                session_id, thread_id, cwd,
+            )
 
     async def close_session(self, session_id: str) -> None:
         async with self._pool.acquire() as conn:
@@ -230,7 +334,7 @@ class Store:
     async def session_info(self, session_id: str) -> dict | None:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, host_id, owner_token, opened_at, closed_at, kind"
+                "SELECT id, host_id, owner_token, opened_at, closed_at, kind, thread_id, cwd"
                 " FROM inventory_sessions WHERE id = $1",
                 session_id,
             )

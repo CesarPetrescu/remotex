@@ -131,12 +131,19 @@ fun RemotexApp(relayUrl: String) {
                         onUploadWorkspaceFile = vm::uploadWorkspaceFile,
                     )
                 }
+                // Only the head of each queue is rendered (contract F);
+                // answering it pops it and the next one takes its place.
                 state.pendingApproval?.let { appr ->
-                    ApprovalDialog(prompt = appr, onDecision = { vm.resolveApproval(it) })
+                    ApprovalDialog(
+                        prompt = appr,
+                        queuedBehind = state.pendingApprovals.size - 1,
+                        onDecision = { vm.resolveApproval(it) },
+                    )
                 }
                 state.pendingUserInput?.let { ui ->
                     UserInputDialog(
                         prompt = ui,
+                        queuedBehind = state.pendingUserInputs.size - 1,
                         onSubmit = { vm.resolveUserInput(it) },
                         onCancel = { vm.cancelUserInput() },
                     )

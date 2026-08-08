@@ -5,8 +5,10 @@ Production scope:
   * Outbound-WSS daemons on /ws/daemon
   * Web/mobile clients on /ws/client
   * Per-session pipes routed in-memory by session_id
-  * Token auth (demo tokens seeded on first run; OIDC is a follow-up)
-  * REST rate limit (token bucket, 30 burst / 10 per second)
+  * Token auth, hashed at rest (demo tokens only when RELAY_SEED_DEMO is
+    set; OIDC is a follow-up)
+  * REST rate limit (token bucket, 30 burst / 10 per second) + a per-IP
+    cap on websocket connection attempts
   * Structured JSON logs + audit events on logger=audit
 
 This module is intentionally small — every responsibility lives in a
@@ -14,7 +16,8 @@ sibling module:
   * ``store.py``     — async asyncpg inventory store
   * ``hub.py``       — in-memory routing maps
   * ``auth.py``      — bearer token middleware
-  * ``models.py``    — model-list constant served at /api/models
+  * ``limits.py``    — transfer size ceilings (HTTP body + WS frame)
+  * ``models.py``    — fallback model list served at /api/models
   * ``logging.py``   — JSON formatter + audit() helper
   * ``middleware/``  — rate limit middleware
   * ``handlers/``    — REST + WS handlers
@@ -22,6 +25,8 @@ sibling module:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -37,6 +42,7 @@ from .handlers import threads as threads_h
 from .handlers.ws_client import ws_client
 from .handlers.ws_daemon import ws_daemon
 from .hub import Hub
+from .limits import HTTP_MAX_BODY_BYTES
 from .logging import configure_json_logging
 from .middleware import rate_limit_middleware
 from .store import Store
@@ -45,10 +51,24 @@ log = logging.getLogger("relay")
 
 
 def make_app(database_url: str | None, static_root: Path) -> web.Application:
-    app = web.Application(middlewares=[rate_limit_middleware])
+    app = web.Application(
+        middlewares=[rate_limit_middleware],
+        # File uploads ride the request body; the WS legs are sized to
+        # match in limits.py.
+        client_max_size=HTTP_MAX_BODY_BYTES,
+    )
     app["store"] = Store(database_url)
     app["hub"] = Hub()
     app["static_root"] = static_root
+    # session_id → session-open overrides awaiting a client attach, and
+    # session_id → reservation timestamp for the sweeper. Created up front:
+    # aiohttp deprecates adding app keys after startup.
+    app["session_open_overrides"] = {}
+    app["session_reservations"] = {}
+    # Background task handles live in here for the same reason: aiohttp
+    # freezes the Application before on_startup runs, so assigning a new
+    # app key from _start_services is deprecated.
+    app["tasks"] = {}
     app.on_startup.append(_start_services)
     app.on_cleanup.append(_stop_services)
 
@@ -57,6 +77,9 @@ def make_app(database_url: str | None, static_root: Path) -> web.Application:
     app.router.add_get("/api/hosts", hosts_h.list_hosts)
     app.router.add_post("/api/hosts", hosts_h.register_host)
     app.router.add_post("/api/hosts/{host_id}/api-key", hosts_h.issue_api_key)
+    app.router.add_get("/api/hosts/{host_id}/api-key", hosts_h.list_api_keys)
+    app.router.add_post("/api/hosts/{host_id}/api-key/revoke", hosts_h.revoke_api_key)
+    app.router.add_get("/api/hosts/{host_id}/models", models_h.get_host_models)
     app.router.add_get("/api/hosts/{host_id}/threads", threads_h.list_host_threads)
     app.router.add_get("/api/hosts/{host_id}/fs", fs_h.list_host_fs)
     app.router.add_post("/api/hosts/{host_id}/fs/mkdir", fs_h.mkdir_host_fs)
@@ -85,9 +108,17 @@ def make_app(database_url: str | None, static_root: Path) -> web.Application:
 
 async def _start_services(app: web.Application) -> None:
     await app["store"].start()
+    app["tasks"]["reservation_sweeper"] = asyncio.create_task(
+        sessions_h.reservation_sweeper(app), name="session-reservation-sweeper",
+    )
 
 
 async def _stop_services(app: web.Application) -> None:
+    task = app["tasks"].pop("reservation_sweeper", None)
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     await app["store"].stop()
 
 
