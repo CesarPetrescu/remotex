@@ -26,6 +26,21 @@ import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 
+/**
+ * Server-side listener that answers the client's close frame.
+ *
+ * `MockWebServer.shutdown()` waits for its dispatcher queue to drain, and a
+ * websocket whose close handshake is still half-finished keeps that queue
+ * busy — teardown then fails with "Gave up waiting for queue to shut down",
+ * intermittently and in whichever test happened to run last. Completing the
+ * handshake from the server side makes shutdown deterministic.
+ */
+private abstract class ClosingWebSocketListener : WebSocketListener() {
+    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+        webSocket.close(code, null)
+    }
+}
+
 class SessionSocketTest {
     private lateinit var server: MockWebServer
 
@@ -45,7 +60,7 @@ class SessionSocketTest {
         val secondMessage = CompletableDeferred<String>()
 
         server.enqueue(
-            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            MockResponse().withWebSocketUpgrade(object : ClosingWebSocketListener() {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     if (!firstMessage.complete(text)) {
                         secondMessage.complete(text)
@@ -100,7 +115,7 @@ class SessionSocketTest {
         val sent = CompletableDeferred<Unit>()
 
         server.enqueue(
-            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            MockResponse().withWebSocketUpgrade(object : ClosingWebSocketListener() {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     // text is the client's hello; answer with a burst.
                     repeat(burst) { i -> webSocket.send("""{"type":"session-event","seq":$i}""") }
@@ -140,7 +155,7 @@ class SessionSocketTest {
     @Test
     fun closeArrivesAfterBufferedFramesAndCompletesTheFlow() = runBlocking {
         server.enqueue(
-            MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            MockResponse().withWebSocketUpgrade(object : ClosingWebSocketListener() {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     webSocket.send("""{"type":"attached"}""")
                     webSocket.send("""{"type":"pending-prompts"}""")

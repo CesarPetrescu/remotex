@@ -65,6 +65,13 @@ class SessionSocket(
                 _events.trySend(SocketEvent.Frame(bytes.utf8()))
             }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                // Answer the peer's close frame. OkHttp does not complete the
+                // handshake for us, and a half-closed socket keeps the TCP
+                // connection — and the relay's peer slot — alive until it
+                // times out. The relay closes sockets on its own initiative
+                // (4401 on a revoked key, 1013 for a slow consumer), so this
+                // is the common path, not an edge case.
+                webSocket.close(code, null)
                 finish(SocketEvent.Closed(reason))
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
