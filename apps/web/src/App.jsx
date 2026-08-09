@@ -174,6 +174,7 @@ function AuthenticatedApp({ auth, onLogout }) {
     <div className={layoutClass}>
       <DashboardHeader
         state={state}
+        api={r.apiRef.current}
         onMenuClick={() => setLeftOpen((v) => !v)}
         rightView={rightView}
         onRightView={openRightView}

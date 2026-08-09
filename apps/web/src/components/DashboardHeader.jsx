@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { STATUS } from '../config';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -12,6 +13,7 @@ const STATUS_LABELS = {
 
 export function DashboardHeader({
   state,
+  api,
   onMenuClick,
   rightView = 'telemetry',
   onRightView,
@@ -21,8 +23,28 @@ export function DashboardHeader({
   pendingPromptCount = 0,
   onDashboard,
 }) {
+  const [pings, setPings] = useState({});
+  const [pinging, setPinging] = useState(false);
   const label = STATUS_LABELS[state.status] || 'idle';
   const isLive = state.status === STATUS.Connected;
+  const onlineCount = state.hosts.filter((host) => host.online).length;
+
+  const refreshPings = async () => {
+    if (pinging || !api) return;
+    setPinging(true);
+    const results = await Promise.all(
+      state.hosts.filter((host) => host.online).map(async (host) => {
+        try {
+          return [host.id, await api.pingHost(host.id)];
+        } catch {
+          return [host.id, null];
+        }
+      }),
+    );
+    setPings(Object.fromEntries(results));
+    setPinging(false);
+  };
+
   return (
     <header className="dashboard-header">
       <div className="dashboard-header-left">
@@ -56,14 +78,41 @@ export function DashboardHeader({
           <img className="brand-logo" src="/favicon-192.png" alt="" />
           <span className="brand">REMOTEX</span>
         </button>
-        <span
-          className={`status-pill ${isLive ? 'is-live' : ''}`}
-          role="status"
-          aria-live="polite"
-        >
-          <span className={`tag-dot ${isLive ? 'ok' : ''}`} aria-hidden="true" />
-          {label}
-        </span>
+        <div className="daemon-status" onMouseEnter={refreshPings}>
+          <button
+            type="button"
+            className={`status-pill ${isLive ? 'is-live' : ''}`}
+            onFocus={refreshPings}
+            aria-describedby="daemon-status-details"
+          >
+            <span className={`tag-dot ${isLive ? 'ok' : ''}`} aria-hidden="true" />
+            <span role="status" aria-live="polite">{label}</span>
+          </button>
+          <div
+            id="daemon-status-details"
+            className="daemon-popover"
+            role="tooltip"
+            aria-busy={pinging}
+          >
+            <div className="daemon-popover-title">
+              <span>Daemons</span>
+              <span>{onlineCount}/{state.hosts.length} online</span>
+            </div>
+            {state.hosts.length === 0 ? (
+              <div className="daemon-popover-empty">No daemons registered</div>
+            ) : state.hosts.map((host) => (
+              <div className="daemon-popover-row" key={host.id}>
+                <span className={`tag-dot ${host.online ? 'ok' : ''}`} aria-hidden="true" />
+                <span className="daemon-popover-name" title={host.hostname || host.nickname}>
+                  {host.nickname || host.hostname || host.id}
+                </span>
+                <span className={`daemon-popover-ping${host.online ? '' : ' offline'}`}>
+                  {daemonPingLabel(host, pings[host.id], pinging)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="dashboard-header-right">
@@ -94,6 +143,13 @@ export function DashboardHeader({
       </div>
     </header>
   );
+}
+
+function daemonPingLabel(host, ping, pinging) {
+  if (!host.online) return 'offline';
+  if (Number.isFinite(ping)) return ping === 0 ? '<1 ms' : `${ping} ms`;
+  if (ping === null) return 'unreachable';
+  return pinging ? 'checking…' : '—';
 }
 
 function HeaderTool({ id, label, icon, active, onClick, badge }) {

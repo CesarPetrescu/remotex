@@ -320,6 +320,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     await hub.forget_session(sid)
                     audit("session.closed", session_id=sid, host_id=host_id)
             elif ftype in (
+                "ping-response",
                 "threads-list-response",
                 "models-list-response",
                 "thread-preview-response",

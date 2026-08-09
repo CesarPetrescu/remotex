@@ -120,11 +120,13 @@ export class SessionSocket {
     }
   }
 
-  sendTurn({ input, model, effort, permissions, images }) {
+  sendTurn({ input, model, effort, permissions, images, clientMessageId }) {
     const frame = {
       type: 'turn-start',
       input,
-      client_message_id: `msg-${Math.random().toString(36).slice(2, 12)}`,
+      // Caller may supply the id (it correlates locally-attached images
+      // with the relay's echo); otherwise mint one.
+      client_message_id: clientMessageId || `msg-${Math.random().toString(36).slice(2, 12)}`,
     };
     if (model) frame.model = model;
     if (effort && effort !== 'none') frame.effort = effort;
@@ -140,11 +142,11 @@ export class SessionSocket {
   // Inject a message into the turn that's already running (codex
   // `turn/steer`) instead of interrupting and retyping. The relay rejects
   // it when no turn is in flight.
-  sendSteer({ input, images }) {
+  sendSteer({ input, images, clientMessageId }) {
     const frame = {
       type: 'turn-steer',
       input,
-      client_message_id: `msg-${Math.random().toString(36).slice(2, 12)}`,
+      client_message_id: clientMessageId || `msg-${Math.random().toString(36).slice(2, 12)}`,
     };
     if (images?.length) frame.images = images;
     return this.send(frame);

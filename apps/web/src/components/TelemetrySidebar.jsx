@@ -1,6 +1,6 @@
 import { Sparkline } from './Sparkline';
 
-const EMPTY_HISTORY = { cpu: [], mem: [], gpu: [], up: [], down: [] };
+const EMPTY_HISTORY = { cpu: [], mem: [], gpus: [], gpu: [], up: [], down: [] };
 
 export function TelemetrySidebar({ telemetry, selectedHost }) {
   const current = telemetry?.current;
@@ -12,6 +12,11 @@ export function TelemetrySidebar({ telemetry, selectedHost }) {
     : null;
   const live = fresh !== null && fresh <= 10;
   const online = !!selectedHost?.online;
+  const gpus = Array.isArray(current?.gpus)
+    ? current.gpus
+    : current?.gpu
+      ? [current.gpu]
+      : [];
 
   return (
     <aside className="telemetry-sidebar" aria-label="System telemetry">
@@ -66,29 +71,48 @@ export function TelemetrySidebar({ telemetry, selectedHost }) {
           online={online}
           summary={summarizeSeries(vals(history.mem), (value) => `${formatPercent(value)}%`)}
         />
-        <TelemetryCard
-          label="GPU"
-          valueMain={
-            current?.gpu?.percent != null
-              ? `${formatPercent(current.gpu.percent)}%`
-              : current?.gpu
-                ? '—'
-                : 'n/a'
-          }
-          valueSide={current?.gpu?.name || (current?.gpu ? 'GPU' : 'no GPU')}
-          note={
-            current?.gpu?.mem_total_mb
-              ? `${formatMegabytes(current.gpu.mem_used_mb)} / ${formatMegabytes(current.gpu.mem_total_mb)} VRAM`
-              : 'accelerator state'
-          }
-          color="var(--accent-green)"
-          points={vals(history.gpu)}
-          times={tms(history.gpu)}
-          max={100}
-          online={online && !!current?.gpu}
-          disabled={!current?.gpu}
-          summary={summarizeSeries(vals(history.gpu), (value) => `${formatPercent(value)}%`)}
-        />
+        {gpus.length > 0 ? gpus.map((gpu, index) => {
+          const gpuHistory = history.gpus?.[index] || (index === 0 ? history.gpu : []);
+          const note = [
+            gpu.mem_total_mb
+              ? `${formatMegabytes(gpu.mem_used_mb)} / ${formatMegabytes(gpu.mem_total_mb)} VRAM`
+              : null,
+            gpu.temp_c != null ? `${Math.round(gpu.temp_c)}°C` : null,
+          ].filter(Boolean).join(' · ') || 'accelerator state';
+          return (
+            <TelemetryCard
+              key={`${gpu.name || 'gpu'}-${index}`}
+              label={gpus.length > 1 ? `GPU ${index + 1}` : 'GPU'}
+              valueMain={
+                gpu.percent != null ? `${formatPercent(gpu.percent)}%` : '—'
+              }
+              valueSide={gpu.name || `GPU ${index + 1}`}
+              note={note}
+              color="var(--accent-green)"
+              points={vals(gpuHistory)}
+              times={tms(gpuHistory)}
+              max={100}
+              online={online}
+              summary={summarizeSeries(
+                vals(gpuHistory),
+                (value) => `${formatPercent(value)}%`,
+              )}
+            />
+          );
+        }) : (
+          <TelemetryCard
+            label="GPU"
+            valueMain="n/a"
+            valueSide="no GPU"
+            note="accelerator state"
+            color="var(--accent-green)"
+            points={[]}
+            times={[]}
+            max={100}
+            online={false}
+            disabled
+          />
+        )}
         <TelemetryCard
           label="NETWORK"
           valueMain={null}

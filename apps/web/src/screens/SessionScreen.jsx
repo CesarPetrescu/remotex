@@ -111,6 +111,7 @@ export function SessionScreen({
       <EventStream
         events={state.events}
         pending={state.pending}
+        pendingSinceMs={state.pendingSinceMs}
         historyHasMore={state.historyHasMore}
         historyLoading={state.historyLoading}
         historyTick={state.historyTick}

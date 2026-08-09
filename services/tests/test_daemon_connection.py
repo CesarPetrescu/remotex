@@ -26,6 +26,21 @@ def _config(relay_url: str = "ws://relay.invalid/ws/daemon") -> Config:
 
 
 @pytest.mark.asyncio
+async def test_ping_request_answers_immediately():
+    daemon = DaemonClient(_config())
+    sent: list[dict] = []
+
+    async def send(frame: dict) -> None:
+        sent.append(frame)
+
+    await daemon._dispatch(
+        {"type": "ping-request", "request_id": "req_ping"}, send,
+    )
+
+    assert sent == [{"type": "ping-response", "request_id": "req_ping"}]
+
+
+@pytest.mark.asyncio
 async def test_reconnect_backoff_resets_after_stable_connection(monkeypatch):
     daemon = DaemonClient(_config())
     failures = [

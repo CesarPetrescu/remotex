@@ -328,6 +328,12 @@ class DaemonClient:
     async def _dispatch(self, frame: dict, send: Callable[[dict], Awaitable[None]]) -> None:
         ftype = frame.get("type")
         sid = frame.get("session_id")
+        if ftype == "ping-request":
+            await send({
+                "type": "ping-response",
+                "request_id": frame.get("request_id"),
+            })
+            return
         if ftype == "threads-list-request":
             asyncio.create_task(self._handle_threads_list(frame, send))
             return

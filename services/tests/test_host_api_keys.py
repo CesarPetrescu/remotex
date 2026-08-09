@@ -54,6 +54,7 @@ async def _client(aiohttp_client, store: FakeStore, hub: Hub):
     app = web.Application()
     app["store"] = store
     app["hub"] = hub
+    app.router.add_get("/api/hosts/{host_id}/ping", hosts_h.ping_host)
     app.router.add_post("/api/hosts/{host_id}/api-key", hosts_h.issue_api_key)
     app.router.add_get("/api/hosts/{host_id}/api-key", hosts_h.list_api_keys)
     app.router.add_post("/api/hosts/{host_id}/api-key/revoke", hosts_h.revoke_api_key)
@@ -62,6 +63,30 @@ async def _client(aiohttp_client, store: FakeStore, hub: Hub):
 
 ALICE_AUTH = {"Authorization": "Bearer alice-token"}
 BOB_AUTH = {"Authorization": "Bearer bob-token"}
+
+
+@pytest.mark.asyncio
+async def test_ping_round_trips_through_the_owned_daemon(aiohttp_client):
+    store = FakeStore({"host_x": ALICE})
+    hub = Hub()
+    daemon = MagicMock()
+    daemon.closed = False
+
+    async def answer(frame):
+        assert frame["type"] == "ping-request"
+        hub.resolve_admin_request("host_x", frame["request_id"], {
+            "type": "ping-response",
+            "request_id": frame["request_id"],
+        })
+
+    daemon.send_json = AsyncMock(side_effect=answer)
+    hub.daemons["host_x"] = daemon
+    client = await _client(aiohttp_client, store, hub)
+
+    resp = await client.get("/api/hosts/host_x/ping", headers=ALICE_AUTH)
+
+    assert resp.status == 200
+    assert await resp.json() == {"host_id": "host_x", "ok": True}
 
 
 @pytest.mark.asyncio

@@ -197,6 +197,45 @@ describe('reducer: model options', () => {
   });
 });
 
+describe('reducer: multi-GPU telemetry', () => {
+  const gpu = (name, percent) => ({
+    name,
+    percent,
+    mem_used_mb: 1024,
+    mem_total_mb: 8192,
+    temp_c: 50,
+  });
+
+  it('keeps one history series per GPU from the relay ring', () => {
+    const next = reducer(initialState, {
+      type: 'TELEMETRY',
+      hostId: 'host-1',
+      data: { gpus: [gpu('GPU A', 30), gpu('GPU B', 40)] },
+      history: [
+        { age_ms: 3000, data: { gpus: [gpu('GPU A', 10), gpu('GPU B', 20)] } },
+        { age_ms: 0, data: { gpus: [gpu('GPU A', 30), gpu('GPU B', 40)] } },
+      ],
+    });
+
+    const telemetry = next.hostTelemetry['host-1'];
+    expect(telemetry.current.gpus.map((item) => item.name)).toEqual(['GPU A', 'GPU B']);
+    expect(telemetry.history.gpus.map((series) => series.map((point) => point.v)))
+      .toEqual([[10, 30], [20, 40]]);
+    expect(telemetry.history.gpu).toEqual(telemetry.history.gpus[0]);
+  });
+
+  it('normalizes telemetry from an older single-GPU daemon', () => {
+    const next = reducer(initialState, {
+      type: 'TELEMETRY',
+      hostId: 'host-1',
+      data: { gpu: gpu('Legacy GPU', 12) },
+    });
+
+    expect(next.hostTelemetry['host-1'].current.gpus).toEqual([gpu('Legacy GPU', 12)]);
+    expect(next.hostTelemetry['host-1'].history.gpus[0].at(-1).v).toBe(12);
+  });
+});
+
 describe('tail-first history commits', () => {
   const base = { ...initialState, events: [{ id: 'live_1', role: 'agent', text: 'hi' }] };
 

@@ -281,6 +281,7 @@ export const initialState = {
   historyTick: 0,
   historyPrepend: false,
   pending: false,
+  pendingSinceMs: 0,
   model: '',
   effort: 'medium',
   permissions: 'default',
@@ -307,9 +308,10 @@ export const initialState = {
   error: null,
   // hostTelemetry[hostId] = {
   //   current: { cpu:{percent,cores,temp_c}, memory:{used_bytes,total_bytes,percent},
-  //              gpu:{name,percent,mem_used_mb,mem_total_mb,temp_c}|null,
+  //              gpus:[{name,percent,mem_used_mb,mem_total_mb,temp_c}],
+  //              gpu:{...}|null, // first-GPU compatibility alias
   //              network:{up_bps,down_bps}, uptime_s, load_avg:[1m,5m,15m], ts },
-  //   history: { cpu:[], mem:[], gpu:[], up:[], down:[] },  // rolling, newest last
+  //   history: { cpu:[], mem:[], gpus:[[]], gpu:[], up:[], down:[] },
   //   lastUpdate: epoch_ms
   // }
   hostTelemetry: {},
@@ -319,6 +321,9 @@ export const initialState = {
 };
 
 const TELEMETRY_WINDOW_MS = 30000; // real 30-second sliding window
+const telemetryGpus = (data) => (
+  Array.isArray(data?.gpus) ? data.gpus : data?.gpu ? [data.gpu] : []
+);
 
 // --- reducer ---
 
@@ -481,7 +486,13 @@ export function reducer(state, action) {
       };
 
     case 'PENDING':
-      return { ...state, pending: action.pending };
+      return {
+        ...state,
+        pending: action.pending,
+        pendingSinceMs: action.pending
+          ? (state.pending ? state.pendingSinceMs : Date.now())
+          : 0,
+      };
 
     case 'SHARED_TURN_RECONCILED':
       if (action.active) return { ...state, pending: true };
@@ -564,8 +575,11 @@ export function reducer(state, action) {
       const hostId = action.hostId;
       if (!hostId || !action.data) return state;
       const prev = state.hostTelemetry[hostId];
-      const prevHistory = prev?.history || { cpu: [], mem: [], gpu: [], up: [], down: [] };
+      const prevHistory = prev?.history || {
+        cpu: [], mem: [], gpus: [], gpu: [], up: [], down: [],
+      };
       const d = action.data;
+      const currentGpus = telemetryGpus(d);
       const now = Date.now();
       const cutoff = now - TELEMETRY_WINDOW_MS;
       const num = (v) => (Number.isFinite(v) ? v : 0);
@@ -580,10 +594,19 @@ export function reducer(state, action) {
           action.history
             .map((s) => ({ t: now - (s.age_ms || 0), v: num(pick(s.data || {})) }))
             .filter((p) => p.t >= cutoff);
+        const gpuCount = Math.max(
+          currentGpus.length,
+          ...action.history.map((sample) => telemetryGpus(sample.data).length),
+        );
+        const gpuSeries = Array.from(
+          { length: gpuCount },
+          (_, index) => series((x) => telemetryGpus(x)[index]?.percent),
+        );
         history = {
           cpu: series((x) => x.cpu?.percent),
           mem: series((x) => x.memory?.percent),
-          gpu: series((x) => x.gpu?.percent),
+          gpus: gpuSeries,
+          gpu: gpuSeries[0] || [],
           up: series((x) => x.network?.up_bps),
           down: series((x) => x.network?.down_bps),
         };
@@ -593,10 +616,21 @@ export function reducer(state, action) {
           next.push({ t: now, v: num(v) });
           return next;
         };
+        const previousGpus = Array.isArray(prevHistory.gpus)
+          ? prevHistory.gpus
+          : prevHistory.gpu?.length
+            ? [prevHistory.gpu]
+            : [];
+        const gpuCount = Math.max(currentGpus.length, previousGpus.length);
+        const gpuSeries = Array.from(
+          { length: gpuCount },
+          (_, index) => push(previousGpus[index] || [], currentGpus[index]?.percent),
+        );
         history = {
           cpu: push(prevHistory.cpu, d.cpu?.percent ?? 0),
           mem: push(prevHistory.mem, d.memory?.percent ?? 0),
-          gpu: push(prevHistory.gpu, d.gpu?.percent ?? 0),
+          gpus: gpuSeries,
+          gpu: gpuSeries[0] || [],
           up: push(prevHistory.up, d.network?.up_bps ?? 0),
           down: push(prevHistory.down, d.network?.down_bps ?? 0),
         };
@@ -605,7 +639,7 @@ export function reducer(state, action) {
         ...state,
         hostTelemetry: {
           ...state.hostTelemetry,
-          [hostId]: { current: d, history, lastUpdate: now },
+          [hostId]: { current: { ...d, gpus: currentGpus }, history, lastUpdate: now },
         },
       };
     }
@@ -632,6 +666,10 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
   // Non-null while a history batch is streaming in: replayed items collect
   // here and commit as ONE dispatch on history-end / history-chunk-end.
   const historyBufRef = useRef(null);
+  // client_message_id → [dataUrl] for images we just attached. The relay
+  // echo only carries a count; the sender is the one client that can show
+  // the actual pixels, so stash them until the echo arrives.
+  const sentImagesRef = useRef(new Map());
   const reconnectRef = useRef(null);
   const reconnectAttemptRef = useRef(0);
   const userClosedRef = useRef(false);
@@ -823,6 +861,10 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         const stamp = (ev) => {
           if (!ev) return ev;
           ev.ts = Number.isFinite(data.ts) ? data.ts : Date.now() / 1000;
+          if (ev.role === 'user' && sentImagesRef.current.has(ev.id)) {
+            ev.imageUrls = sentImagesRef.current.get(ev.id);
+            sentImagesRef.current.delete(ev.id);
+          }
           return ev;
         };
         if (data.replayed && historyBufRef.current) {
@@ -874,6 +916,8 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
           if (data.text) patch.text = data.text;
         } else if (data.item_type === 'tool_call') {
           if (data.output) patch.output = data.output;
+          if (Number.isFinite(data.exit_code)) patch.exitCode = data.exit_code;
+          if (data.args?.command) patch.command = data.args.command;
         } else if (data.item_type === 'mcp_tool_call') {
           patch.output = formatMcpOutput(data);
           patch.status = data.status || '';
@@ -1412,16 +1456,21 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         }
       }
 
+      const clientMessageId = `msg-${Math.random().toString(36).slice(2, 12)}`;
       const sent = sock.sendTurn({
         input,
         model,
         effort,
         permissions,
         images: pendingImages.map((a) => ({ mime: a.mime, data: a.base64 })),
+        clientMessageId,
       });
       if (!sent) {
         dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
         return;
+      }
+      if (pendingImages.length) {
+        sentImagesRef.current.set(clientMessageId, pendingImages.map((a) => a.dataUrl));
       }
       dispatch({ type: 'CLEAR_IMAGES' });
       dispatch({ type: 'PENDING', pending: true });
@@ -1455,13 +1504,18 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     if (!input && pendingImages.length === 0) return;
     const sock = socketRef.current;
     if (!sock) return;
+    const clientMessageId = `msg-${Math.random().toString(36).slice(2, 12)}`;
     const sent = sock.sendSteer({
       input,
       images: pendingImages.map((a) => ({ mime: a.mime, data: a.base64 })),
+      clientMessageId,
     });
     if (!sent) {
       dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
       return;
+    }
+    if (pendingImages.length) {
+      sentImagesRef.current.set(clientMessageId, pendingImages.map((a) => a.dataUrl));
     }
     dispatch({ type: 'CLEAR_IMAGES' });
   }, []);
@@ -1727,6 +1781,7 @@ function buildItemEvent(data) {
         tool: data.tool || 'tool',
         command: data.args?.command || '',
         output: data.output || '',
+        exitCode: Number.isFinite(data.exit_code) ? data.exit_code : undefined,
         completed: replayed,
       };
     case 'mcp_tool_call':

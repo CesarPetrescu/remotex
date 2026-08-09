@@ -9,12 +9,21 @@ from ..auth import require_user
 from ..hub import Hub
 from ..logging import audit
 from ..store import Store, key_id
+from .daemon_rpc import await_daemon_request
 
 
 async def list_hosts(request: web.Request) -> web.Response:
     user = await require_user(request)
     hosts = await request.app["store"].list_hosts(user["token"])
     return web.json_response({"hosts": hosts})
+
+
+async def ping_host(request: web.Request) -> web.Response:
+    host_id = request.match_info["host_id"]
+    await await_daemon_request(
+        request, host_id, {"type": "ping-request"}, timeout=5.0,
+    )
+    return web.json_response({"host_id": host_id, "ok": True})
 
 
 async def register_host(request: web.Request) -> web.Response:

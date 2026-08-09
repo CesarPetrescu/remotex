@@ -59,9 +59,27 @@ const TIME_GAP_S = 30 * 60;
 //    so reading old turns never gets yanked down by a streaming delta;
 //  - the "load older" sentinel arms 300 ms after the tail settles, so
 //    the initial render can't accidentally trigger a backfill.
+// Claude-Code-style activity line: pulsing star + elapsed seconds while
+// a turn runs, rendered at the tail of the stream.
+function WorkingRow({ sinceMs }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const elapsed = sinceMs > 0 ? Math.max(0, Math.floor((Date.now() - sinceMs) / 1000)) : 0;
+  return (
+    <div className="working-row" aria-live="polite">
+      <span className="working-star" aria-hidden="true">✳</span>
+      Working… {elapsed > 0 ? `${elapsed}s` : ''}
+    </div>
+  );
+}
+
 export function EventStream({
   events,
   pending,
+  pendingSinceMs = 0,
   placeholder,
   historyHasMore = false,
   historyLoading = false,
@@ -175,6 +193,7 @@ export function EventStream({
         );
         return divider ? [divider, row] : row;
       })}
+      {pending && events.length > 0 && <WorkingRow sinceMs={pendingSinceMs} />}
       {events.length > 0 && !atBottom && (
         <button
           type="button"

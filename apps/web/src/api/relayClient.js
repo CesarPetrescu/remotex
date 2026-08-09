@@ -36,6 +36,12 @@ export class RelayClient {
     return this.#request('/api/hosts').then((r) => r.hosts);
   }
 
+  async pingHost(hostId) {
+    const started = performance.now();
+    await this.#request(`/api/hosts/${encodeURIComponent(hostId)}/ping`);
+    return Math.max(0, Math.round(performance.now() - started));
+  }
+
   // GET /api/models: no host context, so all the relay can offer is the
   // "let codex decide" entry. Unauthenticated — needed before the user
   // has a token. Prefer listHostModels() as soon as a host is known.

@@ -32,6 +32,73 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — chat transcript rebuilt Claude-Code style: diffs, tool rows, thinking, images
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
+
+- **Why:** owner: chat UI is bad, attached images invisible, wants
+  reasoning/tools/diffs rendered the way Claude Code / Codex render them.
+  Root finding on images: `EventRow` had thumbnail markup but NOTHING
+  ever set `imageUrls` — the relay echo only carries `image_count` and
+  the sender discarded its local copies on send.
+- **Changed (web only):**
+  - `DiffView.jsx` — NEW. Parses the daemon's `_format_changes` output
+    (verb+path summary in `args.command`, unified diff in `output`,
+    multi-file split on `--- /path` separators) into per-file cards:
+    verb + tail-truncated path (`<bdi>` inside the RTL clip — bare RTL
+    migrates the leading slash again), `+N −M` counts, green/red-tinted
+    lines via theme tokens, dim hunks, collapse >14 lines (tail-follow
+    while streaming). `item-patch` streams straight into it.
+  - `EventRow.jsx` — rewritten. Tools render as `● name(first-line)`
+    headers (dot: pulsing amber running / green ok / red on error or
+    nonzero exit) with a `⎿`-gutter output block that tail-follows while
+    running and head-truncates after. Reasoning renders as `✳ Thinking…`
+    live, folding to one dim `✳ Thought · headline` line on completion
+    (markdown markers stripped from headlines). `tool === 'edit'` →
+    DiffView. User bubbles show attached-image thumbnails with a
+    fullscreen lightbox portal. Replay-gap row preserved.
+  - `useRemotex.js` — `sentImagesRef`: dataUrls stashed under the
+    `client_message_id` at send/steer time and attached when the relay
+    echo returns that id as `item_id` (so ONLY the sending client sees
+    pixels; peers/history still get the count — shipping bytes back is a
+    daemon feature, not done). Tool events carry `exitCode`; the id is
+    now minted in the hook and passed to the socket. `pendingSinceMs`
+    for the working timer.
+  - `EventStream.jsx` — `✳ Working… Ns` elapsed row at the tail while a
+    turn runs.
+  - `styles.css` — tool/thinking/diff/lightbox/working styles, all
+    token-based (verified in light mode); ≤640px sizes.
+- **Verified:** eslint clean, 69 vitest, build clean. Live e2e on the
+  rig (real codex turn): attached a generated PNG + asked for a color +
+  an apply_patch edit — screenshot shows the thumbnail in the bubble,
+  two collapsed Thought lines, `shell(...)` with ⎿ output, and a real
+  diff card (`update /tmp/probe-ws/notes.txt  +1`, green add line).
+  Mobile (412px) spot-checked: path correct, args ellipsize, diff fits.
+  Relay rebuilt + recreated.
+- **Left open:** images survive only on the SENDING client — after
+  resume they fall back to the count chip. Making them durable means the
+  daemon persisting/serving the temp image files; noted here as the
+  follow-up. History replay never contains fileChange items (rollout
+  parser doesn't extract them) — diffs appear live only; extracting
+  `patch_apply_end` events from rollouts would fix that.
+- **Restart needed:** already done (relay).
+
+## 2026-08-09 — daemon ping popover (implementation complete, relay deploy waiting)
+**Agent:** Codex · **Branch:** main · **Status:** partial
+
+- **Why:** hovering/focusing the header connection state should list every
+  registered daemon and its current end-to-end round-trip latency.
+- **Changed:** `services/{daemon/client.py,relay/app.py,relay/handlers/{hosts.py,ws_daemon.py}}`
+  add an authenticated ping request/response; `apps/web/src/{App.jsx,api/relayClient.js,components/DashboardHeader.jsx,styles.css}`
+  add the hover/focus daemon list and browser-measured milliseconds; focused
+  tests cover the daemon reply and owned-host route.
+- **Verified:** full services suite 176 passed; Ruff clean; web ESLint, 66
+  tests, and production build clean. Daemon restarted and reattached to the
+  relay/shared Codex socket successfully.
+- **Left open:** relay rebuild/deploy is intentionally waiting because another
+  agent has uncommitted chat-transcript work in `App.jsx`/`styles.css` and an
+  untracked `DiffView.jsx`; do not ship or overwrite that work half-finished.
+- **Restart needed:** relay rebuild after the concurrent web work settles.
+
 ## 2026-08-09 — redact private deployment metadata from current docs
 **Agent:** Codex · **Branch:** main · **Status:** partial
 

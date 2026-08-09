@@ -79,6 +79,7 @@ def make_app(database_url: str | None, static_root: Path) -> web.Application:
     app.router.add_get("/api/models", models_h.get_models)
     app.router.add_get("/api/hosts", hosts_h.list_hosts)
     app.router.add_post("/api/hosts", hosts_h.register_host)
+    app.router.add_get("/api/hosts/{host_id}/ping", hosts_h.ping_host)
     app.router.add_post("/api/hosts/{host_id}/api-key", hosts_h.issue_api_key)
     app.router.add_get("/api/hosts/{host_id}/api-key", hosts_h.list_api_keys)
     app.router.add_post("/api/hosts/{host_id}/api-key/revoke", hosts_h.revoke_api_key)

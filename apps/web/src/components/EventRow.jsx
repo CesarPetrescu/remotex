@@ -1,34 +1,22 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MarkdownText } from '../util/markdown';
 import { CopyButton } from './CopyButton';
+import { DiffView } from './DiffView';
 
-// One row in the streaming event list. Inside an agent-group (grouped=true)
-// the top-level "CODEX" label is rendered by the parent; rows render only
-// a small sub-label ("REASONING", "TOOL · …") plus body.
+// One row in the streaming event list, presented the way Claude Code /
+// Codex present their transcripts:
+//   - user messages: right-aligned bubble, with attached-image thumbnails
+//   - reasoning: "✳ Thinking" — live while streaming, collapsed to one
+//     dim headline once done
+//   - tool calls: "● tool(arg)" header + a ⎿-gutter output block that
+//     tail-follows while running and expands on demand
+//   - edits: a real per-file diff (DiffView) instead of a raw diff dump
 export function EventRow({ event, pending, grouped }) {
   const isStreaming = pending && !event.completed;
 
   if (event.role === 'user') {
-    const body = event.text || (
-      event.imageCount > 0
-        ? `${event.imageCount} image${event.imageCount === 1 ? '' : 's'}`
-        : ''
-    );
-    return (
-      <div className="item item-user">
-        <div className="user-bubble">
-          <div className="item-label">YOU</div>
-          <div className="item-body">{body}</div>
-          {event.imageUrls?.length > 0 && (
-            <div className="item-images">
-              {event.imageUrls.map((url, i) => (
-                <img key={i} src={url} alt="" />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    );
+    return <UserRow event={event} />;
   }
 
   // Contract (C): the relay's replay buffer had already evicted part of
@@ -50,16 +38,11 @@ export function EventRow({ event, pending, grouped }) {
   }
 
   if (event.role === 'reasoning') {
-    return (
-      <details className={`sub sub-reasoning${grouped ? '' : ' standalone'}`} open={!event.replayed}>
-        <summary className="sub-label">REASONING</summary>
-        <MarkdownText text={event.text || '…'} className="dim" />
-      </details>
-    );
+    return <ThinkingSub event={event} streaming={isStreaming} grouped={grouped} />;
   }
 
   if (event.role === 'tool') {
-    return <ToolSub event={event} grouped={grouped} />;
+    return <ToolSub event={event} streaming={isStreaming} grouped={grouped} />;
   }
 
   if (event.role === 'agent') {
@@ -79,60 +62,117 @@ export function EventRow({ event, pending, grouped }) {
   );
 }
 
-// Default-collapsed: shows command and a 2/…/2 preview of output. Click to
-// expand — toggles the whole block (command stays visible either way, but
-// output becomes full).
-function ToolSub({ event, grouped }) {
+function UserRow({ event }) {
+  const [lightbox, setLightbox] = useState(null);
+  const body = event.text || (
+    event.imageCount > 0 && !event.imageUrls?.length
+      ? `${event.imageCount} image${event.imageCount === 1 ? '' : 's'}`
+      : ''
+  );
+  return (
+    <div className="item item-user">
+      <div className="user-bubble">
+        <div className="item-label">YOU</div>
+        {body && <div className="item-body">{body}</div>}
+        {event.imageUrls?.length > 0 && (
+          <div className="item-images">
+            {event.imageUrls.map((url, i) => (
+              <button
+                key={i}
+                type="button"
+                className="item-image-thumb"
+                onClick={() => setLightbox(url)}
+                aria-label="View image"
+              >
+                <img src={url} alt="" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {lightbox && createPortal(
+        <div
+          className="lightbox"
+          role="dialog"
+          aria-label="Image"
+          onClick={() => setLightbox(null)}
+        >
+          <img src={lightbox} alt="" />
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+// Claude-Code-style thinking: streaming shows the live text; once the
+// item completes it folds to a single dim "✳ Thought" line.
+function ThinkingSub({ event, streaming, grouped }) {
+  const [open, setOpen] = useState(false);
+  const expanded = streaming || open;
+  const headline = firstLine(event.text) || 'Thinking…';
+  return (
+    <div className={`sub sub-reasoning${grouped ? '' : ' standalone'}`}>
+      <button
+        type="button"
+        className={`thinking-head ${streaming ? 'streaming' : ''}`}
+        onClick={() => !streaming && setOpen((v) => !v)}
+        aria-expanded={expanded}
+      >
+        <span className="thinking-star" aria-hidden="true">✳</span>
+        {streaming ? 'Thinking…' : (
+          <span className="thinking-headline">
+            Thought
+            {!open && headline ? <span className="thinking-preview"> · {headline}</span> : null}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <MarkdownText text={event.text || '…'} className="dim thinking-body" />
+      )}
+    </div>
+  );
+}
+
+function ToolSub({ event, streaming, grouped }) {
   const [expanded, setExpanded] = useState(false);
+  const isEdit = event.tool === 'edit';
   const output = event.output || '';
-  const needsTruncation = output && countLines(output) > 5;
-  const shown = expanded || !needsTruncation ? output : previewLines(output);
-  const hasRawDetails = event.rawArguments !== undefined || event.rawResult !== undefined || event.error;
-  const meta = toolMeta(event);
+  const failed = Boolean(event.error)
+    || (Number.isFinite(event.exitCode) && event.exitCode !== 0);
+  const dotClass = streaming ? 'run' : failed ? 'err' : 'ok';
+  const arg = firstLine(event.command);
+  const hasRawDetails = event.rawArguments !== undefined
+    || event.rawResult !== undefined
+    || event.error;
 
   return (
     <div className={`sub sub-tool${grouped ? '' : ' standalone'}`}>
       <button
         type="button"
-        className="sub-label sub-label-toggle"
+        className="tool-head"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        <span className="sub-chev">{expanded ? '▾' : '▸'}</span>
-        TOOL · {event.tool}
-        {meta && <span className="tool-meta"> · {meta}</span>}
+        <span className={`tool-dot ${dotClass}`} aria-hidden="true" />
+        <span className="tool-name">{event.tool}</span>
+        {arg && !isEdit && <span className="tool-arg">({arg})</span>}
+        <span className="tool-meta">{toolMeta(event)}</span>
       </button>
-      {event.command && (
-        <pre className="item-code">
-          <CopyButton getText={() => event.command} />
-          {event.command}
-        </pre>
-      )}
-      {output && (
-        <pre className="item-code dim">
-          <CopyButton getText={() => output} />
-          {shown}
-          {needsTruncation && !expanded && (
-            <span
-              className="tool-expand"
-              role="button"
-              tabIndex={0}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                setExpanded(true);
-              }}
-              onKeyDown={(ev) => {
-                if (ev.key === 'Enter' || ev.key === ' ') {
-                  ev.preventDefault();
-                  setExpanded(true);
-                }
-              }}
-            >
-              {`\n… ${countLines(output) - 4} more lines — click to expand`}
-            </span>
-          )}
-        </pre>
-      )}
+
+      {isEdit ? (
+        <div className="tool-out">
+          <DiffView summary={event.command} diff={output} streaming={streaming} />
+        </div>
+      ) : output ? (
+        <ToolOutput
+          output={output}
+          streaming={streaming}
+          expanded={expanded}
+          onExpand={() => setExpanded(true)}
+        />
+      ) : null}
+
       {expanded && hasRawDetails && (
         <div className="tool-details">
           {event.rawArguments !== undefined && (
@@ -141,11 +181,53 @@ function ToolSub({ event, grouped }) {
           {event.rawResult !== undefined && (
             <ToolDetail label="result" value={event.rawResult} />
           )}
-          {event.error && (
-            <ToolDetail label="error" value={event.error} />
-          )}
+          {event.error && <ToolDetail label="error" value={event.error} />}
         </div>
       )}
+    </div>
+  );
+}
+
+// The ⎿ gutter block. While the tool is running it tail-follows (last
+// lines visible, like watching a terminal); once done it shows the head
+// with an expand affordance.
+function ToolOutput({ output, streaming, expanded, onExpand }) {
+  const lines = output.split('\n');
+  const limit = streaming ? 4 : 5;
+  const overflow = lines.length > limit;
+  const shown = expanded || !overflow
+    ? output
+    : streaming
+      ? lines.slice(-limit).join('\n')
+      : `${lines.slice(0, limit - 1).join('\n')}\n`;
+
+  return (
+    <div className="tool-out">
+      <span className="tool-gutter" aria-hidden="true">⎿</span>
+      <pre className="tool-out-body">
+        <CopyButton getText={() => output} />
+        {overflow && streaming && !expanded && <span className="tool-out-ellipsis">…{'\n'}</span>}
+        {shown}
+        {overflow && !streaming && !expanded && (
+          <span
+            className="tool-expand"
+            role="button"
+            tabIndex={0}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onExpand();
+            }}
+            onKeyDown={(ev) => {
+              if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                onExpand();
+              }
+            }}
+          >
+            … {lines.length - limit + 1} more lines
+          </span>
+        )}
+      </pre>
     </div>
   );
 }
@@ -165,10 +247,22 @@ function ToolDetail({ label, value }) {
 
 function toolMeta(event) {
   const parts = [];
-  if (event.status) parts.push(event.status);
-  if (Number.isFinite(event.durationMs)) parts.push(`${event.durationMs}ms`);
+  if (Number.isFinite(event.exitCode) && event.exitCode !== 0) parts.push(`exit ${event.exitCode}`);
+  if (event.status && event.status !== 'completed') parts.push(event.status);
+  if (Number.isFinite(event.durationMs)) parts.push(formatMs(event.durationMs));
   if (event.error) parts.push('error');
   return parts.join(' · ');
+}
+
+function formatMs(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+}
+
+function firstLine(text) {
+  // Strip markdown emphasis — headlines render as plain text.
+  const line = (text || '').split('\n')[0].trim().replace(/\*\*?|__/g, '');
+  return line.length > 80 ? `${line.slice(0, 77)}…` : line;
 }
 
 function stringify(value) {
@@ -177,17 +271,4 @@ function stringify(value) {
   } catch {
     return String(value);
   }
-}
-
-function countLines(s) {
-  if (!s) return 0;
-  return s.split('\n').length;
-}
-
-function previewLines(s) {
-  const lines = s.split('\n');
-  if (lines.length <= 5) return s;
-  const head = lines.slice(0, 2);
-  const tail = lines.slice(-2);
-  return [...head, '…', ...tail].join('\n');
 }
