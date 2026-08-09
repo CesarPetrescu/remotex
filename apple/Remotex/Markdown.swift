@@ -233,7 +233,7 @@ struct MarkdownText: View {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                             HStack(alignment: .top, spacing: 6) {
-                                Text("•").foregroundStyle(.remotexMuted)
+                                Text("•").foregroundStyle(Color.remotexMuted)
                                 Text(inlineMarkdown(item))
                                     .font(.system(size: fontSize))
                                     .foregroundStyle(color)

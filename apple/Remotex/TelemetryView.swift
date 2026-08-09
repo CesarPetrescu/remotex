@@ -142,22 +142,11 @@ private struct Sparkline: View {
 
     var body: some View {
         GeometryReader { geo in
-            let dataMax = series.max() ?? 1
-            let cap: Double = {
-                if let max { return Swift.max(Swift.min(max, dataMax * 1.3), max * 0.08, 0.001) }
-                return Swift.max(dataMax * 1.15, 1)
-            }()
-            let w = geo.size.width
+            // ponytail: points precomputed outside the ViewBuilder — a local
+            // func with `return` isn't allowed inside a result builder body.
+            let pts = points(in: geo.size)
             let h = geo.size.height
-            let padY: CGFloat = 4
-            let stepX = series.count > 1 ? w / CGFloat(series.count - 1) : w
-
-            func point(_ index: Int) -> CGPoint {
-                let v = Swift.min(Swift.max(series[index], 0), cap)
-                let y = h - padY - CGFloat(v / cap) * (h - padY * 2)
-                return CGPoint(x: stepX * CGFloat(index), y: y)
-            }
-
+            let w = geo.size.width
             ZStack {
                 ForEach(1..<4, id: \.self) { i in
                     Path { p in
@@ -169,24 +158,42 @@ private struct Sparkline: View {
                 }
                 Path { p in
                     p.move(to: CGPoint(x: 0, y: h))
-                    for i in series.indices { p.addLine(to: point(i)) }
+                    for pt in pts { p.addLine(to: pt) }
                     p.addLine(to: CGPoint(x: w, y: h))
                     p.closeSubpath()
                 }
                 .fill(color.opacity(0.16))
                 Path { p in
-                    for i in series.indices {
-                        if i == 0 { p.move(to: point(i)) } else { p.addLine(to: point(i)) }
+                    for (i, pt) in pts.enumerated() {
+                        if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
                     }
                 }
                 .stroke(color, lineWidth: 2)
-                if let last = series.indices.last {
+                if let last = pts.last {
                     Circle()
                         .fill(color)
                         .frame(width: 7, height: 7)
-                        .position(point(last))
+                        .position(last)
                 }
             }
+        }
+    }
+
+    private func points(in size: CGSize) -> [CGPoint] {
+        guard !series.isEmpty else { return [] }
+        let dataMax = series.max() ?? 1
+        let cap: Double
+        if let max {
+            cap = Swift.max(Swift.min(max, dataMax * 1.3), max * 0.08, 0.001)
+        } else {
+            cap = Swift.max(dataMax * 1.15, 1)
+        }
+        let padY: CGFloat = 4
+        let stepX = series.count > 1 ? size.width / CGFloat(series.count - 1) : size.width
+        return series.indices.map { i in
+            let v = Swift.min(Swift.max(series[i], 0), cap)
+            let y = size.height - padY - CGFloat(v / cap) * (size.height - padY * 2)
+            return CGPoint(x: stepX * CGFloat(i), y: y)
         }
     }
 }

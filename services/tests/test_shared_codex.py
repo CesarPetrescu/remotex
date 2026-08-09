@@ -158,6 +158,13 @@ async def test_thread_notifications_are_isolated_between_sessions():
         ("thread/deleted", {"threadId": "local-tui"}),
         ("thread/unarchived", {"threadId": "local-tui"}),
         ("thread/closed", {"threadId": "local-tui"}),
+        (
+            "thread/settings/updated",
+            {
+                "threadId": "local-tui",
+                "threadSettings": {"cwd": "/var/tmp"},
+            },
+        ),
     ],
 )
 @pytest.mark.asyncio

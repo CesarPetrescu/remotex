@@ -4,9 +4,35 @@ import {
   dequeuePrompt,
   enqueuePrompt,
   initialState,
+  inventoryRetryDelay,
   reconcileQueue,
   reducer,
+  shouldRetryInventoryRequest,
 } from './useRemotex';
+
+describe('inventory retry policy', () => {
+  it('retries network, timeout, throttling, and server failures', () => {
+    expect(shouldRetryInventoryRequest(new TypeError('network failed'))).toBe(true);
+    for (const status of [408, 425, 429, 500, 503]) {
+      expect(shouldRetryInventoryRequest({ status })).toBe(true);
+    }
+  });
+
+  it('does not retry permanent authentication and not-found failures', () => {
+    for (const status of [400, 401, 403, 404, 422]) {
+      expect(shouldRetryInventoryRequest({ status })).toBe(false);
+    }
+  });
+
+  it('uses bounded exponential backoff, jitter, and an offline floor', () => {
+    expect(inventoryRetryDelay(0, { random: () => 0 })).toBe(1000);
+    expect(inventoryRetryDelay(4, { random: () => 0 })).toBe(16000);
+    expect(inventoryRetryDelay(99, { random: () => 0 })).toBe(30000);
+    expect(inventoryRetryDelay(99, { random: () => 1 })).toBe(31000);
+    expect(inventoryRetryDelay(0, { offline: true, random: () => 0 })).toBe(5000);
+    expect(inventoryRetryDelay(9, { offline: true, random: () => 1 })).toBe(6000);
+  });
+});
 
 describe('attached turn state', () => {
   it('uses the relay snapshot and preserves state for older relays', () => {

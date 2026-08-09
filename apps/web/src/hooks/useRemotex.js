@@ -1210,15 +1210,38 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
   }, []);
 
-  const refreshHosts = useCallback(async () => {
-    dispatch({ type: 'HOSTS_LOADING', loading: true });
-    try {
-      const hosts = await apiRef.current.listHosts();
-      dispatch({ type: 'HOSTS', hosts });
-    } catch (t) {
-      dispatch({ type: 'HOSTS_LOADING', loading: false });
-      dispatch({ type: 'SET_ERROR', error: t.message });
+  const refreshHosts = useCallback(() => {
+    const control = hostRefreshRef.current;
+    control.generation += 1;
+    control.retryAttempt = 0;
+    if (control.retryTimer) {
+      clearTimeout(control.retryTimer);
+      control.retryTimer = null;
     }
+    const generation = control.generation;
+    dispatch({ type: 'HOSTS_LOADING', loading: true });
+
+    const run = async () => {
+      try {
+        const hosts = await apiRef.current.listHosts();
+        if (generation !== control.generation) return;
+        control.retryAttempt = 0;
+        dispatch({ type: 'HOSTS', hosts });
+      } catch (error) {
+        if (generation !== control.generation) return;
+        dispatch({ type: 'HOSTS_LOADING', loading: false });
+        dispatch({ type: 'SET_ERROR', error: error.message });
+        if (!shouldRetryInventoryRequest(error)) return;
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        const delay = inventoryRetryDelay(control.retryAttempt, { offline });
+        control.retryAttempt += 1;
+        control.retryTimer = setTimeout(() => {
+          control.retryTimer = null;
+          if (generation === control.generation) void run();
+        }, delay);
+      }
+    };
+    void run();
   }, []);
 
   useEffect(() => {
@@ -1302,6 +1325,7 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         try {
           const threads = await apiRef.current.listThreads(target, 25);
           if (generation !== control.generation || target !== control.target) continue;
+          control.retryAttempt = 0;
           dispatch({
             type: 'THREADS',
             hostId: target,
@@ -1317,6 +1341,17 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
             dispatch({ type: 'THREADS_LOADING', hostId: target, loading: false });
             dispatch({ type: 'SET_ERROR', error: error.message });
           }
+          if (shouldRetryInventoryRequest(error)) {
+            control.dirty = true;
+            const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+            const delay = inventoryRetryDelay(control.retryAttempt, { offline });
+            control.retryAttempt += 1;
+            threadRefreshTimerRef.current = setTimeout(() => {
+              threadRefreshTimerRef.current = null;
+              if (control.dirty) void drainThreadRefresh();
+            }, delay);
+          }
+          break;
         }
       }
     } finally {
@@ -1330,6 +1365,7 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     control.generation += 1;
     control.target = target;
     control.dirty = true;
+    control.retryAttempt = 0;
     dispatch({ type: 'THREADS_LOADING', hostId: target, loading: true });
 
     if (threadRefreshTimerRef.current) {
@@ -1355,10 +1391,15 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
 
   useEffect(() => () => {
     if (threadRefreshTimerRef.current) clearTimeout(threadRefreshTimerRef.current);
+    const hostControl = hostRefreshRef.current;
+    hostControl.generation += 1;
+    if (hostControl.retryTimer) clearTimeout(hostControl.retryTimer);
+    hostControl.retryTimer = null;
     const control = threadRefreshRef.current;
     control.generation += 1;
     control.dirty = false;
     control.target = null;
+    control.retryAttempt = 0;
   }, []);
 
   // Keep host/thread inventory live even when no chat session is attached.
@@ -1380,10 +1421,7 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     const scheduleReconnect = () => {
       if (disposed || fatal || reconnectTimer) return;
       const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-      const base = offline
-        ? 5000
-        : Math.min(30000, 1000 * 2 ** Math.min(reconnectAttempt, 5));
-      const jitter = Math.floor(Math.random() * Math.min(1000, base * 0.25));
+      const delay = inventoryRetryDelay(reconnectAttempt, { offline });
       reconnectAttempt += 1;
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -1393,7 +1431,7 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
           return;
         }
         connect();
-      }, base + jitter);
+      }, delay);
     };
 
     const handleInventoryFrame = (frame) => {
