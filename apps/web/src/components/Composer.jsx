@@ -56,7 +56,6 @@ export function Composer({
   onEffortChange,
   onPermissionsChange,
   onSend,
-  onStop,
   onSteer,
   onQueue,
   onRemoveQueued,
@@ -321,7 +320,6 @@ export function Composer({
           onSend={submit}
           onSteer={submit}
           onQueue={queue}
-          onStop={onStop}
         />
       </div>
     </div>

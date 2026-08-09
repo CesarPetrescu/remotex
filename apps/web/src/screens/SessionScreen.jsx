@@ -122,6 +122,7 @@ export function SessionScreen({
         historyPrepend={state.historyPrepend}
         onLoadOlder={onLoadOlder}
         onAtBottomChange={setAtBottom}
+        onStop={onStop}
         placeholder={
           state.status === STATUS.Connected ? 'send a prompt to start…' : 'connecting…'
         }
@@ -141,7 +142,6 @@ export function SessionScreen({
         onEffortChange={onEffortChange}
         onPermissionsChange={onPermissionsChange}
         onSend={onSend}
-        onStop={onStop}
         onSteer={onSteer}
         onQueue={onQueue}
         onRemoveQueued={onRemoveQueued}

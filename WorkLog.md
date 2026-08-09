@@ -32,6 +32,49 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — composer submit controls: split primary, stop moved to the turn
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
+
+Owner: "the queue, send and stop are looking bad — propose a proper idea."
+Offered three shapes; they picked split-primary + stop-on-the-Working-row.
+
+- **What was wrong** (state: turn running *and* text typed): three peer 44px
+  buttons, two of them saturated fills. Queue and steer are the *same* action
+  differing only in *when*; stop is a different kind of thing entirely. Also
+  `↳` vs `↑` cannot convey "next" vs "now", and the control area changed width
+  between 1 and 3 buttons — so send moved, and **stop landed where send had
+  just been**, one mis-tap from your draft.
+- **Now:** always exactly one primary in one place (`↑`), with a flush
+  chevron that opens `Steer now` / `Queue as next turn` (each with a one-line
+  explanation, which the arrows could never carry). The chevron only exists
+  while a turn is running — the only time there is a second choice.
+- **Stop moved to the `✳ Working…` row** in the transcript: it acts on the
+  turn, not the draft. Outline rather than fill, and **the row is now
+  `position: sticky; bottom: 0`** so it stays reachable while you scroll back
+  through history. There is no longer any red in the composer.
+- **Reused the `.dd-*` classes** from the picker menus, so the chevron menu is
+  a bottom sheet on phones for free. Did **not** extract a shared PopMenu
+  component: ChipDropdown's trigger is chip-shaped and the split button's is
+  not, so sharing would have meant generalising a file I had just verified.
+  ~35 lines of portal/dismiss logic are duplicated; dedup if a third menu
+  appears.
+- **Verified:** 6 new tests via `renderToStaticMarkup` (react-dom/server, the
+  pattern TelemetrySidebar.test.jsx already uses) asserting the state machine
+  — one button idle, two while steering, none when queueing is unavailable,
+  **no stop control in any state**, primary always first. 93 web tests, lint
+  and build clean. Geometry measured in a Playwright harness against the
+  compiled stylesheet at 1500x950 and 390x844: halves flush and equal height,
+  44px primary on phone, stop 34px there, working row `sticky`, menu docks
+  full-width with a scrim on phone only, and both composer buttons cyan (no
+  red).
+- **Couldn't test live:** no turn was running, and I would not send a prompt
+  on the owner's account to manufacture one. The steering state is covered by
+  the unit tests plus the harness rather than an end-to-end click.
+- **Harness gotcha, second time:** `cp dist/assets/*.css` failed because the
+  shell cwd resets between calls, so the first run measured an unstyled page
+  (`position: static`, 21px buttons). Use absolute paths and sanity-check that
+  the harness really loaded the stylesheet.
+
 ## 2026-08-09 — repair stale issue-ledger bookkeeping found by docs audit
 **Agent:** Codex · **Branch:** main · **Status:** done
 

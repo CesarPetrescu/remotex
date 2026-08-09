@@ -1381,8 +1381,57 @@ main.screen-host {
 .send-stop.send { background: var(--panel-2); border-color: var(--line); color: var(--ink-dim); }
 .send-stop.send.ready { background: var(--amber); border-color: var(--amber); color: var(--on-accent); }
 .send-stop.stop { background: var(--warn); border-color: var(--warn); color: var(--on-accent); }
-.send-stop.queue { background: var(--panel-2); border-color: var(--amber); color: var(--amber); }
-.turn-actions { display: flex; gap: 5px; }
+/* Split primary: the arrow and its chevron read as one control, so they sit
+   flush with a single divider rather than as two separate buttons. */
+.turn-actions { display: flex; gap: 0; }
+.send-alt-wrap { display: flex; }
+.send-stop.send-alt {
+  min-width: 26px;
+  font-size: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--bg) 35%, transparent);
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--on-accent);
+}
+.send-stop.send-alt:hover { background: color-mix(in srgb, var(--amber) 85%, var(--bg)); }
+/* Two menu lines need to stack; .dd-item is a baseline row by default. */
+.dd-item-main { display: flex; flex-direction: column; gap: 1px; }
+
+/* Stop belongs to the running turn, so it rides the Working… row. Sticky, so
+   it stays reachable while you scroll back through the transcript. */
+.working-row {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: linear-gradient(
+    to top,
+    var(--bg) 0%,
+    color-mix(in srgb, var(--bg) 88%, transparent) 70%,
+    transparent 100%
+  );
+}
+.working-stop {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  color: color-mix(in srgb, var(--warn) 80%, var(--ink-dim));
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.working-stop:hover {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+@media (max-width: 640px) {
+  /* Thumb-sized on phones, where it is the only way to abort a turn. */
+  .working-stop { min-height: 34px; padding: 6px 12px; font-size: 12px; }
+}
 
 /* --- modal --- */
 

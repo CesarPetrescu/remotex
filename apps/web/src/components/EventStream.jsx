@@ -71,7 +71,7 @@ export function isNearTail({ scrollHeight, scrollTop, clientHeight }) {
 //    the initial render can't accidentally trigger a backfill.
 // Claude-Code-style activity line: pulsing star + elapsed seconds while
 // a turn runs, rendered at the tail of the stream.
-function WorkingRow({ sinceMs }) {
+function WorkingRow({ sinceMs, onStop }) {
   const [, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 1000);
@@ -82,6 +82,13 @@ function WorkingRow({ sinceMs }) {
     <div className="working-row" aria-live="polite">
       <span className="working-star" aria-hidden="true">✳</span>
       Working… {elapsed > 0 ? `${elapsed}s` : ''}
+      {onStop && (
+        // Stopping acts on the turn, so the control lives with the turn —
+        // not next to send, where it was one mis-tap from your draft.
+        <button type="button" className="working-stop" onClick={onStop} title="Stop this turn">
+          <span aria-hidden="true">■</span> stop
+        </button>
+      )}
     </div>
   );
 }
@@ -97,6 +104,7 @@ export function EventStream({
   historyPrepend = false,
   onLoadOlder,
   onAtBottomChange,
+  onStop,
 }) {
   const scrollerRef = useRef(null);
   const sentinelRef = useRef(null);
@@ -224,7 +232,9 @@ export function EventStream({
         );
         return divider ? [divider, row] : row;
       })}
-      {pending && events.length > 0 && <WorkingRow sinceMs={pendingSinceMs} />}
+      {pending && events.length > 0 && (
+        <WorkingRow sinceMs={pendingSinceMs} onStop={onStop} />
+      )}
       {events.length > 0 && !atBottom && (
         <button
           type="button"
