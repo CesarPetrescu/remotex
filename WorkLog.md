@@ -32,6 +32,21 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — deploy queue, typography, and theme web release
+**Agent:** Codex · **Branch:** main · **Status:** deployed
+
+- **Why:** publish the verified queue/steer unit and the already-committed
+  transcript typography update; correct the earlier theme/queue entries whose
+  restart status was still recorded as pending.
+- **Changed:** rebuilt `remotex/relay:local` from `main` at `b9e41d3` and
+  force-recreated only `remotex-relay-1`; Postgres and SparkTunnel were left up.
+- **Verified:** relay and Postgres report healthy, SparkTunnel is up, the daemon
+  reconnected as `host_5317ac6c8c494a34`, and
+  `https://remotex.photonspark.ro/` returns 200 with the deployed assets
+  `index-DuZz_5GI.js` and `index-Dt1EhsG6.css` plus CSP/HSTS/security headers.
+- **Left open:** none.
+- **Restart needed:** none.
+
 ## 2026-08-09 — web follow-up queue and explicit steer controls
 **Agent:** Codex · **Branch:** main · **Status:** done, pending deploy
 
