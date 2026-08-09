@@ -92,6 +92,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
     hub: Hub = request.app["hub"]
 
     host_id: str | None = None
+    daemon_mode = "stdio"
     try:
         first = await asyncio.wait_for(ws.receive(), timeout=10)
         if first.type != WSMsgType.TEXT:
@@ -109,6 +110,15 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             audit("auth.bridge.invalid", remote=remote)
             return ws
 
+        # Older daemons did not send a mode and behaved like stdio: their
+        # Codex child turns die with the relay socket.  Only an explicit shared
+        # mode is allowed to preserve active state across this connection.
+        daemon_mode = (
+            "shared"
+            if str(hello.get("mode") or "stdio").strip().lower() == "shared"
+            else "stdio"
+        )
+
         await store.update_host_identity(
             host_id,
             hello.get("hostname", "") or "",
@@ -120,10 +130,20 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
         # Install this socket as current but keep it unavailable to REST and
         # client forwarding until its welcome and cached session-open frames
         # are queued in order.
-        old_ws = await hub.attach_daemon(host_id, ws, ready=False)
+        old_ws = await hub.attach_daemon(
+            host_id, ws, ready=False, mode=daemon_mode,
+        )
+        old_mode = hub.daemon_mode_for(old_ws)
         if old_ws is not None and not old_ws.closed:
             await old_ws.close(code=4000, message=b"daemon-replaced")
-        interrupted = await hub.abort_host_turns(host_id)
+        # A shared Codex app-server owns its turns independently of the
+        # Remotex->relay socket.  Preserve them only across shared->shared
+        # handoffs; stdio/mock and mode switches retain the old fail-fast
+        # behavior because their adapter teardown destroys the turn.
+        preserve_turns = daemon_mode == "shared" and (
+            old_ws is None or old_mode == "shared"
+        )
+        interrupted = [] if preserve_turns else await hub.abort_host_turns(host_id)
         await ws.send_json({"type": "welcome", "host_id": host_id})
         for open_frame in await hub.session_open_frames_for_host(host_id):
             await ws.send_json(open_frame)
@@ -196,6 +216,18 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     elif kind == "turn-completed":
                         hub.mark_turn_completed(sid)
                         await hub.clear_session_prompts(sid)
+                    elif kind == "thread-status":
+                        data = event.get("data") or {}
+                        active = data.get("shared_turn_in_flight")
+                        if daemon_mode == "shared" and isinstance(active, bool):
+                            # Shared disconnects deliberately preserve the old
+                            # lock. thread/resume's atomic snapshot is the
+                            # authority that either confirms it or releases it.
+                            if active:
+                                hub.mark_turn_started(sid)
+                            else:
+                                hub.mark_turn_completed(sid)
+                                await hub.clear_session_prompts(sid)
                     elif kind == "approval-request":
                         data = event.get("data") or {}
                         approval_id = data.get("approval_id")
@@ -313,10 +345,15 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
         if host_id:
             detached = await hub.detach_daemon(host_id, ws)
             if detached:
-                # DaemonClient closes every Codex adapter when this socket
-                # dies. Keep the resumable session, but end the unrecoverable
-                # active turn and invalidate prompts owned by that process.
-                interrupted = await hub.abort_host_turns(host_id)
+                # Isolated adapters own their Codex child, so their active turn
+                # dies here. Shared adapters only unsubscribe from a managed
+                # app-server; keep their turn/prompt state until the atomic
+                # resume snapshot reconciles it on the next connection.
+                interrupted = (
+                    []
+                    if daemon_mode == "shared"
+                    else await hub.abort_host_turns(host_id)
+                )
                 await _broadcast_interrupted_turns(hub, host_id, interrupted)
                 await store.mark_host(host_id, False)
                 hub.host_telemetry.pop(host_id, None)

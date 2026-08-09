@@ -47,6 +47,31 @@ final class SessionSocket {
         ])
     }
 
+    func sendInterrupt() {
+        send(["type": "turn-interrupt"])
+    }
+
+    // Inject a message into the running turn (codex `turn/steer`). The
+    // relay rejects it when no turn is in flight and echoes the message to
+    // every attached client.
+    func sendSteer(_ input: String, clientMessageId: String) {
+        send([
+            "type": "turn-steer",
+            "input": input,
+            "client_message_id": clientMessageId,
+        ])
+    }
+
+    // Pull older transcript turns (scroll-up backfill). `before` is the
+    // oldest turn index this client already has.
+    func sendHistoryMore(before: Int, limit: Int = 10) {
+        send([
+            "type": "history-more",
+            "before": before,
+            "limit": limit,
+        ])
+    }
+
     func sendApproval(approvalId: String, decision: String) {
         send([
             "type": "approval-response",

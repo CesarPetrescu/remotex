@@ -195,6 +195,68 @@ async def test_daemon_disconnect_aborts_turn_then_reopens_session(aiohttp_client
 
 
 @pytest.mark.asyncio
+async def test_shared_disconnect_preserves_turn_until_resume_reconciles(aiohttp_client):
+    session = _victim_session()
+    session["host_id"] = "host_a"
+    store = FakeStore({"sess_victim": session})
+    hub = Hub()
+    watcher = _client_ws_mock()
+    await hub.attach_client("sess_victim", "host_a", "web", watcher)
+    await hub.ensure_session_open_frame("sess_victim", "host_a")
+    client = await _client_for(aiohttp_client, store, hub)
+
+    ws = await client.ws_connect("/ws/daemon")
+    await ws.send_json({"type": "hello", "token": "key-a", "mode": "shared"})
+    assert (await ws.receive_json())["type"] == "welcome"
+    assert (await ws.receive_json())["type"] == "session-open"
+    hub.mark_turn_started("sess_victim")
+    await hub.note_approval_request(
+        "sess_victim", "appr_1", {"approval_id": "appr_1"},
+    )
+
+    connection = ws._response.connection  # type: ignore[attr-defined]
+    assert connection is not None and connection.transport is not None
+    connection.transport.abort()
+    await _wait_until(
+        lambda: hub.daemon_for("host_a", include_unready=True) is None,
+    )
+
+    watcher.send_json.assert_not_awaited()
+    assert hub.turn_in_flight["sess_victim"] is True
+    assert (await hub.pending_prompt_snapshot("sess_victim"))["approvals"]
+
+    async with client.ws_connect("/ws/daemon") as reconnected:
+        await reconnected.send_json({
+            "type": "hello", "token": "key-a", "mode": "shared",
+        })
+        assert (await reconnected.receive_json())["type"] == "welcome"
+        assert (await reconnected.receive_json())["type"] == "session-open"
+        await reconnected.send_json({
+            "type": "session-event",
+            "session_id": "sess_victim",
+            "event": {
+                "kind": "thread-status",
+                "data": {
+                    "status": "resumed",
+                    "shared_turn_in_flight": False,
+                },
+            },
+        })
+        await reconnected.send_json({"type": "ping"})
+        assert (await reconnected.receive_json())["type"] == "pong"
+
+    assert hub.turn_in_flight["sess_victim"] is False
+    assert (await hub.pending_prompt_snapshot("sess_victim"))["approvals"] == []
+    sent = watcher.send_json.await_args_list
+    assert len(sent) == 1
+    assert sent[0].args[0]["event"]["kind"] == "thread-status"
+    assert not any(
+        frame["event"].get("kind") == "turn-completed"
+        for frame in await hub.replay_since("sess_victim", 0)
+    )
+
+
+@pytest.mark.asyncio
 async def test_replacement_daemon_aborts_old_active_turn(aiohttp_client):
     session = _victim_session()
     session["host_id"] = "host_a"
@@ -224,6 +286,37 @@ async def test_replacement_daemon_aborts_old_active_turn(aiohttp_client):
 
     completion = watcher.send_json.await_args.args[0]
     assert completion["event"]["kind"] == "turn-completed"
+
+
+@pytest.mark.asyncio
+async def test_shared_replacement_preserves_old_active_turn(aiohttp_client):
+    session = _victim_session()
+    session["host_id"] = "host_a"
+    store = FakeStore({"sess_victim": session})
+    hub = Hub()
+    watcher = _client_ws_mock()
+    await hub.attach_client("sess_victim", "host_a", "web", watcher)
+    await hub.ensure_session_open_frame("sess_victim", "host_a")
+    client = await _client_for(aiohttp_client, store, hub)
+
+    first = await client.ws_connect("/ws/daemon")
+    await first.send_json({"type": "hello", "token": "key-a", "mode": "shared"})
+    assert (await first.receive_json())["type"] == "welcome"
+    assert (await first.receive_json())["type"] == "session-open"
+    hub.mark_turn_started("sess_victim")
+
+    async with client.ws_connect("/ws/daemon") as replacement:
+        await replacement.send_json({
+            "type": "hello", "token": "key-a", "mode": "shared",
+        })
+        assert (await replacement.receive_json())["type"] == "welcome"
+        assert (await replacement.receive_json())["type"] == "session-open"
+        closed = await first.receive()
+        assert closed.type.name in {"CLOSE", "CLOSED"}
+        assert closed.data == 4000
+        assert hub.turn_in_flight["sess_victim"] is True
+
+    watcher.send_json.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -441,11 +441,22 @@ export function reducer(state, action) {
         historyPrepend: !!action.prepend,
       };
     }
-    case 'APPEND_EVENT':
-      if (action.event?.id && state.events.some((e) => e.id === action.event.id)) {
-        return state;
-      }
-      return { ...state, events: [...state.events, action.event] };
+    case 'APPEND_EVENT': {
+      const duplicate = action.event?.id && state.events.some((e) => e.id === action.event.id);
+      if (!duplicate) return { ...state, events: [...state.events, action.event] };
+      if (!action.authoritative) return state;
+      return {
+        ...state,
+        events: state.events.map((e) => {
+          if (e.id !== action.event.id) return e;
+          const repaired = { ...e, ...action.event };
+          if ('completed' in e || 'completed' in action.event) {
+            repaired.completed = Boolean(e.completed || action.event.completed);
+          }
+          return repaired;
+        }),
+      };
+    }
     case 'APPEND_DELTA':
       return {
         ...state,
@@ -816,7 +827,13 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
           return;
         }
         const ev = stamp(buildItemEvent(data));
-        if (ev) dispatch({ type: 'APPEND_EVENT', event: ev });
+        if (ev) {
+          dispatch({
+            type: 'APPEND_EVENT',
+            event: ev,
+            authoritative: data.resumed === true,
+          });
+        }
         if (data.item_type === 'user_message' && !data.replayed) {
           dispatch({ type: 'PENDING', pending: true });
         }

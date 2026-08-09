@@ -30,8 +30,14 @@ from .rollout import (
     _load_rollout_metadata,
     _sort_turns_chronological,
 )
+from .shared import SharedCodexConnection
 
 log = logging.getLogger("daemon.adapters.stdio")
+
+# A second subscriber such as the local TUI may understand a server request
+# that this Remotex version does not. Give it a brief chance to answer first,
+# then reject the request so a Remotex-only shared thread cannot hang forever.
+_SHARED_UNSUPPORTED_REQUEST_GRACE_SECONDS = 1.0
 
 # Turns shipped immediately when a saved chat opens (last user + agent
 # exchange, typically), and the page size for scroll-up backfill.
@@ -101,6 +107,7 @@ class StdioCodexAdapter(SessionAdapter):
         resume_thread_id: str | None = None,
         session_kind: str = "codex",
         ephemeral: bool = False,
+        shared_connection: SharedCodexConnection | None = None,
     ) -> None:
         self.binary = codex_binary
         self._cwd = default_cwd or os.path.expanduser("~")
@@ -109,6 +116,8 @@ class StdioCodexAdapter(SessionAdapter):
         # User-facing kind label echoed in session-started.data so the
         # client UI can show what it's actually attached to.
         self._session_kind = session_kind
+        self._shared = shared_connection
+        self._shared_registered = False
         # Mutable working directory: thread/start kicks off in
         # `default_cwd`, /cd swaps it, every turn/start rides with it.
         self._current_cwd = self._cwd
@@ -130,6 +139,7 @@ class StdioCodexAdapter(SessionAdapter):
         # the adapter's lifetime — it was already parsed for the tail.
         self._history_turns: list[dict] = []
         self._history_oldest_sent = 0
+        self._deferred_rollout_turn: dict | None = None
         self._reasoning_summary = "auto"
         # Live turn id — set on turn/started, cleared on turn/completed.
         # Needed because turn/interrupt wants turnId, not threadId.
@@ -152,6 +162,10 @@ class StdioCodexAdapter(SessionAdapter):
         # _pending_user_inputs because the reply shape differs: codex wants
         # {action, content} here, {answers} there. See adapters/elicitation.py.
         self._pending_elicitations: dict[str, dict] = {}
+        # Codex JSON-RPC id -> delayed fallback task for server requests this
+        # version does not understand. Shared mode cannot reject immediately:
+        # another subscribed local client may be able to answer it.
+        self._unsupported_request_tasks: dict[int | str, asyncio.Task] = {}
         # Slash-command state: if the user sends `/plan` or `/default`,
         # every subsequent turn sends a full collaborationMode payload.
         self._next_collab_mode: str | None = None
@@ -174,27 +188,40 @@ class StdioCodexAdapter(SessionAdapter):
             if isinstance(resume_meta.get("model"), str) and resume_meta["model"].strip():
                 self._current_model = resume_meta["model"].strip()
 
-        cmd = shlex.split(self.binary) + ["app-server"]
-        log.info("spawning %s (cwd=%s)", " ".join(cmd), self._cwd)
-        self._proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        self._reader_task = asyncio.create_task(self._read_loop())
-        self._stderr_task = asyncio.create_task(self._drain_stderr())
+        transport = "shared" if self._shared is not None else "stdio"
+        if self._shared is not None:
+            model_hint = self._shared.user_agent
+            if self._resume_thread_id:
+                # Pause per-thread routing until thread/resume's snapshot has
+                # hydrated the active turn.  Any following live deltas are
+                # buffered by SharedCodexConnection and released in order.
+                self._thread_id = self._resume_thread_id
+                await self._shared.prepare_resume(
+                    self._resume_thread_id, self._dispatch
+                )
+                self._shared_registered = True
+        else:
+            cmd = shlex.split(self.binary) + ["app-server"]
+            log.info("spawning %s (cwd=%s)", " ".join(cmd), self._cwd)
+            self._proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            self._reader_task = asyncio.create_task(self._read_loop())
+            self._stderr_task = asyncio.create_task(self._drain_stderr())
 
-        init = await self._request("initialize", {
-            "clientInfo": {
-                "name": "remotex-daemon",
-                "title": "Remotex",
-                "version": "0.1.0",
-            },
-            "capabilities": {"experimentalApi": True},
-        })
-        model_hint = init.get("userAgent", "codex app-server")
-        await self._notify("initialized", {})
+            init = await self._request("initialize", {
+                "clientInfo": {
+                    "name": "remotex-daemon",
+                    "title": "Remotex",
+                    "version": "0.1.0",
+                },
+                "capabilities": {"experimentalApi": True},
+            })
+            model_hint = init.get("userAgent", "codex app-server")
+            await self._notify("initialized", {})
 
         if self._resume_thread_id:
             self._thread_id = self._resume_thread_id
@@ -202,12 +229,22 @@ class StdioCodexAdapter(SessionAdapter):
                 "model": resume_meta.get("model") or model_hint,
                 "cwd": self._current_cwd,
                 "thread_id": self._thread_id,
-                "transport": "stdio",
+                "transport": transport,
                 "resuming": True,
                 "kind": self._session_kind,
             }))
             try:
                 local_turns = _load_rollout_history(self._resume_thread_id)
+                if (
+                    self._shared is not None
+                    and local_turns
+                    and not local_turns[-1].get("completedAt")
+                ):
+                    # The rollout writer has not closed this turn yet.  A
+                    # shared resume supplies the authoritative live snapshot;
+                    # replaying this synthetic-ID partial copy would duplicate
+                    # every prompt/message in the client.
+                    self._deferred_rollout_turn = local_turns.pop()
                 if local_turns:
                     await self._replay_history(local_turns)
                     self._history_replayed = True
@@ -222,7 +259,13 @@ class StdioCodexAdapter(SessionAdapter):
             )
             return
 
-        thread = await self._request("thread/start", self._thread_start_params())
+        if self._shared is not None:
+            thread = await self._shared.start_thread(
+                self._thread_start_params(), self._dispatch
+            )
+            self._shared_registered = True
+        else:
+            thread = await self._request("thread/start", self._thread_start_params())
         self._thread_id = thread["thread"].get("id", self._resume_thread_id)
         if isinstance(thread.get("model"), str) and thread["model"].strip():
             self._current_model = thread["model"].strip()
@@ -231,7 +274,7 @@ class StdioCodexAdapter(SessionAdapter):
             "model": thread.get("model") or model_hint,
             "cwd": thread.get("cwd", self._cwd),
             "thread_id": self._thread_id,
-            "transport": "stdio",
+            "transport": transport,
             "kind": self._session_kind,
         }))
         await self._goal_get()
@@ -252,7 +295,10 @@ class StdioCodexAdapter(SessionAdapter):
             except asyncio.CancelledError:
                 pass
             self._resume_task = None
-        if self._proc and self._proc.returncode is None:
+        if self._shared is not None and self._shared_registered and self._thread_id:
+            await self._shared.unregister(self._thread_id, self._dispatch)
+            self._shared_registered = False
+        elif self._proc and self._proc.returncode is None:
             try:
                 self._proc.terminate()
             except ProcessLookupError:
@@ -269,6 +315,12 @@ class StdioCodexAdapter(SessionAdapter):
             if not fut.done():
                 fut.set_exception(RuntimeError("codex app-server exited"))
         self._pending.clear()
+        fallback_tasks = list(self._unsupported_request_tasks.values())
+        self._unsupported_request_tasks.clear()
+        for task in fallback_tasks:
+            task.cancel()
+        if fallback_tasks:
+            await asyncio.gather(*fallback_tasks, return_exceptions=True)
         await self._queue.put(None)
 
     # --- inbound frames from the relay ----------------------------------
@@ -386,6 +438,13 @@ class StdioCodexAdapter(SessionAdapter):
                     "error": message,
                 }))
                 return
+            if self._turn_id is not None:
+                # A shared hot-resume can discover an already-running local
+                # turn just after the relay accepted this frame as a fresh
+                # turn.  Treat the message as steering that live turn rather
+                # than asking Codex to start a conflicting second turn.
+                await self._steer_turn(frame)
+                return
             codex_input = self._build_input(frame)
             params: dict = {
                 "threadId": self._thread_id,
@@ -399,6 +458,13 @@ class StdioCodexAdapter(SessionAdapter):
                 # than only emitting them with item/completed at the end.
                 "summary": self._reasoning_summary,
             }
+            client_message_id = frame.get("client_message_id")
+            if isinstance(client_message_id, str) and client_message_id:
+                # Codex echoes this as userMessage.clientId.  Both Remotex
+                # clients already dedupe by item id, so a prompt sent through
+                # Remotex is not rendered twice while shell-originated prompts
+                # (which have only Codex's item id) still appear live.
+                params["clientUserMessageId"] = client_message_id
             # Optional per-turn overrides. Codex applies these to this turn
             # and every subsequent turn on the thread.
             requested_model: str | None = None
@@ -547,6 +613,11 @@ class StdioCodexAdapter(SessionAdapter):
                 "status": "resume-failed",
                 "error": self._resume_error,
             }))
+            if self._shared is not None and self._shared_registered:
+                await self._shared.unregister(
+                    self._resume_thread_id, self._dispatch
+                )
+                self._shared_registered = False
             return
 
         thread_obj = resp.get("thread") or {"id": self._resume_thread_id}
@@ -555,24 +626,125 @@ class StdioCodexAdapter(SessionAdapter):
         resume_model = resp.get("model") or thread_obj.get("model")
         if isinstance(resume_model, str) and resume_model.strip():
             self._current_model = resume_model.strip()
-        self._ready = True
         self._resume_error = None
         resume_turns = (
             thread_obj.get("turns") if isinstance(thread_obj.get("turns"), list) else None
         )
-        if resume_turns and not self._history_replayed:
+        history_turns = resume_turns
+        if self._shared is not None and resume_turns:
+            history_turns = [
+                turn for turn in resume_turns
+                if not self._turn_is_in_progress(turn)
+            ]
+        if history_turns and not self._history_replayed:
             try:
-                await self._replay_history(resume_turns)
+                await self._replay_history(history_turns)
                 self._history_replayed = True
             except Exception as exc:  # noqa: BLE001
                 log.warning("history replay failed: %s", exc)
+        active_hydrated = await self._hydrate_active_turn(thread_obj)
+        if active_hydrated:
+            self._deferred_rollout_turn = None
+        elif self._deferred_rollout_turn is not None:
+            # Old/incomplete rollout formats can lack task_complete even for
+            # an idle turn.  Once Codex confirms there is no active turn, show
+            # that deferred tail instead of silently losing it.
+            deferred = self._deferred_rollout_turn
+            self._deferred_rollout_turn = None
+            self._history_turns.append(deferred)
+            await self._emit_history_turn(deferred, len(self._history_turns) - 1)
+        if self._shared is not None and self._shared_registered:
+            await self._shared.activate(self._thread_id, self._dispatch)
+        self._ready = True
         await self._queue.put(SessionEvent("thread-status", {
             "status": "resumed",
             "model": resp.get("model") or model_hint,
             "cwd": self._current_cwd,
             "thread_id": self._thread_id,
+            # The relay preserves shared turns while this daemon's WSS leg is
+            # down. Reconcile that retained lock against Codex's atomic resume
+            # snapshot without manufacturing a failed completion.
+            **(
+                {"shared_turn_in_flight": self._turn_id is not None}
+                if self._shared is not None
+                else {}
+            ),
         }))
         await self._goal_get()
+
+    @staticmethod
+    def _turn_is_in_progress(turn: object) -> bool:
+        if not isinstance(turn, dict):
+            return False
+        status = (
+            str(turn.get("status") or "")
+            .replace("_", "")
+            .replace("-", "")
+            .lower()
+        )
+        return status == "inprogress"
+
+    async def _hydrate_active_turn(self, thread: dict) -> bool:
+        """Seed a mid-turn shared attach from thread/resume's live snapshot.
+
+        A running shared thread can emit more deltas immediately after the
+        resume response.  Emit its current items first and record the turn id
+        so the relay blocks a conflicting turn/start; the shared transport
+        releases buffered post-snapshot frames only after this method returns.
+        """
+        turns = thread.get("turns")
+        if not isinstance(turns, list):
+            return False
+        active: dict | None = None
+        for turn in reversed(turns):
+            if self._turn_is_in_progress(turn):
+                active = turn
+                break
+        if active is None:
+            return False
+        turn_id = active.get("id")
+        if not isinstance(turn_id, str) or not turn_id:
+            return False
+        self._turn_id = turn_id
+        await self._queue.put(SessionEvent("turn-started", {
+            "thread_id": self._thread_id,
+            "turn_id": turn_id,
+            "input": "",
+            "resumed": True,
+        }))
+        items = [item for item in active.get("items") or [] if isinstance(item, dict)]
+        for index, item in enumerate(items):
+            codex_type = item.get("type", "")
+            item_id = item.get("clientId") or item.get("id")
+            if not item_id:
+                continue
+            payload = {
+                "thread_id": self._thread_id,
+                "turn_id": turn_id,
+                "item_id": item_id,
+                "item_type": _snake_item_type(codex_type),
+                "resumed": True,
+                **_item_extras(item),
+            }
+            await self._queue.put(SessionEvent("item-started", payload))
+            if self._snapshot_item_is_complete(item, index, len(items)):
+                # Completed snapshot items need their terminal event too.
+                # Otherwise the authoritative resumed item replaces a stale
+                # client copy but remains visually "running" forever.
+                await self._queue.put(SessionEvent("item-completed", payload))
+        return True
+
+    @staticmethod
+    def _snapshot_item_is_complete(item: dict, index: int, count: int) -> bool:
+        status = item.get("status")
+        if isinstance(status, str) and status:
+            normalized = status.replace("_", "").replace("-", "").lower()
+            return normalized not in {"inprogress", "running", "pending", "notstarted"}
+        if item.get("type") == "userMessage":
+            return True
+        # Status-less streaming items (agent message, reasoning, plan) can be
+        # partial only at the live edge. Earlier snapshot items are final.
+        return index < count - 1
 
     # --- slash commands + approvals ------------------------------------
 
@@ -955,7 +1127,11 @@ class StdioCodexAdapter(SessionAdapter):
         for item in turn.get("items", []):
             codex_type = item.get("type", "")
             snake = _snake_item_type(codex_type)
-            item_id = item.get("id") or f"hist_{uuid.uuid4().hex[:8]}"
+            item_id = (
+                item.get("clientId")
+                or item.get("id")
+                or f"hist_{uuid.uuid4().hex[:8]}"
+            )
             started_payload: dict = {
                 "turn_id": turn_id,
                 "item_id": item_id,
@@ -994,6 +1170,8 @@ class StdioCodexAdapter(SessionAdapter):
     # --- JSON-RPC plumbing ----------------------------------------------
 
     async def _request(self, method: str, params: dict, timeout: float = 60.0) -> dict:
+        if self._shared is not None:
+            return await self._shared.request(method, params, timeout=timeout)
         self._next_id += 1
         req_id = self._next_id
         loop = asyncio.get_running_loop()
@@ -1009,6 +1187,9 @@ class StdioCodexAdapter(SessionAdapter):
         await self._send({"method": method, "params": params})
 
     async def _send(self, obj: dict) -> None:
+        if self._shared is not None:
+            await self._shared.send(obj)
+            return
         assert self._proc and self._proc.stdin
         line = json.dumps(obj) + "\n"
         async with self._send_lock:
@@ -1190,6 +1371,13 @@ class StdioCodexAdapter(SessionAdapter):
             return
 
         if "id" in msg:
+            if self._shared is not None:
+                # Another subscriber (usually the terminal TUI) may support a
+                # newer request type, and Codex accepts the first response
+                # globally. Give it first chance, but retain a bounded
+                # fallback for Remotex-only threads.
+                self._schedule_unsupported_request_fallback(msg["id"], method)
+                return
             await self._reject_unsupported_server_request(msg["id"], method)
             return
 
@@ -1211,13 +1399,10 @@ class StdioCodexAdapter(SessionAdapter):
         elif method == "item/started":
             item = params.get("item") or {}
             codex_type = item.get("type", "")
-            if codex_type == "userMessage":
-                # We echo user input client-side already.
-                return
             await self._queue.put(SessionEvent("item-started", {
                 **_thread_extra(params),
                 "turn_id": params.get("turnId"),
-                "item_id": item.get("id"),
+                "item_id": item.get("clientId") or item.get("id"),
                 "item_type": _snake_item_type(codex_type),
                 **_item_extras(item),
             }))
@@ -1309,12 +1494,10 @@ class StdioCodexAdapter(SessionAdapter):
         elif method == "item/completed":
             item = params.get("item") or {}
             codex_type = item.get("type", "")
-            if codex_type == "userMessage":
-                return
             await self._queue.put(SessionEvent("item-completed", {
                 **_thread_extra(params),
                 "turn_id": params.get("turnId"),
-                "item_id": item.get("id"),
+                "item_id": item.get("clientId") or item.get("id"),
                 "item_type": _snake_item_type(codex_type),
                 **_item_extras(item),
             }))
@@ -1400,6 +1583,10 @@ class StdioCodexAdapter(SessionAdapter):
         """
         if rpc_id is None:
             return
+        fallback = self._unsupported_request_tasks.pop(rpc_id, None)
+        if fallback is not None:
+            fallback.cancel()
+            return
         for approval_id, pending in list(self._pending_approvals.items()):
             if pending.get("rpc_id") == rpc_id:
                 self._pending_approvals.pop(approval_id, None)
@@ -1425,6 +1612,43 @@ class StdioCodexAdapter(SessionAdapter):
                 }))
                 return
         log.debug("serverRequest/resolved for unknown rpc id %r", rpc_id)
+
+    def _schedule_unsupported_request_fallback(self, rpc_id, method: str) -> None:
+        """Let another subscriber answer, then reject instead of hanging.
+
+        Codex broadcasts server requests to every subscribed client and uses
+        the first response. A short delay preserves that multi-client
+        behavior; ``serverRequest/resolved`` cancels this task when a peer
+        wins the race.
+        """
+        if not isinstance(rpc_id, (int, str)):
+            log.warning("unsupported Codex request has invalid id %r", rpc_id)
+            return
+        previous = self._unsupported_request_tasks.pop(rpc_id, None)
+        if previous is not None:
+            previous.cancel()
+
+        async def reject_later() -> None:
+            try:
+                await asyncio.sleep(_SHARED_UNSUPPORTED_REQUEST_GRACE_SECONDS)
+                await self._reject_unsupported_server_request(rpc_id, method)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # noqa: BLE001 — socket teardown race
+                log.debug(
+                    "could not reject unsupported shared request %r: %s",
+                    rpc_id,
+                    exc,
+                )
+            finally:
+                current = self._unsupported_request_tasks.get(rpc_id)
+                if current is asyncio.current_task():
+                    self._unsupported_request_tasks.pop(rpc_id, None)
+
+        self._unsupported_request_tasks[rpc_id] = asyncio.create_task(
+            reject_later(),
+            name=f"codex-unsupported-request-{rpc_id}",
+        )
 
     async def _reject_unsupported_server_request(self, rpc_id, method: str) -> None:
         """Answer -32601 and keep the turn alive.

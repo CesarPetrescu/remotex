@@ -106,6 +106,7 @@ async def test_reconnects_after_websocket_dies(monkeypatch):
         hello = await ws.receive_json()
         assert hello["type"] == "hello"
         assert hello["token"] == "brg_test"
+        assert hello["mode"] == "mock"
         connections += 1
         await ws.send_json({"type": "welcome", "host_id": "host_test"})
         if connections == 1:

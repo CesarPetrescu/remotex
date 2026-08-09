@@ -27,6 +27,7 @@ from .base import SessionAdapter, SessionEvent
 from .factory import build_adapter
 from .rollout import load_rollout_preview
 from .mock import MockCodexAdapter
+from .shared import SharedCodexConnection
 from .stdio import StdioCodexAdapter
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "MockCodexAdapter",
     "SessionAdapter",
     "SessionEvent",
+    "SharedCodexConnection",
     "StdioCodexAdapter",
     "build_adapter",
     "load_rollout_preview",

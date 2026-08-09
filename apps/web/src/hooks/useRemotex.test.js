@@ -235,3 +235,32 @@ describe('tail-first history commits', () => {
     expect(next.historyLoading).toBe(false);
   });
 });
+
+describe('resumed item snapshots', () => {
+  const stale = {
+    ...initialState,
+    events: [{ id: 'answer', role: 'agent', text: 'partial', completed: true }],
+  };
+
+  test('normal duplicate item-started stays deduped', () => {
+    const next = reducer(stale, {
+      type: 'APPEND_EVENT',
+      event: { id: 'answer', role: 'agent', text: 'duplicate', completed: false },
+    });
+
+    expect(next).toBe(stale);
+    expect(next.events[0].text).toBe('partial');
+  });
+
+  test('resumed snapshot repairs an existing item in place', () => {
+    const next = reducer(stale, {
+      type: 'APPEND_EVENT',
+      event: { id: 'answer', role: 'agent', text: 'authoritative snapshot', completed: false },
+      authoritative: true,
+    });
+
+    expect(next.events).toHaveLength(1);
+    expect(next.events[0].text).toBe('authoritative snapshot');
+    expect(next.events[0].completed).toBe(true);
+  });
+});

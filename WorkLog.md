@@ -32,6 +32,112 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — native clients catch up: history paging (regression fix) + iOS stop/steer/patch
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done; iOS compile-verified via CI only
+
+- **Why:** tail-first replay (phases 1–2) REGRESSED both native apps —
+  they treated `history-begin/end` as no-ops, so saved chats showed only
+  the last 2 turns with no way to load more. Owner asked for both apps;
+  will test iOS later.
+- **Changed — Android:**
+  - `RemotexViewModel.kt` — history state (`historyHasMore/Oldest/Loading`
+    + `historyTailTick`), replayed items buffer between begin/end and
+    commit as ONE state update (prepend + id-dedupe), `history-chunk-*`
+    handled, `loadOlderHistory()` sends `history-more`; reset on open.
+  - `EventList.kt` — tail commit jumps to bottom exactly once
+    (`historyTailTick`), live events follow ONLY when already near the
+    bottom (was: yank on every event), scroll-to-top triggers the next
+    page via `snapshotFlow { firstVisibleItemIndex }`, "older turns" row.
+    LazyColumn keys give prepend anchoring for free.
+  - `SessionScreen.kt` / `RemotexApp.kt` — `onLoadOlder` threaded.
+- **Changed — iOS:**
+  - `SessionSocket.swift` — `sendInterrupt`, `sendSteer`,
+    `sendHistoryMore`.
+  - `RemotexViewModel.swift` — same buffered history commit
+    (`commitHistoryBatch`, tail/chunk ticks + `historyAnchorId` for
+    prepend restore); `interruptTurn()`; `sendPrompt()` steers when a turn
+    is running; **`item-patch` restored** (the approvals-rewrite dropped
+    it); item builder extracted to `makeStreamItem` so buffered replay
+    reuses it.
+  - `ContentView.swift` — top pager row (`onAppear` → load), autoscroll
+    keyed on `stream.last?.id` so prepends can't yank the view, tail-tick
+    bottom jump + chunk-tick anchor restore, stop button while pending,
+    send button stays enabled during a turn (steer).
+- **Verified:** Android `compileDebugKotlin` clean + 28 unit tests green.
+  iOS: braces-balance sanity only — **no Xcode on this box**; the push
+  triggers the macOS CI job which compiles it. If that job goes red, fix
+  forward. Owner will test the iOS app by hand later.
+- **Left open:** native prefetch (press-to-preview) and iOS model pickers
+  — still in `ToDo.md` phase 4 / I-012. PR #16 (iOS XCTest target) still
+  unmerged; its `handle(frame:)` visibility change will need a trivial
+  rebase over these edits.
+- **Restart needed:** none server-side (wire protocol unchanged). Android:
+  `cd android && ./build.sh install` when at the machine with the phone.
+
+## 2026-08-09 — preserve shared turns across relay reconnects
+**Agent:** Codex shared_final_review · **Branch:** main · **Status:** done
+
+- **Why:** shared Codex turns outlive the Remotex daemon's relay socket, so the
+  relay must not report a false failed completion during a reconnect.
+- **Changed:**
+  - `services/daemon/client.py` — advertises the configured adapter mode in the
+    authenticated daemon hello.
+  - `services/relay/hub.py`, `services/relay/handlers/ws_daemon.py` — bind mode
+    to socket identity, preserve active turns/prompts only across shared-mode
+    disconnects and shared-to-shared replacements, and retain legacy stdio/mock
+    abort behavior.
+  - `services/daemon/adapters/stdio.py` — shared `thread/resume` reports the
+    authoritative active-turn boolean so an idle snapshot releases the relay's
+    preserved lock without manufacturing a failed transcript event.
+  - `services/tests/{test_hub,test_ws_daemon_binding,test_daemon_connection,test_shared_codex}.py`
+    — cover socket-mode identity, stdio compatibility, shared disconnect and
+    replacement preservation, hello metadata, and idle resume reconciliation.
+- **Verified:** focused reconnect suite 50 passed; Ruff clean on touched Python;
+  `git diff --check` clean.
+- **Left open:** none for this reconnect path.
+- **Restart needed:** daemon and relay rebuild.
+
+## 2026-08-09 — shared Codex routing and hot-resume tests
+**Agent:** Codex shared_mode_tests · **Branch:** main · **Status:** done
+
+- **Why:** lock the shared socket's multiplexing, privacy, resume-ordering,
+  and local-shell prompt behavior before deployment.
+- **Changed:**
+  - `services/tests/test_shared_codex.py` — covered out-of-order response-id
+    routing, per-thread isolation, atomic thread-start claims, orphan
+    unsubscribe, paused hot-resume ordering/active-turn hydration, and the
+    shared-only unknown-request policy.
+  - `services/tests/test_stdio_dispatch.py` — covered live `userMessage`
+    forwarding with `clientId` dedupe/fallback and `clientUserMessageId` on
+    ordinary `turn/start`.
+- **Verified:** refreshed `/tmp/codex`, inspected Codex 0.147.0 source/schema;
+  ruff clean on changed tests; focused suite 57 passed; full services suite
+  165 passed; `git diff --check` clean.
+- **Left open:** no real Codex process is spawned by pytest; live socket/probe
+  verification remains with the core shared-mode integration unit.
+- **Restart needed:** none for tests; daemon for the implementation they cover.
+
+## 2026-08-09 — shared Codex mode config and operator docs
+**Agent:** Codex shared_config_docs · **Branch:** main · **Status:** done
+
+- **Why:** support the opt-in Unix control-socket mode without changing the
+  portable `stdio` default.
+- **Changed:**
+  - `services/daemon/config.py` — added persisted `codex_socket_path` and
+    `$CODEX_HOME`/`~/.codex` default resolution for shared mode.
+  - `services/tests/test_daemon_config_toml.py` — covered custom-path TOML
+    round-trip, default socket resolution, and explicit-path precedence.
+  - `services/README.md`, `deploy/README.md` — documented `shared` versus
+    `stdio`, Unix-only setup, Codex's plain-TUI auto-connect eligibility, and
+    the custom socket setting.
+- **Verified:** config test file: 25 passed; ruff clean on changed Python;
+  `git diff --check` clean. Codex 0.147.0 source was refreshed and its control
+  socket path plus TUI auto-connect gate were inspected. Core shared transport
+  is being implemented separately and was not verified by this unit.
+- **Left open:** `services/daemon/__main__.py` and `deploy/install-daemon.sh`
+  mode choices are intentionally owned by the core integration agent.
+- **Restart needed:** daemon after the complete shared-mode change is installed.
+
 ## 2026-08-09 — chat UX round: keyboard fix, autogrow, jump-to-bottom, titles, links, timestamps
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
 

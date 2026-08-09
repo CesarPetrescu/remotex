@@ -18,6 +18,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         nickname=args.nickname,
         mode=args.mode,
         codex_binary=args.codex_binary,
+        codex_socket_path=args.codex_socket_path or "",
         default_cwd=args.default_cwd or "",
         allow_insecure=bool(args.allow_insecure),
     )
@@ -70,6 +71,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"hostname:   {cfg.hostname}")
     print(f"platform:   {cfg.platform_string}")
     print(f"mode:       {cfg.mode}")
+    if cfg.mode.lower() == "shared":
+        print(f"codex_sock: {cfg.resolved_codex_socket_path}")
     return 0
 
 
@@ -81,12 +84,19 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--relay-url", required=True, help="ws:// or wss:// URL to the relay /ws/daemon endpoint")
     init.add_argument("--bridge-token", required=True)
     init.add_argument("--nickname", required=True)
-    init.add_argument("--mode", default="stdio", choices=["mock", "stdio"])
+    init.add_argument(
+        "--mode", default="stdio", choices=["mock", "stdio", "shared"]
+    )
     init.add_argument("--codex-binary", default="codex")
+    init.add_argument(
+        "--codex-socket-path",
+        default=None,
+        help="shared-mode Unix socket (empty uses $CODEX_HOME or ~/.codex)",
+    )
     init.add_argument(
         "--default-cwd",
         default=None,
-        help="workspace dir Codex runs turns in (stdio mode). Empty → $HOME",
+        help="workspace dir Codex runs turns in (stdio/shared mode). Empty → $HOME",
     )
     init.add_argument(
         "--allow-insecure",

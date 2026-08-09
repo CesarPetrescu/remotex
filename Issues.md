@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-015**.
+  never reuse. Next free ID: **I-017**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -40,6 +40,8 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-012 | open | low | apple | iOS client has approval UI, but still lacks steer / interrupt and progressive item-patch handling |
 | I-013 | fixed | high | process | Local `main` was 3 commits / +7830 lines behind `origin/main`; a whole session was built on a stale base |
 | I-014 | blocked | medium | deploy/security | SparkTunnel 0.2.0 supplies no trustworthy visitor IP for per-address limits |
+| I-015 | wontfix | info | daemon/upstream | Codex external-clock mode rejects multi-subscriber shared threads |
+| I-016 | open | low | web | `closeRightView` is dead and keeps ESLint noisy |
 
 ---
 
@@ -400,3 +402,32 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 - **Evidence:** packet capture of requests sent through the deployed connector;
   `services/tests/test_rate_limit.py::test_spoofed_forwarded_ips_share_quota_when_proxy_is_untrusted`;
   `WorkLog.md` entry "make SparkTunnel rate-limit identity spoof-safe".
+
+## I-015 — Codex external-clock mode requires exactly one subscriber
+
+**Status:** wontfix · **Sev:** info · **Area:** daemon/upstream · **Opened:** 2026-08-09
+
+- **Scope:** only Codex's under-development `current_time_reminder` with an
+  explicitly configured external clock. The default system clock and normal
+  shared Remotex/TUI sessions are unaffected.
+- **Why:** upstream app-server checks for exactly one subscribed connection
+  before asking a client for external time. Shared mode intentionally creates
+  two subscribers while a terminal TUI and Remotex view the same thread.
+- **Decision:** do not weaken shared fan-out or special-case an upstream,
+  disabled-by-default experimental provider. Revisit if Codex makes external
+  time a supported multi-client feature.
+- **Evidence:** matching Codex `rust-v0.144.3` and current HEAD source in
+  `codex-rs/app-server/src/current_time.rs`; shared transport review recorded
+  in the 2026-08-09 WorkLog entries.
+
+## I-016 — dead `closeRightView` keeps web lint noisy
+
+**Status:** open · **Sev:** low · **Area:** web · **Opened:** 2026-08-09
+
+- **Symptom:** `npm run lint` succeeds with one warning instead of cleanly:
+  `apps/web/src/App.jsx:106:9 'closeRightView' is assigned a value but never used`.
+- **Cause:** the callback remained after the drawer close controls stopped
+  calling it.
+- **How to fix:** delete the unused callback, or route the intended close
+  action through it if a caller still needs to be restored.
+- **Evidence:** `cd apps/web && npm run lint` on 2026-08-09.

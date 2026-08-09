@@ -153,6 +153,14 @@ data class UiState(
     val status: Status = Status.Idle,
     val session: SessionInfo? = null,
     val events: List<UiEvent> = emptyList(),
+    // Tail-first history: the daemon ships only the last couple of turns;
+    // scrolling to the top pages older ones in via `history-more`.
+    val historyHasMore: Boolean = false,
+    val historyOldest: Int = 0,
+    val historyLoading: Boolean = false,
+    // Bumped when a history TAIL commits, so the list jumps to the bottom
+    // exactly once per replay instead of on every event change.
+    val historyTailTick: Long = 0L,
     val pending: Boolean = false,
     val error: String? = null,
     val model: String = "",          // empty → codex default (gpt-5.5 at time of writing)
@@ -406,6 +414,10 @@ class RemotexViewModel(
 
     private var socket: SessionSocket? = null
     private var socketJob: Job? = null
+    // Non-null while a history batch streams in; replayed items collect
+    // here and land as ONE state update on history-end / chunk-end.
+    private var historyBuffer: MutableList<UiEvent>? = null
+    private var historyBufferPrepend = false
     private var reconnectJob: Job? = null
     private var reconnectAttempt: Int = 0
     private var userClosed: Boolean = false
@@ -975,6 +987,9 @@ class RemotexViewModel(
                 status = Status.Opening,
                 error = null,
                 events = emptyList(),
+                historyHasMore = false,
+                historyOldest = 0,
+                historyLoading = false,
                 session = null,
                 // Plan mode is a per-session toggle on the daemon side
                 // (each adapter has its own _next_collab_mode). The UI
@@ -1178,6 +1193,24 @@ class RemotexViewModel(
      * the frame when no turn is in flight, and echoes it to every attached
      * client — so we don't append it locally.
      */
+    /** Pull the next page of older turns (scroll-to-top backfill). */
+    fun loadOlderHistory() {
+        val s = _state.value
+        if (!s.historyHasMore || s.historyLoading) return
+        val sock = socket ?: return
+        val frame = Json.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject {
+                put("type", "history-more")
+                put("before", s.historyOldest)
+                put("limit", 10)
+            },
+        )
+        if (sock.sendJson(frame)) {
+            _state.update { it.copy(historyLoading = true) }
+        }
+    }
+
     fun steerTurn(text: String) {
         val input = text.trim()
         val attachments = _state.value.pendingImages
@@ -1464,6 +1497,12 @@ class RemotexViewModel(
             "item-started" -> {
                 val itemId = data.string("item_id") ?: return
                 val itemType = data.string("item_type") ?: return
+                val buf = historyBuffer
+                if (buf != null && data["replayed"] != null) {
+                    buildUiEvent(data, itemId, itemType, replayed = true)
+                        .let { buf.add(it) }
+                    return
+                }
                 val replayed = data["replayed"]?.let {
                     (it as? JsonPrimitive)?.contentOrNull == "true" || it.toString() == "true"
                 } ?: false
@@ -1518,6 +1557,9 @@ class RemotexViewModel(
             }
 
             "item-completed" -> {
+                // Replayed completions mirror their item-started payloads
+                // exactly — nothing to patch while buffering.
+                if (historyBuffer != null && data["replayed"] != null) return
                 val itemId = data.string("item_id") ?: return
                 _state.update { s ->
                     s.copy(events = s.events.map { e ->
@@ -1593,8 +1635,36 @@ class RemotexViewModel(
                 }
             }
 
-            "history-begin", "history-end" -> {
-                // informational markers — consumers can render a divider later
+            "history-begin" -> {
+                historyBuffer = mutableListOf()
+                historyBufferPrepend = false
+            }
+
+            "history-chunk-begin" -> {
+                historyBuffer = mutableListOf()
+                historyBufferPrepend = true
+            }
+
+            "history-end", "history-chunk-end" -> {
+                val incoming = historyBuffer ?: mutableListOf()
+                val prepend = historyBufferPrepend
+                historyBuffer = null
+                val oldest = (data["oldest"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
+                val hasMore = (data["has_more"] as? JsonPrimitive)?.contentOrNull == "true"
+                _state.update { s ->
+                    val seen = s.events.mapTo(HashSet()) { it.id }
+                    val fresh = incoming.filter { it.id !in seen }
+                    s.copy(
+                        // Prepending before existing events is right for both
+                        // cases — on the initial tail, `events` holds at most
+                        // live frames that raced in.
+                        events = fresh + s.events,
+                        historyOldest = oldest,
+                        historyHasMore = hasMore,
+                        historyLoading = false,
+                        historyTailTick = if (prepend) s.historyTailTick else s.historyTailTick + 1,
+                    )
+                }
             }
 
             "goal-snapshot", "goal-updated" -> {

@@ -1,6 +1,7 @@
 """Config.dump() must emit TOML that tomllib can read back verbatim."""
 from __future__ import annotations
 
+from pathlib import Path
 import tomllib
 
 import pytest
@@ -23,6 +24,7 @@ def _round_trip(**overrides) -> Config:
         nickname=data["nickname"],
         mode=data["mode"],
         codex_binary=data["codex_binary"],
+        codex_socket_path=data["codex_socket_path"],
         default_cwd=data["default_cwd"],
         allow_insecure=data["allow_insecure"],
     )
@@ -52,6 +54,32 @@ def test_nickname_round_trips(value):
 def test_allow_insecure_round_trips():
     assert _round_trip(allow_insecure=True).allow_insecure is True
     assert _round_trip().allow_insecure is False
+
+
+def test_shared_socket_path_round_trips():
+    assert _round_trip(
+        mode="shared",
+        codex_socket_path="/run/user/1000/codex.sock",
+    ).codex_socket_path == "/run/user/1000/codex.sock"
+
+
+def test_shared_socket_defaults_to_codex_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    cfg = Config(relay_url="wss://relay.example/ws/daemon", bridge_token="t", nickname="n")
+    assert cfg.resolved_codex_socket_path == (
+        tmp_path / "app-server-control" / "app-server-control.sock"
+    )
+
+
+def test_shared_socket_explicit_path_wins(monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ignored"))
+    cfg = Config(
+        relay_url="wss://relay.example/ws/daemon",
+        bridge_token="t",
+        nickname="n",
+        codex_socket_path="~/custom/codex.sock",
+    )
+    assert cfg.resolved_codex_socket_path == Path.home() / "custom" / "codex.sock"
 
 
 def test_dump_is_parseable_toml_with_hostile_values():

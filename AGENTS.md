@@ -64,8 +64,8 @@ It is **not**:
 
 - A wrapper around the OpenAI API. We don't talk to OpenAI; codex
   does.
-- A reimplementation of codex. We spawn the official `codex
-  app-server` binary and bridge its stdio JSON-RPC.
+- A reimplementation of codex. We bridge the official `codex app-server`
+  over isolated stdio or its Unix control socket.
 - A multi-tenant chat product. There's a user/auth layer but the
   intended deployment is "a few people who trust each other share
   a relay."
@@ -91,12 +91,12 @@ It **is**:
 │  daemon/) — systemd user   │  bridge token               │              │
 │  unit `remotex-daemon`     │                             │              │
 └─────────────┬──────────────┘                             └──────┬───────┘
-              │ stdio JSON-RPC                                    │
+              │ JSON-RPC: stdio or WebSocket-over-UDS             │
               ▼                                                   ▼
    `codex app-server`                                  Postgres
    (the official OpenAI                                (host inventory)
-    binary; one subprocess
-    per session)
+    binary; isolated child or
+    shared managed daemon)
 ```
 
 ### Data flow for a single user prompt
@@ -107,7 +107,7 @@ It **is**:
 3. Relay forwards the frame to the daemon for that session
    (`hub.forward_to_daemon`).
 4. Daemon's `StdioCodexAdapter.handle()` translates the frame into
-   `turn/start` JSON-RPC and writes it to codex's stdin.
+   `turn/start` JSON-RPC and sends it over the selected transport.
 5. Codex emits a stream of notifications: `turn/started`,
    `item/started`, `item/.../delta`, `item/completed`,
    `turn/completed`. The daemon's `_dispatch()` translates each
@@ -146,11 +146,15 @@ It **is**:
 **`services/daemon/`** (Python systemd user unit `remotex-daemon`)
 - `client.py` — outbound WebSocket to relay; receives session-open
   / session-close frames and constructs adapters.
-- `adapters/factory.py` — picks `StdioCodexAdapter` (kind=codex)
-  or `MockCodexAdapter` (mode=mock).
-- `adapters/stdio.py` — bridges one codex subprocess to relay
-  frames. The "main" file in the daemon (~700 lines).
-- `adapters/admin.py` — long-lived codex used for cheap read-only
+- `adapters/factory.py` — picks the real Codex adapter (`stdio` or
+  Unix-only `shared`) or `MockCodexAdapter` (mode=mock).
+- `adapters/stdio.py` — translates Codex JSON-RPC to relay frames for both
+  real transports. The "main" file in the daemon.
+- `adapters/shared.py` — one host-level WebSocket-over-UDS connection;
+  routes responses by request ID and events by thread ID, buffers hot-resume
+  frames, and unsubscribes unclaimed local threads.
+- `adapters/admin.py` — long-lived stdio Codex, or the shared connection,
+  used for cheap read-only
   ops (`thread/list`, `model/list`, `fs/readDirectory`), plus the
   `model/list` → `{id, label, hint, efforts}` mapping the relay's
   host-models route serves.

@@ -24,10 +24,10 @@ web / Android / iPhone
                             ▼
 ┌──────────────────────── daemon ───────────────────────┐
 │ session adapter       admin Codex       telemetry      │
-│ one app-server per    thread/list +     CPU/RAM/GPU/   │
-│ active session        model/list + fs   network        │
+│ stdio subprocess or   thread/list +     CPU/RAM/GPU/   │
+│ shared Unix socket    model/list + fs   network        │
 └───────────────────────────┬────────────────────────────┘
-                            │ newline-delimited JSON-RPC
+                            │ JSON-RPC: stdio or WebSocket-over-UDS
                             ▼
                     codex app-server
 ```
@@ -53,8 +53,10 @@ the relay preserves inventory but drops active routes and replay buffers.
    authenticates to `/ws/client` with a user token.
 3. Only after the client is attached does the relay send `session-open` to the
    daemon, so the first event cannot be lost.
-4. The daemon creates a mock adapter or a real `StdioCodexAdapter`; each real
-   session receives its own `codex app-server` process.
+4. The daemon creates a mock adapter or a real Codex adapter. The default
+   `stdio` mode gives each session its own `codex app-server`; opt-in `shared`
+   mode uses Codex's Unix control socket so terminal and Remotex clients can
+   observe the same loaded threads.
 5. Client frames become Codex JSON-RPC requests. Codex notifications become
    normalized `session-event` frames and fan out to every attached client.
 6. Sequence numbers and a bounded replay buffer let clients reconnect without
@@ -118,7 +120,7 @@ services/
 - `pip install -r requirements.txt` (aiohttp, asyncpg, psutil)
 - A Postgres database for the relay — **not optional**, the store raises
   on startup without `RELAY_DATABASE_URL`.
-- `codex` on PATH and logged in, for the daemon's default `stdio` mode.
+- `codex` on PATH and logged in, for real `stdio` or `shared` mode.
 
 ## Run locally
 
@@ -161,6 +163,29 @@ python3 -m daemon run --config ./demo-config.toml
 `--mode mock` swaps in the scripted adapter if you want to exercise the
 UI without a real Codex. `python3 -m daemon status` prints the loaded
 config and the host identity it will report.
+
+The default `stdio` mode remains the portable, isolated option. On Unix,
+`shared` mode can join Codex's local app-server daemon instead:
+
+```bash
+codex app-server daemon start
+# Set mode = "shared" under [daemon] in the Remotex config, then restart it.
+```
+
+The socket defaults to
+`$CODEX_HOME/app-server-control/app-server-control.sock` (or
+`~/.codex/app-server-control/app-server-control.sock`). Set
+`codex_socket_path` under `[daemon]` only for a custom socket. A plain `codex`
+TUI automatically probes the default socket when its launch options can be
+replayed by the shared server. Invocations with config/profile/strict-config
+or other non-replayable overrides may deliberately start an isolated embedded
+server instead, so those sessions will not appear live in Remotex.
+When the default socket is absent (for example after a reboot), Remotex also
+runs the idempotent `codex app-server daemon start` command. Custom socket
+paths remain operator-managed.
+That Codex lifecycle command currently requires the standalone managed
+installation; npm-only users can supervise `codex app-server --listen
+unix://` themselves or use the portable `stdio` mode.
 
 `run` refuses to start when `relay_url` is cleartext `ws://` to anything
 but loopback — that would ship the bridge token and every prompt in the
@@ -238,11 +263,13 @@ OIDC-issued credentials is the top item under "Known gaps" in
   exponential backoff and equal jitter (1s → 30s), stable-connection reset,
   slower authentication retries, clean replacement handling, session runners,
   and host telemetry. A lost socket resumes threads after reconnect; an
-  in-flight turn is failed explicitly because its Codex process cannot survive
-  the daemon-side adapter teardown.
-- **Codex integration** — real, and the default. `StdioCodexAdapter`
-  spawns `codex app-server`, performs the handshake, streams turns, and
-  handles approvals, user-input prompts, slash commands, thread goals,
+  in-flight `stdio` turn is failed explicitly because its child Codex process
+  cannot survive the daemon-side adapter teardown. Shared Codex threads remain
+  owned by Codex's app-server daemon and can be resumed after reconnect.
+- **Codex integration** — real. The default `stdio` mode spawns an isolated
+  `codex app-server`; Unix-only `shared` mode connects to Codex's local
+  WebSocket-over-Unix-socket control plane. Both perform the handshake, stream
+  turns, and handle approvals, user-input prompts, slash commands, thread goals,
   token usage, image attachments, active-turn steering, MCP elicitation,
   and thread resume.
 - **Model list** — real, and host-scoped. `GET /api/hosts/{id}/models`

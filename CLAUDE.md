@@ -30,21 +30,22 @@ users get a Web UI, Android app, and iPhone app that all attach to
 the same `codex app-server` process via WebSocket fan-out.
 
 ```
-┌─────────────┐  HTTPS+WSS   ┌──────────────┐  WSS (outbound)  ┌──────────────┐  stdio
+┌─────────────┐  HTTPS+WSS   ┌──────────────┐  WSS (outbound)  ┌──────────────┐  stdio / UDS WS
 │ Web/Android │─────────────▶│ Remotex relay│◀─────────────────│ Host daemon  │────────▶ codex app-server
 │ /iPhone     │              │ aiohttp      │  bridge token    │ Python       │          (OpenAI)
 └─────────────┘              └──────────────┘                   └──────────────┘
 ```
 
 The relay is a rendezvous + auth point only — it never sees the
-user's OpenAI auth. Codex runs as a child process of the daemon.
+user's OpenAI auth. Codex is either an isolated daemon child (`stdio`, the
+portable default) or the user's managed local app-server (`shared`, Unix-only).
 
 ## Layout (one-line reminders)
 
 - `services/daemon/` — Python daemon that runs on each user's host;
-  spawns `codex app-server` subprocesses and bridges them to the
-  relay. Run as the systemd user unit `remotex-daemon` (NOT in
-  docker).
+  bridges isolated `codex app-server` subprocesses or one shared local
+  control socket to the relay. Run as the systemd user unit
+  `remotex-daemon` (NOT in docker).
 - `services/relay/` — aiohttp relay; routes between web/Android/iOS
   clients and the daemons. Lives in the `remotex-relay-1` docker
   container (compose file at `deploy/docker-compose.yml`).

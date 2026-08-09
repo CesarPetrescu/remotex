@@ -28,6 +28,22 @@ async def test_attach_daemon_returns_old_ws_on_replacement():
 
 
 @pytest.mark.asyncio
+async def test_daemon_mode_is_bound_to_socket_identity():
+    hub = Hub()
+    shared = _ws_mock()
+    stdio = _ws_mock()
+
+    await hub.attach_daemon("host_a", shared, mode="shared")
+    replaced = await hub.attach_daemon("host_a", stdio, mode="stdio")
+
+    assert replaced is shared
+    assert hub.daemon_mode_for(shared) == "shared"
+    assert hub.daemon_mode_for(stdio) == "stdio"
+    assert await hub.detach_daemon("host_a", shared) is False
+    assert hub.daemon_mode_for(stdio) == "stdio"
+
+
+@pytest.mark.asyncio
 async def test_detach_daemon_only_removes_matching_ws():
     hub = Hub()
     a = _ws_mock()

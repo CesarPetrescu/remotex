@@ -18,7 +18,7 @@ _ITEM_TYPE_MAP = {
     # (collapsible, copyable, truncated). It used to map to `file_change`,
     # which no client had a case for — edits showed as an empty system row.
     "fileChange": "tool_call",
-    "userMessage": "user_message",  # echoed; we drop these client-side
+    "userMessage": "user_message",
 }
 
 
@@ -65,7 +65,9 @@ def _item_extras(item: dict) -> dict:
     """Flatten the fields the web client cares about out of the item payload."""
     t = item.get("type", "")
     extras: dict = {}
-    if t == "agentMessage":
+    if t == "userMessage":
+        extras["text"] = _join_input(item.get("content"))
+    elif t == "agentMessage":
         if "text" in item:
             extras["text"] = item["text"]
         if "phase" in item:

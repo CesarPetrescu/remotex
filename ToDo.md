@@ -288,13 +288,15 @@ nobody re-discovers them:
   `ensure_codex_goals_feature_enabled()` hand-editing `~/.codex/config.toml`
   (`adapters/codex_config.py`).
 
-## Heads-up: codex ships its own remote control now
+## ~~Shared local Codex daemon integration~~ — DONE 2026-08-09
 
-0.147 has `codex remote-control`, `codex --remote ws://…`,
-`codex app-server proxy|daemon`, and a `remoteControl/*` protocol family
-(pairing, client list/revoke, enable/disable). It overlaps Remotex's core
-premise. Read it before the next architecture decision — it may be a
-transport to adopt rather than a competitor.
+Remotex now optionally uses `codex app-server daemon` through its local
+WebSocket-over-Unix-socket control plane. One host connection multiplexes
+threads, hot-resumes active terminal turns, and forwards local TUI prompts.
+The portable isolated `stdio` mode remains the default. Codex's separate
+`remoteControl/*` pairing/client-revocation family is not used: Remotex keeps
+its own authenticated relay and only adopts the same-machine app-server
+transport.
 
 ---
 

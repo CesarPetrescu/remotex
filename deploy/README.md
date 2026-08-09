@@ -323,6 +323,36 @@ switching nvm versions or moving an npm prefix. With `--system --run-as-user`,
 pass an absolute `--codex-binary` for nonstandard locations because the root
 installer cannot reliably reconstruct another user's shell environment.
 
+### Optional: share terminal Codex sessions
+
+The installed daemon defaults to `mode = "stdio"`: every Remotex session gets
+an isolated `codex app-server` child, which works on every supported OS. On a
+Unix host, opt into `mode = "shared"` when terminal and Remotex clients should
+attach to the same Codex threads:
+
+```bash
+codex app-server daemon start
+$EDITOR ~/.remotex/config.toml   # set mode = "shared" under [daemon]
+systemctl --user restart remotex-daemon
+```
+
+Remotex uses Codex's default control socket at
+`$CODEX_HOME/app-server-control/app-server-control.sock` (falling back to
+`~/.codex/...`). A custom location can be set as
+`codex_socket_path = "/absolute/path/to/app-server-control.sock"` in the same
+config. Shared mode is Unix-only. For the default socket, Remotex runs the
+idempotent `codex app-server daemon start` command when the socket is absent;
+custom socket paths must already be served by an app-server.
+Codex's daemon lifecycle command currently requires its standalone managed
+installation. With an npm-only Codex install, supervise
+`codex app-server --listen unix://` yourself or keep Remotex in `stdio` mode.
+
+After `codex app-server daemon start`, a plain `codex` command automatically
+probes that default socket when its launch configuration is reusable. Codex
+intentionally stays isolated when launched with config/profile/strict-config
+or other non-replayable overrides; such a session cannot be mirrored live.
+Standalone `stdio` mode remains available by setting `mode = "stdio"` again.
+
 The uninstall operation removes the service but deliberately keeps the config
 and virtual environment. To keep a user daemon alive after logout:
 

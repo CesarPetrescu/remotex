@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import random
+import shlex
 import time
 from typing import Awaitable, Callable
 
@@ -14,6 +15,7 @@ import aiohttp
 from .adapters import (
     AdminCodex,
     SessionAdapter,
+    SharedCodexConnection,
     build_adapter,
     load_rollout_preview,
     model_options_from_codex,
@@ -92,6 +94,7 @@ class DaemonClient:
         # spawn on first use; kept alive between calls so we don't eat
         # node startup cost on every thread-list request.
         self._admin = AdminCodex(codex_binary=config.codex_binary)
+        self._shared: SharedCodexConnection | None = None
         self._telemetry = TelemetryCollector()
 
     async def run(self) -> None:
@@ -136,19 +139,49 @@ class DaemonClient:
     async def _run_once(self) -> None:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=15)
         connected_at: float | None = None
+        shared: SharedCodexConnection | None = None
         try:
+            if (self.config.mode or "").lower() == "shared":
+                start_command: list[str] | None = None
+                if not self.config.codex_socket_path:
+                    command = shlex.split(self.config.codex_binary)
+                    if command:
+                        start_command = command + [
+                            "app-server", "daemon", "start",
+                        ]
+                shared = SharedCodexConnection(
+                    self.config.resolved_codex_socket_path,
+                    start_command=start_command,
+                )
+                await shared.start()
+                self._shared = shared
+                self._admin.bind_shared(shared)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.ws_connect(
                     self.config.relay_url,
                     heartbeat=20,
                     max_msg_size=WS_MAX_MSG_SIZE,
                 ) as ws:
+                    if shared is not None:
+                        async def shared_disconnected(exc: BaseException) -> None:
+                            log.warning(
+                                "shared Codex disconnected; recycling relay socket: %s",
+                                exc,
+                            )
+                            if not ws.closed:
+                                await ws.close(
+                                    code=1011,
+                                    message=b"shared Codex disconnected",
+                                )
+
+                        shared.set_disconnect_handler(shared_disconnected)
                     await ws.send_json({
                         "type": "hello",
                         "token": self.config.bridge_token,
                         "hostname": self.config.hostname,
                         "platform": self.config.platform_string,
                         "nickname": self.config.nickname,
+                        "mode": (self.config.mode or "stdio").lower(),
                         "os_user": self.config.os_user,
                         "home_dir": os.path.expanduser("~"),
                         "default_cwd": self.config.default_cwd,
@@ -272,6 +305,13 @@ class DaemonClient:
             raise _RelayConnectionError(
                 f"{type(exc).__name__}: {msg}", connected_for=connected_for,
             ) from exc
+        finally:
+            if shared is not None:
+                shared.set_disconnect_handler(None)
+                self._admin.bind_shared(None)
+                if self._shared is shared:
+                    self._shared = None
+                await shared.close()
 
     async def _close_all_sessions(self) -> None:
         runners = list(self._sessions.values())
@@ -364,6 +404,7 @@ class DaemonClient:
                 default_cwd=frame.get("cwd") or self.config.default_cwd,
                 resume_thread_id=frame.get("resume_thread_id") or None,
                 kind=(frame.get("kind") or "codex"),
+                shared_connection=self._shared,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("session %s: adapter build failed (%s: %s)", sid, type(exc).__name__, exc)

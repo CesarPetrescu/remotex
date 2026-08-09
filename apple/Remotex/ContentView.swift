@@ -124,6 +124,17 @@ private struct SessionView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
+                        if viewModel.historyHasMore {
+                            HStack {
+                                Spacer()
+                                Text(viewModel.historyLoading ? "loading older turns…" : "older turns load as you scroll")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(Color.remotexMuted)
+                                Spacer()
+                            }
+                            .onAppear { viewModel.loadOlderHistory() }
+                            .id("history-loader")
+                        }
                         ForEach(viewModel.stream) { item in
                             StreamRow(item: item)
                                 .id(item.id)
@@ -135,11 +146,25 @@ private struct SessionView: View {
                     }
                     .padding(12)
                 }
-                .onChange(of: viewModel.stream) { _, items in
-                    guard let last = items.last else { return }
+                // Follow appends only: prepended history pages change the
+                // HEAD of the stream, live output changes the TAIL. Keying
+                // on the last id means backfill never yanks the view down.
+                .onChange(of: viewModel.stream.last?.id) { _, lastId in
+                    guard let lastId else { return }
                     withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
+                        proxy.scrollTo(lastId, anchor: .bottom)
                     }
+                }
+                // A committed tail jumps to the newest exchange once.
+                .onChange(of: viewModel.historyTailTick) { _, _ in
+                    guard let last = viewModel.stream.last else { return }
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
+                // A committed older page restores the row that was at the
+                // top before the prepend, so the view doesn't shift.
+                .onChange(of: viewModel.historyChunkTick) { _, _ in
+                    guard let anchor = viewModel.historyAnchorId else { return }
+                    proxy.scrollTo(anchor, anchor: .top)
                 }
             }
             PendingPromptsPanel(viewModel: viewModel)
@@ -289,19 +314,29 @@ private struct Composer: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.remotexLine, lineWidth: 1)
                 )
+            if viewModel.pending {
+                Button {
+                    viewModel.interruptTurn()
+                } label: {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(Color.remotexWarn)
+                }
+                .accessibilityLabel("Stop turn")
+            }
             Button {
                 viewModel.sendPrompt()
             } label: {
-                Image(systemName: viewModel.pending ? "hourglass" : "arrow.up.circle.fill")
+                // While a turn runs, typed text STEERS it (codex turn/steer)
+                // instead of being locked out — same flow as web/Android.
+                Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 30))
             }
-            // The relay rejects a second turn-start while one is running,
-            // so don't offer one.
             .disabled(
                 viewModel.status != .connected
-                    || viewModel.pending
                     || viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             )
+            .accessibilityLabel(viewModel.pending ? "Steer turn" : "Send")
         }
         .padding(12)
         .background(Color.remotexBackground)

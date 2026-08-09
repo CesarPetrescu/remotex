@@ -123,6 +123,7 @@ fun RemotexApp(relayUrl: String) {
                         onSend = vm::sendTurn,
                         onStop = vm::interruptTurn,
                         onSteer = vm::steerTurn,
+                        onLoadOlder = vm::loadOlderHistory,
                         onAttachImage = vm::attachImage,
                         onRemoveImage = vm::removeImage,
                         onPermissionsChange = vm::setPermissions,

@@ -5,6 +5,10 @@ import asyncio
 import json
 import logging
 import shlex
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .shared import SharedCodexConnection
 
 log = logging.getLogger("daemon.adapters.admin")
 
@@ -88,14 +92,23 @@ class AdminCodex:
     the hot-path to a single JSON-RPC round-trip.
     """
 
-    def __init__(self, codex_binary: str = "codex") -> None:
+    def __init__(
+        self,
+        codex_binary: str = "codex",
+        shared_connection: SharedCodexConnection | None = None,
+    ) -> None:
         self._codex_binary = codex_binary
+        self._shared = shared_connection
         self._proc: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task | None = None
         self._stderr_task: asyncio.Task | None = None
         self._pending: dict[int, asyncio.Future] = {}
         self._next_id = 0
         self._lock = asyncio.Lock()
+
+    def bind_shared(self, connection: SharedCodexConnection | None) -> None:
+        """Use the relay connection's shared Codex transport for admin RPCs."""
+        self._shared = connection
 
     async def close(self) -> None:
         async with self._lock:
@@ -139,6 +152,8 @@ class AdminCodex:
 
     async def _call(self, method: str, params: dict, *, timeout: float = 10.0) -> dict:
         async with self._lock:
+            if self._shared is not None:
+                return await self._shared.request(method, params, timeout=timeout)
             await self._ensure_running()
             try:
                 return await asyncio.wait_for(

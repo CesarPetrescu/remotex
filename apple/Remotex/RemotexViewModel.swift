@@ -22,6 +22,16 @@ final class RemotexViewModel: ObservableObject {
     @Published var prompt: String = ""
     @Published var errorMessage: String?
     @Published private(set) var pending: Bool = false
+    // Tail-first history: the daemon ships only the last couple of turns;
+    // reaching the top of the transcript pages older ones in.
+    @Published private(set) var historyHasMore: Bool = false
+    @Published private(set) var historyLoading: Bool = false
+    // Bumped once per committed tail → the view jumps to the newest turn.
+    @Published private(set) var historyTailTick: Int = 0
+    // Bumped per committed older page; `historyAnchorId` is the row that
+    // was at the top before the prepend, so the view can restore it.
+    @Published private(set) var historyChunkTick: Int = 0
+    @Published private(set) var historyAnchorId: String?
 
     var hasPendingPrompts: Bool {
         !pendingApprovals.isEmpty || !pendingUserInputs.isEmpty
@@ -36,6 +46,11 @@ final class RemotexViewModel: ObservableObject {
 
     private let client = RelayClient()
     private var socket: SessionSocket?
+    private var historyOldest = 0
+    // Non-null while a history batch streams in; replayed items collect
+    // here and land as one stream mutation on history-end / chunk-end.
+    private var historyBuffer: [StreamItem]?
+    private var historyBufferPrepend = false
     // Kept until the relay echoes our user message back, so a rejected
     // turn-start can hand the text back to the composer.
     private var unsentInput: String?
@@ -93,6 +108,7 @@ final class RemotexViewModel: ObservableObject {
         status = .opening
         errorMessage = nil
         stream = []
+        resetHistoryPaging()
 
         Task {
             do {
@@ -129,16 +145,42 @@ final class RemotexViewModel: ObservableObject {
 
     func sendPrompt() {
         let input = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty, !pending, let socket else { return }
+        guard !input.isEmpty, let socket else { return }
+        let messageId = "msg-\(UUID().uuidString.prefix(8))"
+        if pending {
+            // A turn is running: steer it instead of being locked out. The
+            // relay echoes the steered message like any user message.
+            prompt = ""
+            socket.sendSteer(input, clientMessageId: messageId)
+            return
+        }
         // The relay echoes the user message back to every attached client,
         // including this one, as an item-started keyed by client_message_id.
         // Let that echo render it instead of appending a second copy here.
-        let messageId = "msg-\(UUID().uuidString.prefix(8))"
         unsentInput = input
         unsentMessageId = messageId
         prompt = ""
         pending = true
         socket.sendTurn(input, clientMessageId: messageId)
+    }
+
+    func interruptTurn() {
+        socket?.sendInterrupt()
+    }
+
+    /** Ask for the previous page of older turns. Guards re-entry. */
+    func loadOlderHistory() {
+        guard historyHasMore, !historyLoading, let socket else { return }
+        historyLoading = true
+        socket.sendHistoryMore(before: historyOldest)
+    }
+
+    private func resetHistoryPaging() {
+        historyHasMore = false
+        historyLoading = false
+        historyOldest = 0
+        historyBuffer = nil
+        historyAnchorId = nil
     }
 
     // Answers the head of the approval queue; popping it reveals the next.
@@ -169,6 +211,7 @@ final class RemotexViewModel: ObservableObject {
         session = nil
         pending = false
         stream = []
+        resetHistoryPaging()
         clearPendingPrompts()
         unsentInput = nil
         unsentMessageId = nil
@@ -250,7 +293,24 @@ final class RemotexViewModel: ObservableObject {
             session?.threadId = data.string("thread_id") ?? session?.threadId
             status = .connected
 
+        case "history-begin":
+            historyBuffer = []
+            historyBufferPrepend = false
+
+        case "history-chunk-begin":
+            historyBuffer = []
+            historyBufferPrepend = true
+
+        case "history-end", "history-chunk-end":
+            commitHistoryBatch(data)
+
         case "item-started":
+            if historyBuffer != nil, data.bool("replayed") {
+                if let item = makeStreamItem(from: data) {
+                    historyBuffer?.append(item)
+                }
+                return
+            }
             appendStartedItem(data)
 
         case "item-delta":
@@ -260,7 +320,18 @@ final class RemotexViewModel: ObservableObject {
                 item.text += delta
             }
 
+        case "item-patch":
+            // Progressive file-edit diff: codex resends the WHOLE patch each
+            // time, so replace the body rather than appending to it.
+            guard let itemId = data.string("item_id") else { return }
+            let output = data.string("output") ?? ""
+            updateItem(id: itemId) { item in
+                item.text = output
+            }
+
         case "item-completed":
+            // Replayed completions mirror their item-started payloads.
+            if historyBuffer != nil, data.bool("replayed") { return }
             guard let itemId = data.string("item_id") else { return }
             updateItem(id: itemId) { item in
                 if let text = data.string("text"), !text.isEmpty {
@@ -377,7 +448,50 @@ final class RemotexViewModel: ObservableObject {
 
     // --- stream ------------------------------------------------------------
 
+    /// One state mutation per replay batch: the buffered tail (or an older
+    /// page) lands in a single render instead of streaming past the user.
+    private func commitHistoryBatch(_ data: [String: Any]) {
+        let incoming = historyBuffer ?? []
+        let prepend = historyBufferPrepend
+        historyBuffer = nil
+        historyOldest = data.int("oldest") ?? 0
+        historyHasMore = data.bool("has_more")
+        historyLoading = false
+        let seen = Set(stream.map(\.id))
+        let fresh = incoming.filter { !seen.contains($0.id) }
+        if !fresh.isEmpty {
+            // Prepending before existing rows is right for both cases — on
+            // the initial tail, `stream` holds at most live frames that
+            // raced in.
+            historyAnchorId = prepend ? stream.first?.id : nil
+            stream.insert(contentsOf: fresh, at: 0)
+        }
+        if prepend {
+            historyChunkTick += 1
+        } else {
+            historyTailTick += 1
+        }
+    }
+
     private func appendStartedItem(_ data: [String: Any]) {
+        guard let item = makeStreamItem(from: data) else { return }
+        let itemId = item.id
+        let itemType = data.string("item_type") ?? "event"
+        appendOnce(item)
+
+        guard itemType == "user_message" else { return }
+        if itemId == unsentMessageId {
+            // Our own message came back from the relay: it reached codex,
+            // so stop holding the text for the retry path.
+            unsentInput = nil
+            unsentMessageId = nil
+        }
+        if !data.bool("replayed") {
+            pending = true
+        }
+    }
+
+    private func makeStreamItem(from data: [String: Any]) -> StreamItem? {
         let itemId = data.string("item_id") ?? "item-\(UUID().uuidString.prefix(8))"
         let itemType = data.string("item_type") ?? "event"
         let args = data.dictionary("args")
@@ -426,18 +540,7 @@ final class RemotexViewModel: ObservableObject {
                 completed: true
             )
         }
-        appendOnce(item)
-
-        guard itemType == "user_message" else { return }
-        if itemId == unsentMessageId {
-            // Our own message came back from the relay: it reached codex,
-            // so stop holding the text for the retry path.
-            unsentInput = nil
-            unsentMessageId = nil
-        }
-        if !data.bool("replayed") {
-            pending = true
-        }
+        return item
     }
 
     // Contract (C): the relay evicted frames we asked to replay. Mark the

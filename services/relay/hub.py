@@ -102,6 +102,10 @@ class Hub:
 
     def __init__(self) -> None:
         self.daemons: dict[str, web.WebSocketResponse] = {}
+        # Socket identity -> daemon Codex mode.  The mode belongs to the
+        # connection, not just the host: a replacement handshake installs the
+        # new socket before the old handler finishes unwinding.
+        self._daemon_modes: dict[int, str] = {}
         # A freshly authenticated daemon is installed as the current socket
         # before the old one is closed, but it must not receive client/admin
         # frames until welcome + every cached session-open frame are queued.
@@ -170,10 +174,12 @@ class Hub:
         ws: web.WebSocketResponse,
         *,
         ready: bool = True,
+        mode: str = "stdio",
     ) -> web.WebSocketResponse | None:
         async with self._lock:
             old = self.daemons.get(host_id)
             self.daemons[host_id] = ws
+            self._daemon_modes[id(ws)] = mode
             if ready:
                 self._unready_daemons.pop(host_id, None)
             else:
@@ -196,11 +202,18 @@ class Hub:
     async def detach_daemon(self, host_id: str, ws: web.WebSocketResponse | None = None) -> bool:
         async with self._lock:
             if ws is not None and self.daemons.get(host_id) is not ws:
+                self._daemon_modes.pop(id(ws), None)
                 return False
-            self.daemons.pop(host_id, None)
+            removed = self.daemons.pop(host_id, None)
+            if removed is not None:
+                self._daemon_modes.pop(id(removed), None)
             if ws is None or self._unready_daemons.get(host_id) is ws:
                 self._unready_daemons.pop(host_id, None)
             return True
+
+    def daemon_mode_for(self, ws: web.WebSocketResponse | None) -> str:
+        """Return the mode advertised by this exact daemon socket."""
+        return self._daemon_modes.get(id(ws), "stdio") if ws is not None else "stdio"
 
     async def attach_client(
         self,
@@ -539,11 +552,11 @@ class Hub:
     async def abort_host_turns(self, host_id: str) -> list[str]:
         """Clear turns that cannot survive a daemon connection change.
 
-        The daemon tears down every Codex adapter when its relay socket
-        closes.  The relay keeps the session-open frames so a reconnect can
-        resume each thread, but the old *turn* and its prompts are gone.  If
-        their hub state remains live, ``try_begin_turn`` rejects every new
-        prompt until the session is reaped.
+        An isolated stdio/mock adapter loses its Codex turn when the relay
+        socket closes. The relay keeps the session-open frames so a reconnect
+        can resume each thread, but the old *turn* and its prompts are gone.
+        Shared adapters deliberately do not call this method; their managed
+        app-server survives and a later resume snapshot reconciles the lock.
 
         Return the session ids whose clients need a synthetic
         ``turn-completed`` event.  State is cleared under one lock so a prompt

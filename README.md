@@ -147,7 +147,8 @@ cd android
    preceded by a `replay-gap` frame if the buffer has already evicted part
    of it.
 7. A client prompt becomes a `turn-start` frame.
-8. The daemon translates that into Codex `turn/start` over stdio.
+8. The daemon translates that into Codex `turn/start` over stdio, or over
+   Codex's shared WebSocket-over-Unix-socket control plane in `shared` mode.
 9. Codex notifications are normalized into `session-event` frames and
    streamed back through the relay to the client.
 
@@ -247,6 +248,12 @@ cd services
 
 Use `--mode mock` to replace live session output with a scripted stream.
 Thread and directory administration still uses the local Codex binary.
+On Unix, `--mode shared` connects Remotex and eligible plain `codex` TUI
+invocations to the same loaded threads. Start it once with
+`codex app-server daemon start`; Remotex also starts the default control
+socket automatically when shared mode is selected and it is absent.
+Invocations with config/profile/strict-config overrides can remain isolated by
+Codex and therefore will not mirror live.
 For a persistent Linux installation, use `deploy/install-daemon.sh`; see the
 [deployment guide](deploy/README.md).
 
@@ -334,7 +341,7 @@ docker compose --profile tls up -d --build
 | --- | --- |
 | Relay REST + WebSocket transport | Working; Postgres-backed; tokens hashed at rest; demo tokens opt-in via `RELAY_SEED_DEMO` |
 | Daemon -> relay connection | Working; outbound WebSocket with bounded jittered reconnect and clean active-turn failure/resume semantics |
-| Real Codex bridge | Working through `codex app-server` stdio |
+| Real Codex bridge | Working through isolated app-server stdio or opt-in shared WebSocket-over-UDS |
 | Mock adapter | Working for tests and offline demos |
 | Web client | Lists hosts, opens/resumes sessions, sends text/image turns, streams reasoning/tool/agent events, handles approvals, user-input prompts, models, effort, permissions, slash commands, goals, files, and telemetry |
 | Android client | At parity with web apart from push: hosts, thread resume, events, turns, images, model/effort/permissions, approvals, user-input, slash commands, goals, files, interrupt, reconnect, background notifications |

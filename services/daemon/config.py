@@ -53,8 +53,9 @@ class Config:
     relay_url: str
     bridge_token: str
     nickname: str
-    mode: str = "stdio"          # "mock" | "stdio"
-    codex_binary: str = "codex"  # only used when mode == "stdio"
+    mode: str = "stdio"          # "mock" | "stdio" | "shared"
+    codex_binary: str = "codex"  # used by stdio and shared setup
+    codex_socket_path: str = ""  # shared mode; empty -> $CODEX_HOME default
     default_cwd: str = ""        # workspace dir Codex runs turns in; empty → $HOME
     # Opt-in required before we ship the bridge token over cleartext
     # ws:// to anything but loopback. See insecure_relay_reason().
@@ -78,6 +79,13 @@ class Config:
         except Exception:  # noqa: BLE001
             return os.environ.get("USER") or os.environ.get("USERNAME") or ""
 
+    @property
+    def resolved_codex_socket_path(self) -> Path:
+        if self.codex_socket_path:
+            return Path(self.codex_socket_path).expanduser()
+        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        return codex_home.expanduser() / "app-server-control" / "app-server-control.sock"
+
     @classmethod
     def load(cls, path: Path) -> "Config":
         with path.open("rb") as fh:
@@ -93,6 +101,7 @@ class Config:
             nickname=daemon["nickname"],
             mode=daemon.get("mode", "stdio"),
             codex_binary=daemon.get("codex_binary", "codex"),
+            codex_socket_path=daemon.get("codex_socket_path", ""),
             default_cwd=daemon.get("default_cwd", ""),
             allow_insecure=bool(daemon.get("allow_insecure", False)),
         )
@@ -129,6 +138,7 @@ class Config:
             f"nickname     = {_toml_string(self.nickname)}",
             f"mode         = {_toml_string(self.mode)}",
             f"codex_binary = {_toml_string(self.codex_binary)}",
+            f"codex_socket_path = {_toml_string(self.codex_socket_path)}",
             f"default_cwd  = {_toml_string(self.default_cwd)}",
             f"allow_insecure = {'true' if self.allow_insecure else 'false'}",
             "",

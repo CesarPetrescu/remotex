@@ -31,6 +31,7 @@ fun SessionScreen(
     onSend: (String) -> Unit,
     onStop: () -> Unit,
     onSteer: (String) -> Unit,
+    onLoadOlder: () -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
     onPermissionsChange: (PermissionsMode) -> Unit,
@@ -93,6 +94,10 @@ fun SessionScreen(
             events = state.events,
             pending = state.pending,
             connected = state.status == Status.Connected,
+            historyHasMore = state.historyHasMore,
+            historyLoading = state.historyLoading,
+            historyTailTick = state.historyTailTick,
+            onLoadOlder = onLoadOlder,
             modifier = Modifier.weight(1f, fill = true),
         )
         ComposerBar(

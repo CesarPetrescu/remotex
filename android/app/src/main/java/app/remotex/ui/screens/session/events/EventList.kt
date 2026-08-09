@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -52,11 +53,34 @@ internal fun EventList(
     events: List<UiEvent>,
     pending: Boolean,
     connected: Boolean,
+    historyHasMore: Boolean = false,
+    historyLoading: Boolean = false,
+    historyTailTick: Long = 0L,
+    onLoadOlder: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    // A committed history tail jumps to the newest exchange exactly once.
+    LaunchedEffect(historyTailTick) {
+        if (events.isNotEmpty()) listState.scrollToItem(Int.MAX_VALUE / 2)
+    }
+    // Live events follow the tail only while the user is already there —
+    // reading old turns must never get yanked back down. Prepended history
+    // pages keep their anchor for free: LazyColumn pins to item keys.
     LaunchedEffect(events.size) {
-        if (events.isNotEmpty()) listState.animateScrollToItem(events.lastIndex)
+        val info = listState.layoutInfo
+        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+        val nearBottom = lastVisible >= info.totalItemsCount - 2
+        if (events.isNotEmpty() && nearBottom) {
+            listState.animateScrollToItem(Int.MAX_VALUE / 2)
+        }
+    }
+    // Scroll-to-top backfill: when the loader row (or first group) becomes
+    // visible, ask for the previous page. The ViewModel guards re-entry.
+    LaunchedEffect(listState, historyHasMore) {
+        if (!historyHasMore) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { first -> if (first <= 0) onLoadOlder() }
     }
     if (events.isEmpty()) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -77,6 +101,18 @@ internal fun EventList(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
+        if (historyHasMore) {
+            item(key = "history-loader") {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (historyLoading) "loading older turns…" else "older turns load as you scroll",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                }
+            }
+        }
         items(groups, key = { it.events.first().id }) { group ->
             when (group.kind) {
                 EventGroup.Kind.USER -> UserBubble(group.events.first() as UiEvent.User)

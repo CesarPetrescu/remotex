@@ -303,6 +303,61 @@ async def test_generic_delta_suffix_still_works():
     assert event.data["delta"] == "hi"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("client_id", "expected_id"),
+    [("relay-message", "relay-message"), (None, "codex-message")],
+)
+async def test_live_user_message_uses_client_id_or_codex_id(client_id, expected_id):
+    adapter, _ = _adapter()
+    item = {
+        "type": "userMessage",
+        "id": "codex-message",
+        "content": [{"type": "text", "text": "from the local shell"}],
+    }
+    if client_id is not None:
+        item["clientId"] = client_id
+
+    await adapter._dispatch({
+        "method": "item/started",
+        "params": {"threadId": "th_1", "turnId": "tu_1", "item": item},
+    })
+
+    (event,) = await _drain(adapter)
+    assert event.kind == "item-started"
+    assert event.data["item_type"] == "user_message"
+    assert event.data["item_id"] == expected_id
+    assert event.data["text"] == "from the local shell"
+
+
+@pytest.mark.asyncio
+async def test_turn_start_forwards_client_message_id_to_codex():
+    adapter, _ = _adapter()
+    adapter._thread_id = "th_1"
+    adapter._ready = True
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_request(method, params, timeout=60.0):
+        calls.append((method, params))
+        return {}
+
+    adapter._request = fake_request  # type: ignore[method-assign]
+    await adapter.handle({
+        "type": "turn-start",
+        "input": "hello",
+        "client_message_id": "relay-message",
+    })
+
+    (method, params), = calls
+    assert method == "turn/start"
+    assert params["clientUserMessageId"] == "relay-message"
+    assert params["input"] == [{
+        "type": "text",
+        "text": "hello",
+        "text_elements": [],
+    }]
+
+
 # --- 2. unsupported server requests must not kill the turn -----------------
 
 

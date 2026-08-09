@@ -20,6 +20,7 @@ NICKNAME=""
 DEFAULT_CWD=""
 MODE="stdio"
 CODEX_BINARY="codex"
+CODEX_SOCKET_PATH=""
 FORCE_CONFIG=0
 NO_ENABLE=0
 UNINSTALL=0
@@ -45,8 +46,10 @@ Options:
   --bridge-token TOKEN  Bridge token issued by the relay admin
   --nickname NAME       Host nickname shown in clients (default: \$HOSTNAME)
   --default-cwd PATH    Workspace dir Codex turns run in (default: \$HOME)
-  --mode MODE           stdio | mock (default: stdio)
+  --mode MODE           stdio | shared | mock (default: stdio)
   --codex-binary PATH   Codex executable name or path (default: codex)
+  --codex-socket-path PATH
+                        Shared-mode Unix socket (default: Codex control socket)
   --force-config        Overwrite an existing config file
   --no-enable           Install the unit but do not enable/start it
   --non-interactive     Fail instead of prompting for missing values
@@ -69,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     --default-cwd)     DEFAULT_CWD="$2"; shift 2 ;;
     --mode)            MODE="$2"; shift 2 ;;
     --codex-binary)    CODEX_BINARY="$2"; shift 2 ;;
+    --codex-socket-path) CODEX_SOCKET_PATH="$2"; shift 2 ;;
     --force-config)    FORCE_CONFIG=1; shift ;;
     --no-enable)       NO_ENABLE=1; shift ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
@@ -221,6 +225,7 @@ else
       --nickname     "${NICKNAME}" \
       --mode         "${MODE}" \
       --codex-binary "${CODEX_BINARY}" \
+      --codex-socket-path "${CODEX_SOCKET_PATH}" \
       --default-cwd  "${DEFAULT_CWD}" \
       --config       "${CONFIG_PATH}" )
   if [[ ${SYSTEM} -eq 1 && "${RUN_AS_USER}" != "root" ]]; then

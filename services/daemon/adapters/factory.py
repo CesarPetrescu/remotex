@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .base import SessionAdapter
 from .mock import MockCodexAdapter
+from .shared import SharedCodexConnection
 from .stdio import StdioCodexAdapter
 
 
@@ -13,6 +14,7 @@ def build_adapter(
     resume_thread_id: str | None = None,
     *,
     kind: str = "codex",
+    shared_connection: SharedCodexConnection | None = None,
 ) -> SessionAdapter:
     mode = (mode or "stdio").lower()
     if mode == "mock":
@@ -23,5 +25,15 @@ def build_adapter(
             default_cwd=default_cwd or None,
             resume_thread_id=resume_thread_id,
             session_kind=kind,
+        )
+    if mode == "shared":
+        if shared_connection is None:
+            raise RuntimeError("shared Codex connection is not available")
+        return StdioCodexAdapter(
+            codex_binary=codex_binary,
+            default_cwd=default_cwd or None,
+            resume_thread_id=resume_thread_id,
+            session_kind=kind,
+            shared_connection=shared_connection,
         )
     raise ValueError(f"unknown adapter mode: {mode!r}")
