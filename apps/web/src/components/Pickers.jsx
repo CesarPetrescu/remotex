@@ -77,7 +77,8 @@ function ChipDropdown({ label, value, chipClass = '', items, renderItem, onPick 
       if (menuRef.current?.contains(e.target)) return;
       setOpen(false);
     }
-    function onReflow() {
+    function onReflow(e) {
+      if (e.target === menuRef.current) return;
       setOpen(false);
     }
     document.addEventListener('mousedown', onDown);
