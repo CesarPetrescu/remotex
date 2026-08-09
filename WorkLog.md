@@ -32,6 +32,23 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — correct stale multi-GPU web deployment
+**Agent:** Codex · **Branch:** main · **Status:** deployed
+
+- **Why:** a concurrent relay rebuild completed before the multi-GPU web diff,
+  so the committed source was correct while the running image still rendered
+  only the legacy first-GPU card.
+- **Changed:** rebuilt `remotex/relay:local` from the settled tree and recreated
+  only `remotex-relay-1`; Postgres, SparkTunnel, the host daemon, and managed
+  Codex process were left running.
+- **Verified:** public and container asset hashes match the fresh production
+  build; the deployed JavaScript contains the per-GPU mapper, VRAM, and
+  temperature rendering; the authenticated live payload and every retained
+  history sample contain both GPUs; public HTTPS is 200, relay/Postgres are
+  healthy, the daemon is active, and post-rollout relay logs have no errors.
+- **Left open:** I-017 remains the separate non-NVIDIA collector limitation.
+- **Restart needed:** none; deployment complete.
+
 ## 2026-08-09 — render every reported GPU in web telemetry
 **Agent:** Codex · **Branch:** main · **Status:** done, deployed
 
