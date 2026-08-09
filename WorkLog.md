@@ -32,6 +32,50 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — header popover z-index + jump-to-latest pill
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** fixed, verified in a real browser; NOT deployed
+
+Two owner-reported web bugs.
+
+- **Daemon popover was buried.** Hovering "connected" showed the dropdown
+  behind the panels. Cause was not the popover's own `z-index: 50` —
+  `.dashboard-layout > * { position: relative; z-index: 1 }` makes every grid
+  child its own stacking context at the *same* level, so `<main>`/the
+  sidebars (later in the DOM) paint over the header and nothing inside the
+  header can climb out. Fix: `.dashboard-header { z-index: 2 }` — one
+  declaration, and it wins on source order at equal specificity.
+  **Anything else that must escape the header needs the header raised, not
+  the child** — remember this before adding another header dropdown.
+- **Jump-to-latest pill: green dot removed, stuck-visible fixed.**
+  - The dot only ever meant "a turn is running", which the `✳ Working…` row
+    directly above it and the header status pill already say. Its
+    `.streaming` class had no CSS at all. Deleted both.
+  - The pill lingered at the tail because `atBottom` was event-driven only.
+    Growing content fires no scroll event (`overflow-anchor: none` is set on
+    purpose), and the click handler's `scrollTo({behavior:'smooth'})` animated
+    toward the `scrollHeight` captured at click time — a delta landing
+    mid-flight left it short of the real bottom, so the pill stayed. Now:
+    one `measure()` feeds both the scroll handler and the post-commit effect,
+    the follow decision reads a ref captured *before* the content grew (a
+    single big delta can exceed the 140px slack in one commit and would
+    otherwise be misread as "user scrolled up"), and the click jumps
+    instantly instead of animating.
+- **Verified:** `isNearTail` extracted and unit-tested (4 cases incl. the
+  not-scrollable case) — 81/81 web tests, eslint clean, Vite build clean.
+  For the CSS I built a static harness with the real compiled stylesheet and
+  hit-tested `elementFromPoint` at three points across the popover under
+  Playwright. **The check was proven, not assumed:** against the pre-fix CSS
+  all three points hit `.hosts-sidebar`; with the fix all three are inside
+  the popover. Screenshots confirm (before: a 5px sliver; after: full panel).
+  My first harness run was a false pass — the `cp` of the stylesheet had
+  failed, so it tested with no CSS at all. Worth re-checking that a harness
+  actually loads what you think it does.
+- **NOT deployed on purpose.** The relay image bakes the web bundle at build
+  time, so this needs a rebuild — and a rebuild from the current tree would
+  also push the inventory-retry change from I-018 (another agent's, on `main`
+  but never deployed) into production. Asked the owner rather than shipping
+  someone else's work for them.
+
 ## 2026-08-09 — live sidebar inventory WebSocket and resilient resync
 **Agent:** Codex · **Branch:** main · **Status:** done, deployed
 

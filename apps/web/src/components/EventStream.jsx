@@ -49,6 +49,16 @@ function groupTs(g) {
 
 const TIME_GAP_S = 30 * 60;
 
+// How close to the end counts as "at the tail" — the slack that lets a
+// half-finished line or a settling image still count as following along.
+const TAIL_SLACK_PX = 140;
+
+// Exported for tests: jsdom has no layout, so the predicate is kept pure and
+// the component feeds it real geometry.
+export function isNearTail({ scrollHeight, scrollTop, clientHeight }) {
+  return scrollHeight - scrollTop - clientHeight < TAIL_SLACK_PX;
+}
+
 // Scroll contract:
 //  - a committed history TAIL pins the view to the bottom in one jump
 //    (no streaming past the user);
@@ -94,6 +104,7 @@ export function EventStream({
   const preCommit = useRef(null);
   const [armed, setArmed] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  const atBottomRef = useRef(true);
 
   // Render-phase snapshot: when this render is committing a prepend batch,
   // capture the scroll geometry BEFORE React mutates the DOM. (Function
@@ -126,21 +137,38 @@ export function EventStream({
     return () => clearTimeout(t);
   }, [historyTick, historyPrepend]);
 
-  // Live streaming: follow the tail only while the user is at the tail.
-  useEffect(() => {
+  // Single source of truth for "is the user at the tail". Kept in a ref as
+  // well as state because the follow effect below needs the value from
+  // *before* the new content landed, and state is a render behind.
+  const measure = () => {
     const el = scrollerRef.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
-  }, [events]);
-
-  const onScroll = () => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    const near = isNearTail(el);
+    if (near === atBottomRef.current) return;
+    atBottomRef.current = near;
     setAtBottom(near);
     onAtBottomChange?.(near);
   };
+
+  // Live streaming: follow the tail if the user was already there.
+  //
+  // The decision uses the pre-growth ref, not the geometry we can see now:
+  // one big delta can move the bottom more than 140px in a single commit, and
+  // re-measuring here would read that as "the user scrolled up" and stop
+  // following — leaving the transcript stuck mid-stream. Growing content fires
+  // no scroll event either (overflow-anchor is off), so measuring afterwards
+  // is also what keeps `atBottom` honest.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    measure();
+    // `measure` is recreated every render; listing it here would re-pin the
+    // scroller on every render, not just when new events land.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events]);
+
+  const onScroll = measure;
 
   // New session → disarm until its tail lands.
   useEffect(() => {
@@ -200,14 +228,17 @@ export function EventStream({
       {events.length > 0 && !atBottom && (
         <button
           type="button"
-          className={`jump-to-bottom ${pending ? 'streaming' : ''}`}
+          className="jump-to-bottom"
           onClick={() => {
             const el = scrollerRef.current;
-            el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+            if (!el) return;
+            el.scrollTop = el.scrollHeight;
+            atBottomRef.current = true;
+            measure();
           }}
           aria-label="Jump to latest"
         >
-          ↓{pending && <span className="jump-dot" aria-hidden="true" />}
+          ↓
         </button>
       )}
     </div>

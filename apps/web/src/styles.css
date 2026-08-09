@@ -1410,7 +1410,6 @@ main.screen-host {
 }
 .dashboard-layout .tool-dot,
 .dashboard-layout .jump-to-bottom,
-.dashboard-layout .jump-dot,
 .dashboard-layout .working-star,
 .dashboard-layout .dot,
 .dashboard-layout .tag-dot,
@@ -1466,7 +1465,11 @@ main.screen-host {
   z-index: 1;
 }
 
-.dashboard-header { grid-area: header; }
+/* z-index beats the `1` that .dashboard-layout > * gives every grid child.
+   Without it the header and <main> are sibling stacking contexts at the same
+   level, so <main> (later in the DOM) paints over the header and the daemon
+   popover is hidden — its own z-index can't escape the header's context. */
+.dashboard-header { grid-area: header; z-index: 2; }
 .hosts-sidebar { grid-area: hosts; }
 .dashboard-main { grid-area: main; }
 .telemetry-sidebar { grid-area: telemetry; }
@@ -3853,16 +3856,6 @@ main.screen-host {
   z-index: 5;
 }
 .jump-to-bottom:hover { border-color: var(--amber); color: var(--amber); }
-.jump-dot {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--ok);
-  box-shadow: 0 0 6px var(--ok);
-}
 
 /* Markdown links: label only, target in tooltip — long paths never wrap. */
 .md-link {
