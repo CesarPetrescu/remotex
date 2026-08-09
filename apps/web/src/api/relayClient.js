@@ -31,9 +31,9 @@ export class RelayClient {
     return this.#request('/api/hosts').then((r) => r.hosts);
   }
 
-  // GET /api/models: relay-provided list of {id, label, hint, efforts}.
-  // Unauthenticated — the model list is the same for every user, and
-  // the relay needs to serve it before the user has a token.
+  // GET /api/models: no host context, so all the relay can offer is the
+  // "let codex decide" entry. Unauthenticated — needed before the user
+  // has a token. Prefer listHostModels() as soon as a host is known.
   listModels() {
     return fetch('/api/models')
       .then((res) => {
@@ -43,11 +43,9 @@ export class RelayClient {
       .then((r) => r.models);
   }
 
-  // GET /api/hosts/{host_id}/models: what THIS host's codex offers.
-  // Authenticated (it touches a host you must own) and returns the same
-  // {id, label, hint, efforts} shape plus a `source` of "host" or
-  // "fallback" — the relay substitutes its static list when the host
-  // can't answer.
+  // Authenticated because the requested host must belong to this user.
+  // Keep the response envelope: useRemotex checks its models before
+  // falling back to the hostless endpoint.
   listHostModels(hostId) {
     return this.#request(`/api/hosts/${encodeURIComponent(hostId)}/models`);
   }

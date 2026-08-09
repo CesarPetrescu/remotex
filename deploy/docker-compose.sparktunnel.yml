@@ -1,0 +1,5 @@
+services:
+  relay:
+    # SparkTunnel reaches relay:8080 on the private Compose network.
+    # Do not publish the relay on the host in this deployment.
+    ports: !reset []

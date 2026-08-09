@@ -201,6 +201,7 @@ export default function App() {
             state={state}
             onSend={r.sendTurn}
             onStop={r.interruptTurn}
+            onSteer={r.steerTurn}
             onModelChange={r.setModel}
             onEffortChange={r.setEffort}
             onPermissionsChange={r.setPermissions}

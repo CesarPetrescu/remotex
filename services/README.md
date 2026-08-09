@@ -1,12 +1,69 @@
-# Remotex services — relay + daemon
+# Remotex services
 
-The backend for Remotex: the central relay that rendezvous-routes clients
-to hosts, and the per-host daemon that spawns `codex app-server` on each
-machine you want to reach. Verified end to end by `scripts/e2e_test.py`.
+The Python backend has two processes with deliberately different jobs:
+
+- `relay` is the public rendezvous service. It authenticates users and hosts,
+  stores inventory in Postgres, and routes HTTP/WebSocket traffic.
+- `daemon` runs beside Codex on every controlled machine. It connects outward
+  to the relay and starts the official `codex app-server` locally.
+
+The relay never reads `~/.codex/auth.json` and does not call OpenAI. Codex owns
+its own authentication and conversation history on the daemon host.
+
+## Architecture
+
+```text
+web / Android / iPhone
+        │  HTTPS + WSS, user token
+        ▼
+┌──────────────────────── relay ────────────────────────┐
+│ REST API              WebSocket hub       Postgres    │
+│ hosts/threads/files    fan-out + replay    inventory   │
+└───────────────────────────┬────────────────────────────┘
+                            │ WSS, bridge token
+                            ▼
+┌──────────────────────── daemon ───────────────────────┐
+│ session adapter       admin Codex       telemetry      │
+│ one app-server per    thread/list +     CPU/RAM/GPU/   │
+│ active session        model/list + fs   network        │
+└───────────────────────────┬────────────────────────────┘
+                            │ newline-delimited JSON-RPC
+                            ▼
+                    codex app-server
+```
+
+### State ownership
+
+| State | Owner |
+| --- | --- |
+| Users, hosts, bridge keys, session inventory | Postgres |
+| Online sockets, replay buffers, pending prompts, active-turn locks | Relay memory |
+| Codex threads and rollout history | Daemon host / Codex |
+| Codex/OpenAI credentials | Daemon host / Codex |
+| Daemon connection settings | `~/.remotex/config.toml` |
+
+The in-memory relay state makes the current deployment single-relay. Restarting
+the relay preserves inventory but drops active routes and replay buffers.
+
+## Runtime flow
+
+1. The daemon authenticates to `/ws/daemon` with a bridge token and reports its
+   host identity.
+2. A client lists hosts, reserves a session with `POST /api/sessions`, then
+   authenticates to `/ws/client` with a user token.
+3. Only after the client is attached does the relay send `session-open` to the
+   daemon, so the first event cannot be lost.
+4. The daemon creates a mock adapter or a real `StdioCodexAdapter`; each real
+   session receives its own `codex app-server` process.
+5. Client frames become Codex JSON-RPC requests. Codex notifications become
+   normalized `session-event` frames and fan out to every attached client.
+6. Sequence numbers and a bounded replay buffer let clients reconnect without
+   replacing other viewers. Pending approval and user-input prompts are
+   restored separately, and the first response wins.
 
 ## Layout
 
-```
+```text
 services/
 ├── relay/
 │   ├── app.py                  route table + `main()`; everything else is a sibling module
@@ -14,7 +71,7 @@ services/
 │   ├── store.py                asyncpg inventory (users, hosts, bridge keys, sessions)
 │   ├── auth.py                 bearer-token extraction + `require_user`
 │   ├── limits.py               REMOTEX_MAX_FILE_BYTES → HTTP body + WS frame caps
-│   ├── models.py               fallback model/effort catalogue served at /api/models
+│   ├── models.py               default model/effort fallback served at /api/models
 │   ├── logging.py              JSON formatter + `audit()` + `user_hash()`
 │   ├── middleware/rate_limit.py   per-token REST bucket + per-remote WS connect bucket
 │   └── handlers/
@@ -40,6 +97,7 @@ services/
 │       ├── mock.py             scripted events for tests and offline demos
 │       ├── admin.py            long-lived codex for cheap read-only ops
 │       │                       (thread/list, model/list, fs/readDirectory)
+│       ├── elicitation.py      MCP elicitation ↔ structured user input
 │       ├── items.py            Codex item type → relay item_type, field flattening
 │       ├── reasoning.py        reasoning-content summarization
 │       ├── permissions.py      UI permission chip → sandboxPolicy/approvalPolicy
@@ -176,16 +234,20 @@ OIDC-issued credentials is the top item under "Known gaps" in
   replay with an explicit `replay-gap` when the buffer fell short, and one
   `REMOTEX_MAX_FILE_BYTES` ceiling shared by the HTTP body cap and every
   websocket leg.
-- **Daemon → relay** — real. Outbound WSS with exponential backoff and
-  jitter, session runners, host telemetry.
+- **Daemon → relay** — real. Outbound WSS with a 10s welcome deadline,
+  exponential backoff and equal jitter (1s → 30s), stable-connection reset,
+  slower authentication retries, clean replacement handling, session runners,
+  and host telemetry. A lost socket resumes threads after reconnect; an
+  in-flight turn is failed explicitly because its Codex process cannot survive
+  the daemon-side adapter teardown.
 - **Codex integration** — real, and the default. `StdioCodexAdapter`
   spawns `codex app-server`, performs the handshake, streams turns, and
   handles approvals, user-input prompts, slash commands, thread goals,
-  token usage, image attachments, and thread resume.
+  token usage, image attachments, active-turn steering, MCP elicitation,
+  and thread resume.
 - **Model list** — real, and host-scoped. `GET /api/hosts/{id}/models`
-  asks that host's codex (`model/list` through the admin adapter); the
-  static list in `relay/models.py` is only the fallback when the host is
-  offline, errors, or is slow.
+  asks that host's Codex (`model/list` through the admin adapter); if the
+  host cannot supply it, the fallback entry leaves model selection to Codex.
 - **Mock adapter** — still ships, opt-in via `--mode mock`. The e2e test
   drives it so CI needs no codex binary.
 - **User auth** — hashed token lookup against Postgres. No OIDC yet;

@@ -1,0 +1,361 @@
+# Issues
+
+Known problems we are **not** fixing right now. The point is that nothing
+gets silently forgotten: if you notice something and walk past it, file it
+here instead of leaving it in a session nobody else can read.
+
+Not a bug tracker for user reports — this is agent-to-agent. Work you
+*intend* to do goes in `ToDo.md`; what you *did* goes in `WorkLog.md`.
+
+## Rules
+
+- IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
+  never reuse. Next free ID: **I-014**.
+- Add new issues to the bottom of the table and the bottom of the details
+  section.
+- **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
+  `blocked`
+- **Severity:** `high` (data loss, broken flow, wrong output) · `medium`
+  (degraded UX, stale data) · `low` (cosmetic, papercut) · `info`
+  (knowledge worth keeping, not a defect)
+- Closing one: set status, add a **Resolution** line with the date and the
+  `WorkLog.md` entry that did it. Leave the entry in place.
+- Every issue needs **Evidence** — a command, a log line, a `file:line`.
+  "I think X is wrong" without evidence is a guess; mark it
+  `investigating` and say so.
+
+| ID | Status | Sev | Area | Summary |
+|---|---|---|---|---|
+| I-001 | fixed | medium | daemon | `item/fileChange/patchUpdated` and `item/commandExecution/terminalInteraction` are dropped |
+| I-002 | fixed | medium | relay/clients | Model list hardcoded in 3 places and already stale |
+| I-003 | fixed | medium | daemon/relay | `serverRequest/resolved` unhandled → stale approval modals |
+| I-004 | fixed | low | web/android | No `turn/steer`; mid-turn input requires interrupt + retype |
+| I-005 | invalid | low | daemon | First chunk of command output never arrives as a delta — upstream codex, not us |
+| I-006 | fixed | medium | web/android | `file_change` items render as a bare system row, no diff |
+| I-007 | info | info | tooling | `generate-json-schema` output is incomplete — probe to confirm existence |
+| I-008 | fixed | medium | env | `remotex-daemon` systemd unit not installed on this dev box |
+| I-009 | fixed | low | daemon | `thread/compacted` ignored after we send `thread/compact/start` |
+| I-010 | fixed | low | daemon | Elicitation multi-select / nested object fields not mapped |
+| I-011 | open | high | env | Relay port 18080 is held by an unrelated project; no remotex relay is running |
+| I-012 | open | low | apple | iOS client has approval UI, but still lacks steer / interrupt and progressive item-patch handling |
+| I-013 | fixed | high | process | Local `main` was 3 commits / +7830 lines behind `origin/main`; a whole session was built on a stale base |
+
+---
+
+## I-001 — `patchUpdated` and `terminalInteraction` dropped
+
+**Status:** fixed · **Sev:** medium · **Area:** daemon · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — both handled in `_dispatch`; see `WorkLog.md`.
+
+- **Symptom:** live file-edit progress and interactive-TTY prompts from
+  codex never reach clients.
+- **Why:** both are `ServerNotification`s in codex 0.147 with no branch in
+  `_dispatch`, so they hit the `else: log.debug("ignored codex
+  notification")` at `services/daemon/adapters/stdio.py:1185`.
+- **Fixed by:** `patchUpdated` → a new `item-patch` event carrying
+  `{item_id, output, args.command, changes}`; it *replaces* the item's diff
+  because codex resends the whole patch each time (appending would
+  duplicate). `terminalInteraction` turned out to be
+  `{threadId, turnId, itemId, processId, stdin}` — codex echoing what it
+  wrote to an interactive process — so we append `stdin` to the tool output
+  as a delta. Web, Android and iOS all handle `item-patch`.
+- **Observed:** codex 0.147 usually re-sends the whole `fileChange` item
+  rather than emitting `patchUpdated`; the handler is there for when it does.
+- **Evidence:** `ServerNotification.json` from
+  `codex app-server generate-json-schema`; both absent from the method
+  grep of `services/daemon/adapters/*.py`.
+- **Note:** `item/fileChange/outputDelta` is deliberately **not** handled —
+  codex 0.147 marks it deprecated and no longer emits it.
+
+## I-002 — model list hardcoded in three places, already stale
+
+**Status:** fixed · **Sev:** medium · **Area:** relay/clients · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — models *and* reasoning efforts are now fetched
+per host from codex; no model name is hardcoded anywhere.
+
+- **Symptom:** the picker can't offer models the host actually has. Live
+  `model/list` on this box returns `gpt-5.6-sol`; none of our lists know it.
+- **Why:** nobody asks codex. `services/relay/models.py:20` is a constant
+  whose comment still says "codex 0.122.0", mirrored as fallbacks in
+  `apps/web/src/config.js:38` and
+  `android/.../ui/RemotexViewModel.kt:187`.
+- **Fixed by:** `AdminCodex.list_models()` → `models-list-request` frame →
+  `GET /api/hosts/{host_id}/models`, mapping codex's
+  `{id, displayName, description, hidden, isDefault,
+  supportedReasoningEfforts}`. Both clients fetch it when a host is
+  selected. The hardcoded lists in `relay/models.py`, `web/config.js` and
+  `RemotexViewModel.kt` are gone — all that's left is the `id: ""`
+  "let codex decide" entry, which needs no model name.
+- **Bonus find:** efforts are **per model** in codex
+  (`supportedReasoningEfforts`), and newer models support `max` and
+  `ultra`, which the old global `ALL_EFFORTS` omitted — they were
+  unselectable. Now derived, including the union across a host's models
+  for the "default" entry.
+- **Evidence:** live probe of `model/list`; the three `grep -rn "gpt-5"`
+  hits.
+
+## I-003 — `serverRequest/resolved` unhandled → stale approval modals
+
+**Status:** fixed · **Sev:** medium · **Area:** daemon/relay · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — daemon retracts, relay re-broadcasts.
+
+- **Symptom:** when *codex* resolves an approval itself (auto-approval rule
+  matched, turn aborted), attached clients keep showing the modal. Answering
+  it then errors with "approval already resolved".
+- **Why:** we handle the client-answered case only —
+  `services/relay/handlers/ws_client.py:322` broadcasts `approval-resolved`,
+  consumed at `useRemotex.js:555` / `RemotexViewModel.kt:1022`. The
+  codex-initiated notification `{threadId, requestId}` has no branch.
+- **Fixed by:** `_retract_server_request()` reverse-looks codex's rpc id
+  across `_pending_approvals`, `_pending_user_inputs` and
+  `_pending_elicitations`, pops it, and emits `approval-resolved` /
+  `user-input-resolved`. `ws_daemon.py` clears the hub's pending map and
+  re-emits the top-level frame both clients already consume. Nothing is
+  sent back to codex — the request is already resolved on its side.
+- **Evidence:** `ServerRequestResolvedNotification` in the 0.147 schema; no
+  match for `serverRequest` under `services/`.
+
+## I-004 — no `turn/steer`
+
+**Status:** fixed · **Sev:** low · **Area:** web/android · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — implemented on daemon, relay, web and Android.
+iOS has no send-during-turn UI at all; tracked separately as `I-012`.
+
+- **Symptom:** to add a thought mid-turn you must interrupt and retype the
+  whole prompt. Worst on mobile, which is the product's whole point.
+- **Why:** never implemented. Also `hub.try_begin_turn()`
+  (`ws_client.py:240`) rejects any turn frame while one is running, so a
+  steer frame needs its own path.
+- **Fixed by:** a `turn-steer` client frame → `_steer_turn()` →
+  `turn/steer` with `expectedTurnId = self._turn_id`. The relay forwards it
+  **without** `try_begin_turn()` and echoes a `user_message` item so every
+  attached client sees what was steered in. Failures surface as
+  `steer-failed` and explicitly do **not** end the turn. In both clients the
+  composer stays live during a turn: type and the send button steers.
+- **Verified live** against codex 0.147: a wrong `expectedTurnId` is
+  rejected with `-32600 expected active turn id …`, and a correct one
+  returns `{turnId}` and reaches the model mid-turn (it abandoned its
+  counting task and obeyed the steered instruction).
+- **Evidence:** `ClientRequest.json` → `turn/steer` present in 0.147; live
+  probe returned `Invalid request: missing field threadId`, i.e. the method
+  exists.
+
+## I-005 — first chunk of command output not delivered as a delta
+
+**Status:** invalid · **Sev:** low · **Area:** daemon · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — not our bug. Codex itself never reports the
+first line: `item/started` carries `aggregatedOutput: null` and
+`item/completed` carries only `"line2\nline3\n"` for a loop that printed
+`line1..line3`. Our deltas match codex's own final output exactly, so
+there is nothing to seed from. Likely swallowed during
+`unifiedExecStartup` PTY setup upstream.
+
+- **Symptom:** probing a 5-line shell loop, codex sent `outputDelta` for
+  `line2`…`line5` but never `line1`. Clients stream from the second chunk.
+- **Why:** unknown — probably batched into the `item/started` payload or
+  emitted before the item is announced. Not investigated.
+- **Impact:** self-correcting. `item/completed` carries the full aggregated
+  output and both clients replace `output` with it
+  (`useRemotex.js:632`), so the final render is right; only the live tail
+  is missing a line.
+- **How to fix:** re-run the probe printing full `item/started` params for
+  `commandExecution`; if `line1` is in there, seed `output` from it.
+- **Evidence:** `/tmp/claude-*/scratchpad/probe_outputdelta.py` output,
+  2026-08-09.
+
+## I-006 — `file_change` items render as a bare system row
+
+**Status:** fixed · **Sev:** medium · **Area:** daemon · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — fixed in the daemon, so all three clients got
+it at once.
+
+- **Symptom:** when codex edits files, the transcript shows a generic row
+  labelled `file_change` with no diff, no file list, nothing.
+- **Why:** the daemon does send it — `items.py:65` flattens
+  `changes` onto the event — but `buildItemEvent`
+  (`apps/web/src/hooks/useRemotex.js:1346`) has no `file_change` case and
+  falls through to `default: role: 'system', label: data.item_type`.
+  Android has no `file_change` UI event either (the only match in the whole
+  client is an approval-kind comment at `RemotexViewModel.kt:73`).
+- **Fixed by:** `fileChange` now maps to `tool_call` in `_ITEM_TYPE_MAP`,
+  and `_item_extras` flattens `changes` into the `tool` / `args.command` /
+  `output` fields the tool renderer already draws — collapsible, copyable,
+  truncated, with a "add /path" / "update /path → /moved" summary line.
+  Formatting once in the daemon fixed web, Android **and** iOS with no
+  client changes; each client had its own missing case otherwise.
+- **Still open as an enhancement:** `turn/diff/updated` gives the whole
+  cumulative turn diff in one string — a nicer "what changed" view than
+  per-item diffs. Left in the `ToDo.md` backlog.
+- **Evidence:** `grep -rn "file_change" apps/web/src/` → no hits.
+
+## I-007 — `generate-json-schema` output is incomplete
+
+**Status:** info · **Sev:** info · **Area:** tooling · **Opened:** 2026-08-09
+
+- **What:** `codex app-server generate-json-schema --out DIR` on the
+  installed binary is the best source for **field shapes**, but it is not a
+  complete method list. `collaborationMode/list` and `thread/turns/list`
+  are absent from the dump yet both work live — and Remotex calls both
+  (`stdio.py:556`, `stdio.py:813`).
+- **Why it matters:** an agent who only greps the dump will "discover" that
+  working code calls nonexistent methods and delete it. Confirm existence
+  with a live probe before removing anything.
+- **Also:** any probe must use an unbounded line reader. `skills/list`
+  alone returns >64KB and kills a plain `StreamReader.readline()` — the
+  same trap `_read_line_unbounded` (`stdio.py:36`) exists for.
+
+## I-008 — `remotex-daemon` systemd unit not installed on this dev box
+
+**Status:** fixed · **Sev:** medium · **Area:** env · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — `deploy/install-daemon.sh --non-interactive`
+rendered and started the unit. `~/.remotex/config.toml` already existed, so
+no relay URL or bridge token had to be supplied. `systemctl --user is-active
+remotex-daemon` → `active`. It cannot reach a relay yet — see `I-011`.
+
+- **Symptom:** `systemctl --user restart remotex-daemon` →
+  `Unit remotex-daemon.service not found`. `~/.config/systemd/user/` has
+  no remotex unit and no daemon process is running.
+- **Impact:** the restart ritual in `CLAUDE.md` can't be exercised here, so
+  daemon changes get unit-tested and probe-verified but never run in place.
+  Anything relying on live daemon behaviour is unverified on this machine.
+- **How to fix:** install the unit (see `services/README.md` /
+  `deploy/`), or accept it and make the runtime check part of a real host's
+  workflow.
+- **Evidence:** `systemctl --user list-units --all | grep -i remotex` →
+  empty, 2026-08-09.
+
+## I-009 — `thread/compacted` ignored
+
+**Status:** fixed · **Sev:** low · **Area:** daemon · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — emits `slash-ack{command: "compact"}`, which
+both clients already render.
+
+- **Symptom:** `/compact` gives no completion signal — we fire
+  `thread/compact/start` and never tell the client it finished.
+- **Why:** no `thread/compacted` branch in `_dispatch`.
+- **Fixed by:** one `elif` → `slash-ack`. Note codex 0.147 marks the
+  notification deprecated in favour of a `contextCompaction` **item**, which
+  we forward anyway; the handler covers older hosts. Probing `/compact`
+  produced only the item, no notification.
+- **Related:** `contextCompaction` is one of ten item types no client had a
+  case for (also `webSearch`, `plan`, `sleep`, `subAgentActivity`,
+  `imageGeneration`, `imageView`, `enteredReviewMode`, `exitedReviewMode`,
+  `hookPrompt`). They rendered as raw camelCase labels; both clients now run
+  the type through a `humanizeItemType` helper.
+- **Evidence:** `thread/compacted` in the 0.147 `ServerNotification` union;
+  no match under `services/`.
+
+## I-010 — elicitation multi-select / nested fields not mapped
+
+**Status:** fixed · **Sev:** low · **Area:** daemon · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — every enum shape codex can send is now mapped.
+
+- **Symptom:** an MCP server asking for a multi-select
+  (`items.anyOf` / `items.enum`) or a nested object gets a free-text box
+  instead of a proper picker.
+- **Why:** deliberate ceiling in `_options()`
+  (`services/daemon/adapters/elicitation.py`) — marked with a `ponytail:`
+  comment. Single-select (`oneOf[{const,title}]`, `enum`, `boolean`) is
+  mapped; the rest degrade to text, which still round-trips as a string.
+- **Fixed by:** `_options()` now reads `items.anyOf[{const,title}]` and
+  `items.enum` (+ `enumNames`) as well as `oneOf`, `enum` and `boolean`, so
+  a multi-select field shows the right choices instead of a free-text box.
+  `_coerce()` returns an **array** for those fields — detected via `items`,
+  because codex 0.147's multi-select schemas carry no `type` key at all,
+  which would otherwise have sent a bare string to the MCP server.
+- **Remaining ceiling:** the dialog is single-pick, so the user selects one
+  value from a multi-select set (returned as a one-element array). A real
+  multi-pick dialog is client work; nested objects still degrade to text.
+- **Evidence:** `WorkLog.md` 2026-08-09; the elicitation definitions in
+  `McpServerElicitationRequestParams.json`.
+
+## I-011 — relay port 18080 is taken by an unrelated project
+
+**Status:** open · **Sev:** high · **Area:** env · **Opened:** 2026-08-09
+
+- **Symptom:** the daemon starts, then loops on
+  `WSServerHandshakeError: 421, message='Invalid response status',
+  url='ws://127.0.0.1:18080/ws/daemon'`. Nothing works end to end.
+- **Why:** two things at once. (1) **No remotex relay is running** —
+  `docker ps` lists no `remotex-*` container. (2) `127.0.0.1:18080`, the
+  port `~/.remotex/config.toml` and `deploy/.env` (`RELAY_HOST_PORT=18080`)
+  both point at, is bound by **`gospod-nginx-1`**, an unrelated project on
+  the same docker daemon. The 421 is that nginx refusing a host it doesn't
+  serve. Starting `remotex-relay-1` as configured would fail to bind.
+- **How to fix — needs a human decision**, which is why this is filed
+  rather than done:
+  1. Move remotex off the port: set a free `RELAY_HOST_PORT` in
+     `deploy/.env`, update `relay_url` in `~/.remotex/config.toml`, and
+     rebuild the Android APK (`android/build.sh` bakes the URL in), **or**
+  2. free 18080 by reconfiguring `gospod-nginx-1` — but `CLAUDE.md`
+     explicitly forbids touching non-`remotex-*` containers, so that is the
+     owner's call.
+- **Blocks:** any end-to-end verification of relay or client changes on this
+  box. The relay image builds fine (`docker compose build relay` →
+  `remotex/relay:local`); only bringing it up is blocked.
+- **Evidence:** `journalctl --user -u remotex-daemon` (2026-08-09 12:56),
+  `ss -ltnp | grep 18080`, `docker ps`.
+- **Deployment update:** the chosen SparkTunnel Compose override publishes no
+  relay host port, so the unrelated 18080 listener no longer blocks that
+  deployment path. The issue remains open until `~/.remotex/config.toml` is
+  changed from the stale local URL to the public WSS relay and the installed
+  daemon reconnects with a newly issued bridge key.
+
+## I-012 — iOS client still lacks steer / interrupt and progressive item patches
+
+**Status:** open · **Sev:** low · **Area:** apple · **Opened:** 2026-08-09
+
+- **Symptom:** the SwiftUI client can start turns and answer ordered approval
+  and user-input prompts, but it still cannot stop or steer a running turn.
+  It also has no `item-patch` reducer branch, so progressive file-change
+  patches only become visible when the completed item arrives.
+- **Why:** `SessionSocket` implements `sendTurn`, `sendApproval`, and
+  `sendUserInput`, but no `turn-interrupt` or `turn-steer`; the session UI has
+  no send/stop/steer state machine. `RemotexViewModel.handleSessionEvent`
+  handles item start/delta/completion but not `item-patch`.
+- **Impact:** web and Android have the complete active-turn controls. iOS is
+  usable for normal turns and prompts, but is a less capable deployment
+  client and does not reconnect automatically after a socket loss.
+- **How to fix:** add interrupt/steer send methods and a three-state composer,
+  then port the tested `item-patch` reducer from the separate `ios-xctest`
+  branch. Do not assume that branch's source change is already on `main`.
+- **Evidence:** `apple/Remotex/SessionSocket.swift`,
+  `apple/Remotex/RemotexViewModel.swift`; `item-patch` exists only in the
+  unmerged `origin/ios-xctest` history as of 2026-08-09.
+
+## I-013 — work was built on a stale local `main`
+
+**Status:** fixed · **Sev:** high · **Area:** process · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — the full local feature/deployment commit was
+cherry-picked onto `origin/main`, every conflict was reconciled by subsystem,
+the combined reconnect/security races found in review were fixed, and the
+complete validation matrix passed; see the 2026-08-09 reconciliation entry in
+`WorkLog.md`.
+
+- **Symptom:** local `main` sat at `2e5136d` while `origin/main` was at
+  `03e3192` — **3 commits, 97 files, +7830 lines** ahead, including
+  `fix: remediate 24 reported issues across relay, daemon, and clients`.
+  An entire session of work (I-001…I-010) was written against the old tree.
+- **How it surfaced:** the `ios-xctest` PR was created `CONFLICTING`, and
+  GitHub **silently does not run `pull_request` workflows when it can't
+  compute a merge commit** — CI never queued, with no error anywhere. The
+  branch looked pushed and fine.
+- **Overlap found:** `origin/main` independently rewrote
+  `apple/Remotex/RemotexViewModel.swift` (+267, structured
+  `pendingApprovals` replacing the old system-row approach, new
+  `PendingPromptsView.swift`, `Keychain.swift`), and also touched
+  `services/relay/models.py`, `services/tests/test_models_endpoint.py`,
+  `test_hub.py`, `test_rate_limit.py` — **all files this session edited.**
+- **Resolved for the iOS branch only:** cherry-picked onto `origin/main` in
+  a throwaway worktree (so the 38 uncommitted files in the main tree were
+  never at risk), unioned the pbxproj conflict, and rewrote the approval
+  test against the new `pendingApprovals` API.
+- **Reconciled:** daemon, relay, web, Android, Apple compatibility, docs, and
+  deployment changes now sit on the hardened `origin/main` base. Conflict
+  resolution retained upstream ownership checks, prompt queues, replay and
+  frame limits, token storage, and Android close-handshake behavior alongside
+  the local Codex bridge, steering, host-model, and optional SparkTunnel work.
+- **Prevention:** `git fetch && git status -sb` before starting, and treat
+  a `CONFLICTING` PR as "CI cannot run", not "CI is slow".
+- **Evidence:** `git log --oneline origin/main`,
+  `git diff --stat main origin/main`, `gh pr view 16 --json mergeable`.

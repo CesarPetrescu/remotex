@@ -102,6 +102,12 @@ class Hub:
 
     def __init__(self) -> None:
         self.daemons: dict[str, web.WebSocketResponse] = {}
+        # A freshly authenticated daemon is installed as the current socket
+        # before the old one is closed, but it must not receive client/admin
+        # frames until welcome + every cached session-open frame are queued.
+        # Key by host *and* socket identity so overlapping handshakes cannot
+        # mark a newer connection ready by mistake.
+        self._unready_daemons: dict[str, web.WebSocketResponse] = {}
         self.session_clients: dict[str, dict[str, ClientConnection]] = {}
         self.session_host: dict[str, str] = {}
         self.session_open_frames: dict[str, dict] = {}
@@ -146,22 +152,54 @@ class Hub:
         # Mirrors pending_approvals so replayed/stale plan-mode dialogs
         # cannot be answered twice by different clients.
         self.pending_user_inputs: dict[tuple[str, str], PendingPrompt] = {}
+        # A Codex-side `serverRequest/resolved` can arrive while a client has
+        # temporarily claimed a prompt and is forwarding its answer.  Keep a
+        # per-prompt tombstone so a failed send cannot restore that now-dead
+        # request. Separate sets avoid invalidating unrelated prompts in the
+        # same turn.
+        self._invalidated_approvals: set[tuple[str, str]] = set()
+        self._invalidated_user_inputs: set[tuple[str, str]] = set()
         # session_id → prompt generation, bumped whenever a session's
         # prompts are invalidated wholesale (turn completed, session gone).
         self.session_prompt_gen: dict[str, int] = {}
         self._prompt_counter = 0
 
-    async def attach_daemon(self, host_id: str, ws: web.WebSocketResponse) -> web.WebSocketResponse | None:
+    async def attach_daemon(
+        self,
+        host_id: str,
+        ws: web.WebSocketResponse,
+        *,
+        ready: bool = True,
+    ) -> web.WebSocketResponse | None:
         async with self._lock:
             old = self.daemons.get(host_id)
             self.daemons[host_id] = ws
+            if ready:
+                self._unready_daemons.pop(host_id, None)
+            else:
+                self._unready_daemons[host_id] = ws
             return old if old is not ws else None
+
+    async def mark_daemon_ready(
+        self,
+        host_id: str,
+        ws: web.WebSocketResponse,
+    ) -> bool:
+        """Publish a handshaking daemon only if it is still the newest."""
+        async with self._lock:
+            if self.daemons.get(host_id) is not ws:
+                return False
+            if self._unready_daemons.get(host_id) is ws:
+                self._unready_daemons.pop(host_id, None)
+            return True
 
     async def detach_daemon(self, host_id: str, ws: web.WebSocketResponse | None = None) -> bool:
         async with self._lock:
             if ws is not None and self.daemons.get(host_id) is not ws:
                 return False
             self.daemons.pop(host_id, None)
+            if ws is None or self._unready_daemons.get(host_id) is ws:
+                self._unready_daemons.pop(host_id, None)
             return True
 
     async def attach_client(
@@ -227,8 +265,20 @@ class Hub:
                 return True
             return not any(not conn.ws.closed for conn in clients.values())
 
-    def daemon_for(self, host_id: str) -> web.WebSocketResponse | None:
-        return self.daemons.get(host_id)
+    def daemon_for(
+        self,
+        host_id: str,
+        *,
+        include_unready: bool = False,
+    ) -> web.WebSocketResponse | None:
+        ws = self.daemons.get(host_id)
+        if (
+            not include_unready
+            and ws is not None
+            and self._unready_daemons.get(host_id) is ws
+        ):
+            return None
+        return ws
 
     def client_for(self, session_id: str) -> web.WebSocketResponse | None:
         for conn in self.session_clients.get(session_id, {}).values():
@@ -422,7 +472,7 @@ class Hub:
         ``SEND_OK`` / ``SEND_FAILED`` / ``SEND_UNKNOWN``. Callers that would
         undo state on failure need the distinction — only ``SEND_FAILED``
         means the frame provably never left this process."""
-        ws = self.daemons.get(host_id)
+        ws = self.daemon_for(host_id)
         if ws is None or ws.closed:
             return SEND_FAILED
         return await _send_status(ws, frame, role="daemon")
@@ -461,6 +511,7 @@ class Hub:
             self.turn_in_flight.pop(session_id, None)
             self.session_activity.pop(session_id, None)
             self._drop_session_prompts(session_id)
+            self._drop_session_prompt_tombstones(session_id)
             self.session_prompt_gen.pop(session_id, None)
             key = self.session_thread.pop(session_id, None)
             if key is not None:
@@ -485,12 +536,59 @@ class Hub:
         self.turn_in_flight[session_id] = False
         self.bump_activity(session_id)
 
+    async def abort_host_turns(self, host_id: str) -> list[str]:
+        """Clear turns that cannot survive a daemon connection change.
+
+        The daemon tears down every Codex adapter when its relay socket
+        closes.  The relay keeps the session-open frames so a reconnect can
+        resume each thread, but the old *turn* and its prompts are gone.  If
+        their hub state remains live, ``try_begin_turn`` rejects every new
+        prompt until the session is reaped.
+
+        Return the session ids whose clients need a synthetic
+        ``turn-completed`` event.  State is cleared under one lock so a prompt
+        response cannot race with the connection handoff and resurrect a
+        request owned by the dead Codex process.
+        """
+        now = time.monotonic()
+        async with self._lock:
+            session_ids = [
+                sid for sid, bound_host in self.session_host.items()
+                if bound_host == host_id
+            ]
+            prompt_sessions = {
+                sid for sid, _prompt_id in self.pending_approvals
+            } | {
+                sid for sid, _prompt_id in self.pending_user_inputs
+            }
+            interrupted: list[str] = []
+            for sid in session_ids:
+                if self.turn_in_flight.get(sid, False) or sid in prompt_sessions:
+                    interrupted.append(sid)
+                self.turn_in_flight[sid] = False
+                self.session_activity[sid] = now
+                self._drop_session_prompts(sid)
+                self.session_prompt_gen[sid] = (
+                    self.session_prompt_gen.get(sid, 0) + 1
+                )
+                self._drop_session_prompt_tombstones(sid)
+            return interrupted
+
     def _drop_session_prompts(self, session_id: str) -> None:
         """Forget every prompt for a session. Caller holds the lock."""
         for key in [k for k in self.pending_approvals if k[0] == session_id]:
             self.pending_approvals.pop(key, None)
         for key in [k for k in self.pending_user_inputs if k[0] == session_id]:
             self.pending_user_inputs.pop(key, None)
+
+    def _drop_session_prompt_tombstones(self, session_id: str) -> None:
+        """Forget per-prompt invalidations after a generation change."""
+        self._invalidated_approvals = {
+            key for key in self._invalidated_approvals if key[0] != session_id
+        }
+        self._invalidated_user_inputs = {
+            key for key in self._invalidated_user_inputs if key[0] != session_id
+        }
 
     async def clear_session_prompts(self, session_id: str) -> None:
         """Invalidate a session's prompts (the turn ended, or codex is gone).
@@ -504,6 +602,7 @@ class Hub:
             self.session_prompt_gen[session_id] = (
                 self.session_prompt_gen.get(session_id, 0) + 1
             )
+            self._drop_session_prompt_tombstones(session_id)
 
     async def try_begin_turn(self, session_id: str) -> bool:
         """Reserve the single active turn slot for a session."""
@@ -517,13 +616,18 @@ class Hub:
     def _note_prompt(
         self,
         pending: dict[tuple[str, str], PendingPrompt],
+        invalidated: set[tuple[str, str]],
         session_id: str,
         prompt_id: str,
         data: dict | None,
     ) -> None:
         """Record an unanswered prompt. Caller holds the lock."""
+        key = (session_id, prompt_id)
+        # IDs should be unique, but if Codex deliberately reuses one, this
+        # new request supersedes the tombstone for the old request.
+        invalidated.discard(key)
         self._prompt_counter += 1
-        pending[(session_id, prompt_id)] = PendingPrompt(
+        pending[key] = PendingPrompt(
             prompt_id=prompt_id,
             session_id=session_id,
             data=copy.deepcopy(data or {}),
@@ -534,6 +638,7 @@ class Hub:
     def _restore_prompt(
         self,
         pending: dict[tuple[str, str], PendingPrompt],
+        invalidated: set[tuple[str, str]],
         prompt: PendingPrompt,
     ) -> None:
         """Put a claim back. Caller holds the lock.
@@ -544,9 +649,13 @@ class Hub:
         then would leave a prompt nobody can ever answer, and for a dead
         session it would leak past every cleanup path.
         """
-        if self.session_prompt_gen.get(prompt.session_id) != prompt.gen:
+        key = (prompt.session_id, prompt.prompt_id)
+        if (
+            key in invalidated
+            or self.session_prompt_gen.get(prompt.session_id) != prompt.gen
+        ):
             return
-        pending.setdefault((prompt.session_id, prompt.prompt_id), prompt)
+        pending.setdefault(key, prompt)
 
     async def note_approval_request(
         self,
@@ -555,7 +664,13 @@ class Hub:
         data: dict | None = None,
     ) -> None:
         async with self._lock:
-            self._note_prompt(self.pending_approvals, session_id, approval_id, data)
+            self._note_prompt(
+                self.pending_approvals,
+                self._invalidated_approvals,
+                session_id,
+                approval_id,
+                data,
+            )
 
     async def resolve_approval(self, session_id: str, approval_id: str) -> PendingPrompt | None:
         """Claim an approval. Returns the stored prompt, or None if another
@@ -568,7 +683,18 @@ class Hub:
         """Un-claim an approval whose response never reached the daemon, so
         any client can answer it again. Keeps its original queue position."""
         async with self._lock:
-            self._restore_prompt(self.pending_approvals, prompt)
+            self._restore_prompt(
+                self.pending_approvals,
+                self._invalidated_approvals,
+                prompt,
+            )
+
+    async def invalidate_approval(self, session_id: str, approval_id: str) -> None:
+        """Prevent a Codex-resolved approval from being restored by a race."""
+        async with self._lock:
+            key = (session_id, approval_id)
+            self.pending_approvals.pop(key, None)
+            self._invalidated_approvals.add(key)
 
     async def note_user_input_request(
         self,
@@ -577,7 +703,13 @@ class Hub:
         data: dict | None = None,
     ) -> None:
         async with self._lock:
-            self._note_prompt(self.pending_user_inputs, session_id, call_id, data)
+            self._note_prompt(
+                self.pending_user_inputs,
+                self._invalidated_user_inputs,
+                session_id,
+                call_id,
+                data,
+            )
 
     async def resolve_user_input(self, session_id: str, call_id: str) -> PendingPrompt | None:
         """Claim a request_user_input prompt. First response wins."""
@@ -588,7 +720,18 @@ class Hub:
         """Un-claim a user-input prompt whose response never reached the
         daemon. Keeps its original queue position."""
         async with self._lock:
-            self._restore_prompt(self.pending_user_inputs, prompt)
+            self._restore_prompt(
+                self.pending_user_inputs,
+                self._invalidated_user_inputs,
+                prompt,
+            )
+
+    async def invalidate_user_input(self, session_id: str, call_id: str) -> None:
+        """Prevent a Codex-resolved input request from racing back alive."""
+        async with self._lock:
+            key = (session_id, call_id)
+            self.pending_user_inputs.pop(key, None)
+            self._invalidated_user_inputs.add(key)
 
     async def pending_prompt_snapshot(self, session_id: str) -> dict:
         """Return current unresolved prompt requests for an attaching client.

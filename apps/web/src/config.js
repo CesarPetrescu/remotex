@@ -1,12 +1,13 @@
 // Shared constants: screens, session status, and the option lists for
 // the model / reasoning effort / permissions pickers.
 //
-// MODEL_OPTIONS is now a fallback only. The canonical list is whatever
-// the selected host's codex reports — GET /api/hosts/{host_id}/models.
-// useRemotex asks the host first, falls back to the relay's static list
-// at GET /api/models, and only then to the embedded array below.
-// Bumping a model means editing services/relay/models.py (and mirroring
-// it here for the offline case) — no other client edit needed.
+// There is no model list in this file, on purpose. Models and their
+// supported reasoning efforts are fetched from the selected host's codex
+// (`GET /api/hosts/{id}/models` → `model/list`), because availability
+// depends on that host's codex version and signed-in account. A copy
+// shipped in the client goes stale silently — this file used to name
+// `gpt-5.5` as "newest frontier" while hosts served `gpt-5.6-*`, and its
+// effort list omitted `max`/`ultra` so they were unselectable. See I-002.
 
 export const SCREENS = {
   Hosts: 'hosts',
@@ -50,31 +51,18 @@ export const PERMISSIONS = [
 ];
 
 export const EFFORT_DEFAULT = '';
-export const ALL_EFFORTS = [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'];
-// gpt-5.6 accepts two deeper levels than the 5.x line does.
-const DEEP_EFFORTS = [...ALL_EFFORTS, 'max', 'ultra'];
-const MAX_EFFORTS = [...ALL_EFFORTS, 'max'];
 
-// Fallback model list. Used only when both GET /api/hosts/{id}/models and
-// GET /api/models fail. Keep it in sync with services/relay/models.py — it
-// is the literal copy that ships for offline use.
+// Last-resort effort names, for rendering a picker before any host has
+// answered. Codex reports the real per-model set; it is the authority.
+export const ALL_EFFORTS = [EFFORT_DEFAULT, 'low', 'medium', 'high', 'xhigh'];
+
+// The only option we can offer without asking a host: id '' means "send no
+// model override", so codex uses its own default. Real entries arrive from
+// listHostModels() and replace this in state.
 export const FALLBACK_MODEL_OPTIONS = [
   { id: '', label: 'default', hint: 'codex picks', efforts: ALL_EFFORTS },
-  { id: 'gpt-5.6-sol', label: 'gpt-5.6 · sol', hint: 'latest frontier agentic coding',
-    efforts: DEEP_EFFORTS },
-  { id: 'gpt-5.6-terra', label: 'gpt-5.6 · terra', hint: 'balanced everyday work',
-    efforts: DEEP_EFFORTS },
-  { id: 'gpt-5.6-luna', label: 'gpt-5.6 · luna', hint: 'fast and affordable',
-    efforts: MAX_EFFORTS },
-  { id: 'gpt-5.5', label: 'gpt-5.5', hint: 'frontier',
-    efforts: ALL_EFFORTS },
-  { id: 'gpt-5.2', label: 'gpt-5.2', hint: 'long-running agents',
-    efforts: ALL_EFFORTS },
 ];
 
-// Backwards-compatible name. Existing imports continue to work; the
-// list resolves to the fallback until the relay's response replaces it
-// via the MODEL_OPTIONS reducer action in useRemotex.
 export const MODEL_OPTIONS = FALLBACK_MODEL_OPTIONS;
 
 export function effortsFor(modelId, modelOptions = MODEL_OPTIONS) {

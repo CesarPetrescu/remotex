@@ -48,11 +48,11 @@ services:
       # Demo user/bridge tokens are public (they live in this repo), so
       # seeding stays OFF here. Only ever turn it on for a throwaway box.
       RELAY_SEED_DEMO: ${RELAY_SEED_DEMO:-0}
-      # Rate limiting keys on the TCP peer, which is the caddy container
-      # for every caller once the `tls` profile is up — one shared bucket.
-      # Set RELAY_TRUST_PROXY=1 in .env when you run behind caddy (or your
-      # own proxy) so the relay reads X-Forwarded-For instead. Never set it
-      # when the relay is exposed directly: the header is caller-supplied.
+      # Rate limiting keys on the TCP peer, which is the proxy container
+      # for every caller behind Caddy or SparkTunnel — one shared bucket.
+      # Set RELAY_TRUST_PROXY=1 in .env for either proxy mode so the relay
+      # reads X-Forwarded-For instead. Never set it when the relay is exposed
+      # directly: the header is caller-supplied.
       RELAY_TRUST_PROXY: ${RELAY_TRUST_PROXY:-0}
       # Inventory (users/hosts/sessions) lives in the Postgres container.
       RELAY_DATABASE_URL: postgresql://${POSTGRES_USER:-remotex}:${POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${POSTGRES_DB:-remotex}
@@ -91,8 +91,41 @@ services:
       - caddy-config:/config
     environment:
       REMOTEX_HOSTNAME: ${REMOTEX_HOSTNAME:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-you@example.invalid}
     networks:
       - remotex
+
+  sparktunnel:
+    profiles: ["sparktunnel"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.sparktunnel
+      args:
+        SPARK_TUNNEL_DOWNLOAD_URL: ${SPARK_TUNNEL_DOWNLOAD_URL:-https://webhost.photonspark.com/api/v1/downloads/spark-tunnel/linux/amd64}
+        SPARK_TUNNEL_SHA256: ${SPARK_TUNNEL_SHA256:-e57b3293f8c4dcb2a55e0a5fbd44e040e87b6b55be7b99222c287248e422d6b7}
+    image: remotex/sparktunnel:0.2.0
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    environment:
+      SPARK_TUNNEL_SERVER: ${SPARK_TUNNEL_SERVER:-https://webhost.photonspark.com}
+      SPARK_TUNNEL_TOKEN: ${SPARK_TUNNEL_TOKEN:-}
+      # Use the relay's private Compose address. The host port is not part
+      # of the tunnel path and can stay bound to loopback.
+      SPARK_TUNNEL_TARGET: ${SPARK_TUNNEL_TARGET:-http://relay:8080}
+    networks:
+      - remotex
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   search-data:

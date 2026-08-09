@@ -13,6 +13,29 @@ import org.junit.Test
  */
 class PromptQueueTest {
 
+    @Test
+    fun attachedTurnSnapshotAndReplayCursorPreserveReconnectState() {
+        val active = Json.parseToJsonElement(
+            """{"type":"attached","turn_in_flight":true}""",
+        ).jsonObject
+        val idle = Json.parseToJsonElement(
+            """{"type":"attached","turn_in_flight":false}""",
+        ).jsonObject
+        val oldRelay = Json.parseToJsonElement("""{"type":"attached"}""").jsonObject
+
+        assertEquals(true, attachedTurnInFlight(active))
+        assertEquals(false, attachedTurnInFlight(idle))
+        assertNull(attachedTurnInFlight(oldRelay))
+        assertEquals(Status.Connected, attachedStatus(Json.parseToJsonElement(
+            """{"type":"attached","replay_from":42}""",
+        ).jsonObject))
+        assertEquals(Status.Connecting, attachedStatus(oldRelay))
+        val cursors = mutableMapOf("sess_1" to 42L)
+        assertEquals(42L, prepareSessionReplayCursor(cursors, "sess_1", replayFromStart = false))
+        assertEquals(0L, prepareSessionReplayCursor(cursors, "sess_1", replayFromStart = true))
+        assertEquals(0L, cursors["sess_1"])
+    }
+
     private fun approval(id: String, command: String = "ls") = ApprovalPrompt(
         approvalId = id,
         kind = "command",

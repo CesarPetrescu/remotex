@@ -78,7 +78,9 @@ async def revoke_api_key(request: web.Request) -> web.Response:
     if not revoked:
         raise web.HTTPNotFound(reason="bridge key not found")
     hub: Hub = request.app["hub"]
-    daemon_ws = hub.daemon_for(host_id)
+    # Revocation must also kill a socket that authenticated successfully but
+    # is still replaying its session-open frames and is not ready for traffic.
+    daemon_ws = hub.daemon_for(host_id, include_unready=True)
     if daemon_ws is not None and not daemon_ws.closed:
         # Close only — the ws_daemon handler's own cleanup does the detach,
         # and it is also what marks the host offline and drops its cached

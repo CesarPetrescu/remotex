@@ -1,20 +1,30 @@
-// Flip-state send / stop button. Amber up-arrow when ready to send,
-// red square while a turn is in flight. Tapping stop fires the
-// turn-interrupt frame which the daemon turns into codex
-// turn/interrupt — same flow as Android.
-export function SendOrStopButton({ pending, canSend, onSend, onStop }) {
-  const enabled = pending || canSend;
-  const label = pending ? 'Stop' : 'Send';
-  const cls = pending ? 'send-stop stop' : `send-stop send ${canSend ? 'ready' : ''}`;
+// Send / steer / stop button.
+//
+//   idle            → amber up-arrow, fires turn-start
+//   turn running    → red square, fires turn-interrupt
+//   turn running    → up-arrow again as soon as you type: the text is
+//   + text typed      steered into the live turn (codex turn/steer), so you
+//                     don't have to interrupt and retype. Same flow as
+//                     Android.
+export function SendOrStopButton({ pending, canSend, canSteer, onSend, onSteer, onStop }) {
+  const steering = pending && canSteer;
+  const enabled = steering || pending || canSend;
+  const label = steering ? 'Steer' : pending ? 'Stop' : 'Send';
+  const cls = steering
+    ? 'send-stop send ready steer'
+    : pending
+      ? 'send-stop stop'
+      : `send-stop send ${canSend ? 'ready' : ''}`;
   return (
     <button
       type="button"
       className={cls}
       disabled={!enabled}
-      onClick={pending ? onStop : onSend}
+      onClick={steering ? onSteer : pending ? onStop : onSend}
       aria-label={label}
+      title={steering ? 'Send into the running turn' : label}
     >
-      {pending ? '■' : '↑'}
+      {steering ? '↑' : pending ? '■' : '↑'}
     </button>
   );
 }

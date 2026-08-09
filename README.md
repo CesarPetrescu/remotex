@@ -9,7 +9,7 @@ a browser, Android app, or iPhone app. The machine running Codex can sit
 behind NAT, CGNAT, VPNs, or firewalls because it never needs an inbound
 port: both the client and the host daemon dial out to a relay you control.
 
-## How It Works
+## Architecture
 
 ```mermaid
 flowchart TB
@@ -55,40 +55,30 @@ Two credentials are intentionally separate:
 The daemon does not read the Codex auth file. It only starts the local
 Codex app server process.
 
-## Remotex vs. Codex Remote Connections
+Postgres stores inventory only: users, hosts, bridge keys, and session
+records. Live sockets, event replay, active-turn locks, and pending prompts
+stay in relay memory. Codex threads and rollout history stay on the host.
+
+## Why Remotex Still Exists
 
 OpenAI now ships official
 [Codex Remote Connections](https://developers.openai.com/codex/remote-connections),
-which covers the mainstream version of Remotex's original idea: control
-Codex on a trusted host from another device without exposing that host
-directly to the internet. The official path is deeply integrated with
-ChatGPT, the Codex App, workspace auth, SSH projects, worktrees, Git UI,
-Computer Use, browser features, automations, and enterprise controls.
+which covers the mainstream hosted workflow. Remotex serves a narrower,
+different need:
 
-Remotex is different by design: it is a self-hosted relay and custom
-client stack for people who want to run `codex app-server` on their own
-machine, own the rendezvous service, and add product features around that
-wire protocol.
+- You operate the relay and Postgres database.
+- Linux workstations are first-class daemon hosts.
+- The web, Android, and iPhone clients are part of this repository and can be
+  changed with the protocol.
+- Host telemetry, direct workspace-file operations, normalized event fan-out,
+  and custom session controls belong to the Remotex product surface.
+- The boundary is the official
+  [`codex app-server`](https://developers.openai.com/codex/app-server), not a
+  reimplementation or an OpenAI API wrapper.
 
-| Area | Official Codex Remote Connections | Remotex |
-| --- | --- | --- |
-| Control plane | OpenAI-managed secure relay across authorized ChatGPT/Codex devices | Self-hosted aiohttp relay with your own Postgres inventory and tokens |
-| Host runtime | Codex App host on macOS/Windows, plus SSH hosts managed through the Codex App | Python daemon that starts the official `codex app-server` binary over stdio |
-| Clients | ChatGPT mobile and supported Codex App devices | Custom web app, Android app, and starter iPhone app |
-| Auth | ChatGPT account/workspace auth, MFA/SSO/passkeys, admin policy | Prototype bearer-token auth today: user token plus bridge token |
-| Session basics | Start new host threads, continue existing threads, switch hosts and threads | Start/resume Codex threads, replay history during resume, reconnect with event replay |
-| Live control | Send follow-ups, answer questions, steer active work, approve actions | Send turns, interrupt turns, answer approvals and user-input prompts, use slash commands and goals |
-| Host environment | Uses the host's projects, files, credentials, plugins, MCP servers, skills, browser setup, Computer Use, and local tools | Uses the daemon host's filesystem and Codex configuration; Remotex adds custom file browsing/upload and host telemetry |
-| Codex App features | Worktrees, built-in Git diff/review, commit/push/PR flows, automations, IDE sync, Computer Use, in-app browser | Not first-class in the Remotex UI; Codex can still run tools and shell commands through app-server |
-| Notifications | Built-in task and approval notifications in Codex/ChatGPT surfaces | Android foreground/done notifications and web background alerts; iPhone parity still pending |
-| Extensibility | OpenAI product surface and settings | Direct access to the relay, clients, daemon adapter, and normalized event stream |
-| Best fit | Most users who want polished official remote Codex access | Self-hosters, protocol hackers, Linux/workstation setups, custom mobile/web clients, and private relay deployments |
-
-Under the hood, both approaches meet at the same important boundary:
-[`codex app-server`](https://developers.openai.com/codex/app-server). It
-speaks JSON-RPC over transports such as stdio, Unix sockets, and
-experimental WebSocket. Remotex intentionally uses the default stdio
-transport and wraps it in its own outbound WebSocket relay.
+Remotex is therefore aimed at self-hosters, protocol hackers, private relay
+deployments, and teams that want to own or customize the complete remote
+control plane.
 
 ## Screenshots
 
@@ -126,13 +116,13 @@ The three surfaces side-by-side (click to view full size):
   </tr>
 </table>
 
-The debug APK defaults to `http://10.0.2.2:8080`, which reaches the host
-machine from an Android emulator. For a real phone, build with your LAN or
-public relay URL:
+Build Android with the wrapper so the APK receives a relay URL reachable from
+the target device:
 
 ```bash
 cd android
-./gradlew assembleDebug -PrelayUrl=http://<your-lan-ip>:8080
+./build.sh install
+# or: RELAY_URL=https://relay.example.com ./build.sh install
 ```
 
 ## Runtime Flow
@@ -144,8 +134,8 @@ cd android
 3. A web, Android, or iPhone client calls `GET /api/hosts` with a user
    token and chooses an online host. Picking a host also fetches
    `GET /api/hosts/{host_id}/models`, which asks that host's Codex what it
-   actually offers and falls back to the relay's static list when the host
-   is offline or slow.
+   actually offers; if the host cannot supply it, the fallback entry leaves
+   model selection to Codex.
 4. The client calls `POST /api/sessions` for that host. The relay reserves
    a `session_id`; it does not start Codex yet. An unattached reservation
    is swept after 10 minutes.
@@ -191,7 +181,7 @@ More detail lives in the subproject READMEs:
 
 ## Quick Start
 
-### 1. Run the Relay
+### 1. Start the Relay and Postgres
 
 The relay stores its inventory in Postgres and **will not start without
 `RELAY_DATABASE_URL`**. For local development, run one:
@@ -240,19 +230,25 @@ Use `stdio` mode for real Codex. You need the `codex` CLI installed and
 logged in on this machine.
 
 ```bash
+python3 -m venv /tmp/remotex-venv
+/tmp/remotex-venv/bin/pip install -r services/requirements.txt
+
 cd services
-python3 -m daemon init \
+/tmp/remotex-venv/bin/python -m daemon init \
   --relay-url ws://127.0.0.1:8080/ws/daemon \
   --bridge-token demo-bridge-token \
   --nickname devbox \
   --mode stdio \
-  --default-cwd "$PWD" \
+  --default-cwd /path/to/projects \
   --config ./demo-config.toml
 
-python3 -m daemon run --config ./demo-config.toml
+/tmp/remotex-venv/bin/python -m daemon run --config ./demo-config.toml
 ```
 
-For an API-free UI demo, use `--mode mock` instead of `--mode stdio`.
+Use `--mode mock` to replace live session output with a scripted stream.
+Thread and directory administration still uses the local Codex binary.
+For a persistent Linux installation, use `deploy/install-daemon.sh`; see the
+[deployment guide](deploy/README.md).
 
 The daemon refuses to start against a cleartext `ws://` relay on anything
 but loopback — that would put the bridge token and every prompt on the
@@ -263,7 +259,7 @@ wants `wss://`, or an explicit `--allow-insecure` at `init` time.
 
 ```bash
 cd apps/web
-npm install
+npm ci
 npm run dev
 ```
 
@@ -310,7 +306,7 @@ allow plain `http://` to a relay on the same Mac, a `.local` name, or a
 private LAN address, while a plaintext relay on a *public* address stays
 blocked — put that behind HTTPS.
 
-### 6. Deploy with Docker Compose
+### 6. Add TLS for a Public Relay
 
 ```bash
 cd deploy
@@ -337,13 +333,13 @@ docker compose --profile tls up -d --build
 | Area | Status |
 | --- | --- |
 | Relay REST + WebSocket transport | Working; Postgres-backed; tokens hashed at rest; demo tokens opt-in via `RELAY_SEED_DEMO` |
-| Daemon -> relay connection | Working; outbound WebSocket with reconnect |
+| Daemon -> relay connection | Working; outbound WebSocket with bounded jittered reconnect and clean active-turn failure/resume semantics |
 | Real Codex bridge | Working through `codex app-server` stdio |
 | Mock adapter | Working for tests and offline demos |
 | Web client | Lists hosts, opens/resumes sessions, sends text/image turns, streams reasoning/tool/agent events, handles approvals, user-input prompts, models, effort, permissions, slash commands, goals, files, and telemetry |
 | Android client | At parity with web apart from push: hosts, thread resume, events, turns, images, model/effort/permissions, approvals, user-input, slash commands, goals, files, interrupt, reconnect, background notifications |
 | iPhone client | Starter SwiftUI app; lists hosts, opens sessions, sends text turns, streams events, answers queued approval/user-input prompts, keeps its token in the Keychain |
-| Docker Compose | Working relay + web bundle, Postgres inventory store, optional Caddy TLS |
+| Docker Compose | Working relay + web bundle, Postgres inventory store, optional Caddy TLS or outbound SparkTunnel ingress |
 | CI | ESLint, Vite build, vitest, npm audit, Ruff, pytest, relay↔daemon e2e, Android debug APK + JVM tests + lint, iPhone simulator build |
 
 ## Protocol Surface
@@ -362,6 +358,7 @@ with `session_id` and `client_id` stamped on by the relay.
 | `session-open` | relay -> daemon | Start or resume a Codex thread |
 | `session-close` | relay/client -> daemon | Tear the session down |
 | `turn-start` | client -> daemon | Send user input (text, images, model, effort, permissions) |
+| `turn-steer` | client -> daemon | Add input to the active Codex turn |
 | `turn-interrupt` | client -> daemon | Interrupt the active Codex turn |
 | `approval-response` | client -> daemon | Resolve a Codex approval request |
 | `user-input-response` | client -> daemon | Answer a Codex user-input prompt |
@@ -386,7 +383,7 @@ Full payload shapes live in
 
 ## Current Gaps
 
-These are the main items before this is ready for real users:
+These are the main items before exposing Remotex to untrusted users:
 
 1. Replace long-lived bearer tokens with OIDC/Keycloak login. They are
    hashed at rest and demo seeding is off by default, but the model is
@@ -426,21 +423,50 @@ client is its own npm project under `apps/web`.
 (cd android && ./gradlew assembleDebug && ./gradlew test && ./gradlew lint)
 
 # iPhone
-open apple/Remotex.xcodeproj
+(xcodebuild -project apple/Remotex.xcodeproj -scheme Remotex -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build)
 ```
 
 The screenshots under `docs/screenshots/` were captured by hand against a
 live relay, daemon, and web client; there is no capture script in the
 repo.
 
+The end-to-end command resets `inventory_*` tables. Point it only at a
+disposable database.
+
 ## Status
 
 `v0.1` - the relay, daemon, real Codex bridge, web client, Android client,
 iPhone starter, Docker deployment, and CI all have working vertical slices.
 The project is usable for self-hosted development, but it still needs
-production auth, storage, auditability, and stronger failure handling before
-public use.
+production authentication, durable live relay state, audit retention, and
+broader failure coverage before public use.
 
 ## License
 
 MIT License. See [`LICENSE`](LICENSE).
+
+## Optional SparkTunnel Ingress
+
+Remotex can be published without an inbound firewall rule through the optional
+`sparktunnel` Compose profile. It requires a PhotonSpark account and a site
+configured for SparkTunnel at [webhost.photonspark.com](https://webhost.photonspark.com).
+The connector dials out, while PhotonSpark supplies the public hostname, TLS,
+normal HTTP forwarding, and WebSocket upgrades.
+
+SparkTunnel is not required. The normal `docker compose up -d --build` command
+continues to listen locally on `127.0.0.1:8080`; the portless behavior applies
+only when `docker-compose.sparktunnel.yml` is included.
+
+Set `SPARK_TUNNEL_TOKEN`, `RELAY_TRUST_PROXY=1`, and `RELAY_SEED_DEMO=0` in
+`deploy/.env`, then run:
+
+```bash
+cd deploy
+docker compose -f docker-compose.yml -f docker-compose.sparktunnel.yml \
+  --profile sparktunnel up -d --build
+```
+
+The default target is the private `http://relay:8080` Compose address. See the
+[deployment guide](deploy/README.md#publish-through-sparktunnel) for the full
+setup and security notes. SparkTunnel does not replace Remotex authentication;
+do not expose an installation that uses the public demo credentials.

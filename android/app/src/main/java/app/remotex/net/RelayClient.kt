@@ -49,9 +49,8 @@ class RelayClient(
     }
 
     /**
-     * GET /api/hosts/{host_id}/models — the model list the host's own codex
-     * reports (contract B). Falls back to [listModels] at the call site when
-     * the host is offline, the relay predates the route, or the list is empty.
+     * GET /api/hosts/{id}/models — what that host's codex actually offers.
+     * Falls back to [listModels] at the call site when the host cannot answer.
      */
     suspend fun listHostModels(
         userToken: String,

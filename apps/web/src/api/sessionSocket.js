@@ -74,7 +74,9 @@ export class SessionSocket {
         return;
       }
       if (frame.type === 'pong') return;
-      if (frame.type === 'attached') {
+      if (frame.type === 'attached' && !Number.isFinite(Number(frame.replay_from))) {
+        // Compatibility with an older relay. Current relays echo the
+        // normalized cursor, including a reset to zero after relay restart.
         frame.replay_from = this.requestedLastSeq;
       }
       if (Number.isFinite(frame.seq)) {
@@ -133,6 +135,19 @@ export class SessionSocket {
 
   sendInterrupt() {
     return this.send({ type: 'turn-interrupt' });
+  }
+
+  // Inject a message into the turn that's already running (codex
+  // `turn/steer`) instead of interrupting and retyping. The relay rejects
+  // it when no turn is in flight.
+  sendSteer({ input, images }) {
+    const frame = {
+      type: 'turn-steer',
+      input,
+      client_message_id: `msg-${Math.random().toString(36).slice(2, 12)}`,
+    };
+    if (images?.length) frame.images = images;
+    return this.send(frame);
   }
 
   sendSlash(cmd, args) {

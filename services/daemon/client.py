@@ -55,6 +55,34 @@ def _oversize_error_frame(frame: dict, size: int) -> dict:
     return out
 
 
+_WELCOME_TIMEOUT_SECONDS = 10.0
+_RECONNECT_INITIAL_SECONDS = 1.0
+_RECONNECT_MAX_SECONDS = 30.0
+_RECONNECT_STABLE_SECONDS = 60.0
+_DAEMON_REPLACED_CLOSE_CODE = 4000
+
+
+class _RelayConnectionError(ConnectionError):
+    """A retryable relay failure, optionally after a live connection."""
+
+    def __init__(self, message: str, *, connected_for: float = 0.0) -> None:
+        super().__init__(message)
+        self.connected_for = connected_for
+
+
+class _RelayAuthenticationError(PermissionError):
+    """The relay rejected the configured bridge token."""
+
+
+class _RelayConnectionReplaced(ConnectionError):
+    """A newer daemon connection took ownership of this host."""
+
+
+def _retry_delay(backoff: float) -> float:
+    """Equal-jitter retry delay, bounded by the current backoff ceiling."""
+    return random.uniform(backoff / 2, backoff)
+
+
 class DaemonClient:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -66,100 +94,183 @@ class DaemonClient:
         self._telemetry = TelemetryCollector()
 
     async def run(self) -> None:
-        backoff = 1.0
+        backoff = _RECONNECT_INITIAL_SECONDS
         while True:
             try:
                 await self._run_once()
-                backoff = 1.0
             except asyncio.CancelledError:
                 raise
+            except _RelayConnectionReplaced:
+                # Two daemon processes using one bridge token would otherwise
+                # continually reconnect and evict each other. The relay has
+                # explicitly transferred ownership, so let this older process
+                # exit cleanly (systemd Restart=on-failure will not revive it).
+                log.warning("relay replaced this daemon with a newer connection; stopping")
+                return
             except Exception as exc:  # noqa: BLE001
+                connected_for = float(getattr(exc, "connected_for", 0.0))
+                if connected_for >= _RECONNECT_STABLE_SECONDS:
+                    # A healthy connection that later dropped is a fresh
+                    # outage, not a continuation of the previous retry burst.
+                    backoff = _RECONNECT_INITIAL_SECONDS
+
+                if isinstance(exc, _RelayAuthenticationError):
+                    # Bad credentials do not usually heal in a few seconds.
+                    # Keep the process alive in case relay-side credential
+                    # state is repaired, but avoid hammering the relay or
+                    # systemd's restart loop.
+                    backoff = _RECONNECT_MAX_SECONDS
+
+                delay = _retry_delay(backoff)
                 # Some aiohttp WS errors have empty str(); log the class
                 # too so crashes aren't silent in systemd journals.
                 msg = str(exc) or "<no message>"
                 log.warning(
                     "connection lost: %s: %s (retry in %.1fs)",
-                    type(exc).__name__, msg, backoff,
+                    type(exc).__name__, msg, delay,
                 )
-                await asyncio.sleep(backoff + random.uniform(0, min(1.0, backoff * 0.25)))
-                backoff = min(backoff * 2, 30.0)
+                await asyncio.sleep(delay)
+                backoff = min(backoff * 2, _RECONNECT_MAX_SECONDS)
 
     async def _run_once(self) -> None:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=15)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.ws_connect(
-                self.config.relay_url,
-                heartbeat=20,
-                max_msg_size=WS_MAX_MSG_SIZE,
-            ) as ws:
-                await ws.send_json({
-                    "type": "hello",
-                    "token": self.config.bridge_token,
-                    "hostname": self.config.hostname,
-                    "platform": self.config.platform_string,
-                    "nickname": self.config.nickname,
-                    "os_user": self.config.os_user,
-                    "home_dir": os.path.expanduser("~"),
-                    "default_cwd": self.config.default_cwd,
-                })
-                welcome = await ws.receive()
-                if welcome.type != aiohttp.WSMsgType.TEXT:
-                    raise RuntimeError(f"unexpected welcome frame type {welcome.type}")
-                data = json.loads(welcome.data)
-                if data.get("type") == "error":
-                    raise RuntimeError(f"relay rejected hello: {data.get('error')}")
-                if data.get("type") != "welcome":
-                    raise RuntimeError(f"expected welcome, got {data}")
-                log.info("attached to relay as %s", data.get("host_id"))
-
-                send_lock = asyncio.Lock()
-
-                async def send(frame: dict) -> None:
-                    # Size is enforced here, on the sending side, because
-                    # the receiving side cannot report it: aiohttp closes
-                    # the socket before the handler sees the oversize
-                    # frame, and that takes every session on this host with
-                    # it. Substituting an error keeps the socket alive.
-                    payload = json.dumps(frame)
-                    if len(payload) > WS_MAX_MSG_SIZE:
-                        log.warning(
-                            "frame %s is %d bytes; over the %d byte ceiling",
-                            frame.get("type"), len(payload), WS_MAX_MSG_SIZE,
-                        )
-                        payload = json.dumps(_oversize_error_frame(frame, len(payload)))
-                    async with send_lock:
-                        await ws.send_str(payload)
-
-                telemetry_task = asyncio.create_task(
-                    telemetry_loop(self._telemetry, send),
-                    name="daemon-telemetry",
-                )
-                try:
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.ERROR:
-                            # Almost always an oversize relay→daemon frame.
-                            # Raise so run() logs a reason and backs off,
-                            # instead of returning as if the relay had
-                            # closed cleanly.
-                            raise RuntimeError(f"relay frame rejected: {msg.data}")
-                        if msg.type != aiohttp.WSMsgType.TEXT:
-                            continue
-                        try:
-                            frame = json.loads(msg.data)
-                        except json.JSONDecodeError:
-                            continue
-                        await self._dispatch(frame, send)
-                finally:
-                    # Always tear down sessions when the WS ends, whether
-                    # it ended cleanly or by exception. Leaving them alive
-                    # leaks codex app-server subprocesses because their
-                    # adapter.stop() is what terminates the child.
-                    telemetry_task.cancel()
+        connected_at: float | None = None
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.ws_connect(
+                    self.config.relay_url,
+                    heartbeat=20,
+                    max_msg_size=WS_MAX_MSG_SIZE,
+                ) as ws:
+                    await ws.send_json({
+                        "type": "hello",
+                        "token": self.config.bridge_token,
+                        "hostname": self.config.hostname,
+                        "platform": self.config.platform_string,
+                        "nickname": self.config.nickname,
+                        "os_user": self.config.os_user,
+                        "home_dir": os.path.expanduser("~"),
+                        "default_cwd": self.config.default_cwd,
+                    })
                     try:
-                        await telemetry_task
-                    except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                        pass
-                    await self._close_all_sessions()
+                        welcome = await asyncio.wait_for(
+                            ws.receive(), timeout=_WELCOME_TIMEOUT_SECONDS,
+                        )
+                    except asyncio.TimeoutError as exc:
+                        raise _RelayConnectionError(
+                            f"relay did not complete hello within {_WELCOME_TIMEOUT_SECONDS:g}s"
+                        ) from exc
+                    if (
+                        welcome.type == aiohttp.WSMsgType.CLOSE
+                        and welcome.data == _DAEMON_REPLACED_CLOSE_CODE
+                    ):
+                        # Concurrent handshakes can replace this socket before
+                        # it receives welcome. Treat that exactly like a live
+                        # connection replacement so the older process exits
+                        # instead of reconnecting and evicting the winner.
+                        raise _RelayConnectionReplaced()
+                    if welcome.type != aiohttp.WSMsgType.TEXT:
+                        raise _RelayConnectionError(
+                            f"unexpected welcome frame type {welcome.type}"
+                        )
+                    data = json.loads(welcome.data)
+                    if data.get("type") == "error":
+                        raise _RelayAuthenticationError(
+                            f"relay rejected hello: {data.get('error') or 'unknown error'}"
+                        )
+                    if data.get("type") != "welcome":
+                        raise _RelayConnectionError(f"expected welcome, got {data}")
+                    connected_at = asyncio.get_running_loop().time()
+                    log.info("attached to relay as %s", data.get("host_id"))
+
+                    send_lock = asyncio.Lock()
+
+                    async def send(frame: dict) -> None:
+                        # Enforce the limit before writing. aiohttp closes
+                        # the receiving socket before its handler can report
+                        # an oversize frame, which would drop every session.
+                        payload = json.dumps(frame)
+                        if len(payload) > WS_MAX_MSG_SIZE:
+                            log.warning(
+                                "frame %s is %d bytes; over the %d byte ceiling",
+                                frame.get("type"), len(payload), WS_MAX_MSG_SIZE,
+                            )
+                            payload = json.dumps(
+                                _oversize_error_frame(frame, len(payload))
+                            )
+                        async with send_lock:
+                            await ws.send_str(payload)
+
+                    telemetry_task = asyncio.create_task(
+                        telemetry_loop(self._telemetry, send),
+                        name="daemon-telemetry",
+                    )
+                    try:
+                        while True:
+                            msg = await ws.receive()
+                            if msg.type == aiohttp.WSMsgType.ERROR:
+                                raise _RelayConnectionError(
+                                    f"relay frame rejected: {msg.data}"
+                                )
+                            if msg.type == aiohttp.WSMsgType.CLOSE:
+                                # aiohttp can receive the application close
+                                # code correctly, then overwrite
+                                # ``ws.close_code`` with 1006 if its automatic
+                                # close reply races a transport shutdown. Read
+                                # the frame itself so replacement never turns
+                                # into two daemons endlessly evicting each
+                                # other.
+                                if msg.data == _DAEMON_REPLACED_CLOSE_CODE:
+                                    raise _RelayConnectionReplaced()
+                                break
+                            if msg.type in (
+                                aiohttp.WSMsgType.CLOSING,
+                                aiohttp.WSMsgType.CLOSED,
+                            ):
+                                break
+                            if msg.type != aiohttp.WSMsgType.TEXT:
+                                continue
+                            try:
+                                frame = json.loads(msg.data)
+                            except json.JSONDecodeError:
+                                continue
+                            await self._dispatch(frame, send)
+                    finally:
+                        # Always tear down sessions when the WS ends, whether
+                        # it ended cleanly or by exception. Leaving them alive
+                        # leaks codex app-server subprocesses because their
+                        # adapter.stop() is what terminates the child.
+                        telemetry_task.cancel()
+                        try:
+                            await telemetry_task
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                            pass
+                        await self._close_all_sessions()
+
+                    if ws.close_code == _DAEMON_REPLACED_CLOSE_CODE:
+                        raise _RelayConnectionReplaced()
+                    ws_error = ws.exception()
+                    detail = f"relay websocket closed (code={ws.close_code})"
+                    if ws_error is not None:
+                        detail += f": {type(ws_error).__name__}: {ws_error}"
+                    raise _RelayConnectionError(detail)
+        except asyncio.CancelledError:
+            raise
+        except (_RelayAuthenticationError, _RelayConnectionReplaced):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            connected_for = 0.0
+            if connected_at is not None:
+                connected_for = max(
+                    0.0, asyncio.get_running_loop().time() - connected_at,
+                )
+            if isinstance(exc, _RelayConnectionError):
+                exc.connected_for = connected_for
+                raise
+            msg = str(exc) or "<no message>"
+            raise _RelayConnectionError(
+                f"{type(exc).__name__}: {msg}", connected_for=connected_for,
+            ) from exc
 
     async def _close_all_sessions(self) -> None:
         runners = list(self._sessions.values())
@@ -586,8 +697,9 @@ class DaemonClient:
     ) -> None:
         """Answer the relay's models-list-request from this host's codex.
 
-        The relay keeps its static list as the fallback, so an error here
-        is not fatal — it just means the picker shows the built-in list.
+        The relay keeps a hostless "let Codex decide" sentinel as the
+        fallback, so an error here is not fatal and never advertises stale
+        model names.
         """
         request_id = frame.get("request_id")
         try:
@@ -605,7 +717,7 @@ class DaemonClient:
             models = model_options_from_codex({"data": data})
             if len(models) <= 1:
                 # Only the "codex picks" sentinel came back — nothing
-                # worth overriding the relay's static list with.
+                # worth overriding the relay's hostless fallback with.
                 raise RuntimeError("codex returned no models")
             await send({
                 "type": "models-list-response",

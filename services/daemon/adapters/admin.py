@@ -37,7 +37,7 @@ def model_options_from_codex(result: dict) -> list[dict]:
     ``{id, label, hint, efforts}`` objects the relay serves from
     ``/api/models``, keeping the empty-string "let codex pick" sentinel
     at the head of both the model list and every effort list, exactly
-    as the static fallback does.
+    as the hostless fallback does.
     """
     options: list[dict] = [
         {"id": "", "label": "default", "hint": "codex picks", "efforts": [_EFFORT_DEFAULT]},
@@ -116,7 +116,7 @@ class AdminCodex:
     async def list_models(self, limit: int | None = None, cursor: str | None = None) -> dict:
         """Return codex's raw model/list result ({data, nextCursor} body).
 
-        codex 0.129's ModelListParams is {cursor, limit, includeHidden};
+        codex 0.147's ModelListParams is {cursor, limit, includeHidden};
         all three are sent explicitly (nulls included) to match the wire
         shape in app-server-protocol/src/protocol/common.rs.
         """

@@ -61,13 +61,18 @@ internal fun ComposerBar(
     pendingImages: List<PendingImage>,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
+    onSteer: (String) -> Unit = {},
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
     // Slash command sender — composer bypasses sendTurn for these.
     onSlashCommand: (cmd: String, args: String) -> Unit = { _, _ -> },
 ) {
     var text by remember { mutableStateOf("") }
-    val textEnabled = connected && !pending
+    // Typing stays enabled during a turn: what you type is steered into the
+    // running turn rather than blocked until it ends.
+    val textEnabled = connected
+    val hasContent = text.isNotBlank() || pendingImages.isNotEmpty()
+    val canSteer = connected && pending && hasContent
     val goalMode = isGoalCommand(text)
     // Plan + goal are mutually exclusive in the chip rail: the plan chip never
     // reads "on" while a /goal command is being composed (clicks already
@@ -192,15 +197,20 @@ internal fun ComposerBar(
                         singleLine = false,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = {
-                            val sent = handleSubmit(text, onSlashCommand, onSend)
+                            val sent = handleSubmit(
+                                text,
+                                pendingImages.isNotEmpty(),
+                                onSlashCommand,
+                                if (pending) onSteer else onSend,
+                            )
                             if (sent) text = ""
                         }),
                         cursorBrush = SolidColor(Amber),
                         decorationBox = { inner ->
                             Box(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-                                if (text.isEmpty() && !pending) {
+                                if (text.isEmpty()) {
                                     Text(
-                                        "ask codex",
+                                        if (pending) "steer this turn" else "ask codex",
                                         color = InkDim,
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 14.sp,
@@ -215,12 +225,27 @@ internal fun ComposerBar(
                 Spacer(Modifier.width(8.dp))
                 SendOrStopButton(
                     pending = pending,
-                    canSend = textEnabled && (text.isNotBlank() || pendingImages.isNotEmpty()),
+                    canSend = connected && !pending && hasContent,
+                    canSteer = canSteer,
                     onSend = {
-                        val sent = handleSubmit(text, onSlashCommand, onSend)
+                        val sent = handleSubmit(
+                            text,
+                            pendingImages.isNotEmpty(),
+                            onSlashCommand,
+                            onSend,
+                        )
                         if (sent) text = ""
                     },
                     onStop = onStop,
+                    onSteer = {
+                        val sent = handleSubmit(
+                            text,
+                            pendingImages.isNotEmpty(),
+                            onSlashCommand,
+                            onSteer,
+                        )
+                        if (sent) text = ""
+                    },
                 )
             }
         }
@@ -228,8 +253,9 @@ internal fun ComposerBar(
 }
 
 /** Returns true if the text should be cleared after submission. */
-private fun handleSubmit(
+internal fun handleSubmit(
     text: String,
+    hasAttachments: Boolean,
     onSlashCommand: (String, String) -> Unit,
     onSend: (String) -> Unit,
 ): Boolean {
@@ -243,7 +269,7 @@ private fun handleSubmit(
             return true
         }
     }
-    if (text.isBlank()) return false
+    if (text.isBlank() && !hasAttachments) return false
     onSend(text)
     return true
 }

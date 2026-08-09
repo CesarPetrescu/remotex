@@ -128,6 +128,8 @@ async def test_owner_attaches_and_gets_replay_gap_marker(aiohttp_client):
 
     assert attached["type"] == "attached"
     assert attached["host_id"] == "host_x"
+    assert attached["replay_from"] == 10
+    assert attached["turn_in_flight"] is False
     assert prompts["type"] == "pending-prompts"
     assert gap == {
         "type": "replay-gap",
@@ -135,6 +137,26 @@ async def test_owner_attaches_and_gets_replay_gap_marker(aiohttp_client):
         "missed_from": 11,
         "missed_to": 40,
     }
+
+
+@pytest.mark.asyncio
+async def test_attached_reports_turn_already_in_flight(aiohttp_client):
+    store = FakeStore({"sess_1": _session(ALICE)})
+    hub = Hub()
+    hub.mark_turn_started("sess_1")
+    client = await _client_for(aiohttp_client, store, hub)
+
+    async with client.ws_connect("/ws/client") as ws:
+        await ws.send_json({
+            "token": "alice-token",
+            "session_id": "sess_1",
+            "last_seq": 0,
+        })
+        attached = await ws.receive_json()
+
+    assert attached["type"] == "attached"
+    assert attached["replay_from"] == 0
+    assert attached["turn_in_flight"] is True
 
 
 @pytest.mark.asyncio

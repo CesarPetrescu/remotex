@@ -16,6 +16,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -55,12 +56,13 @@ fun RemotexApp(relayUrl: String) {
     BackHandler(enabled = state.screen == Screen.Threads) { vm.goToHosts() }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    val currentState by rememberUpdatedState(state)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_START &&
-                state.screen == Screen.Session &&
-                state.status != Status.Connected &&
-                state.session != null
+                currentState.screen == Screen.Session &&
+                currentState.status != Status.Connected &&
+                currentState.session != null
             ) {
                 vm.reconnectNow()
             }
@@ -120,6 +122,7 @@ fun RemotexApp(relayUrl: String) {
                         state = state,
                         onSend = vm::sendTurn,
                         onStop = vm::interruptTurn,
+                        onSteer = vm::steerTurn,
                         onAttachImage = vm::attachImage,
                         onRemoveImage = vm::removeImage,
                         onPermissionsChange = vm::setPermissions,

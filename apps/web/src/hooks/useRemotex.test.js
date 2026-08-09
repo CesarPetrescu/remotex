@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+  attachedTurnInFlight,
   dequeuePrompt,
   enqueuePrompt,
   initialState,
   reconcileQueue,
   reducer,
 } from './useRemotex';
+
+describe('attached turn state', () => {
+  it('uses the relay snapshot and preserves state for older relays', () => {
+    expect(attachedTurnInFlight({ turn_in_flight: true })).toBe(true);
+    expect(attachedTurnInFlight({ turn_in_flight: false })).toBe(false);
+    expect(attachedTurnInFlight({})).toBeNull();
+  });
+});
 
 const approval = (id, extra = {}) => ({ approvalId: id, decisions: ['accept', 'decline'], ...extra });
 const userInput = (id, extra = {}) => ({ callId: id, questions: [], ...extra });

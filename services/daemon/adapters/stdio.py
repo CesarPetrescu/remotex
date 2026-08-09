@@ -13,7 +13,13 @@ from typing import AsyncIterator
 
 from .base import SessionAdapter, SessionEvent
 from .codex_config import ensure_codex_goals_feature_enabled
-from .items import _item_extras, _join_input, _snake_item_type
+from .elicitation import elicitation_questions, elicitation_result
+from .items import (
+    _format_changes,
+    _item_extras,
+    _join_input,
+    _snake_item_type,
+)
 from .permissions import (
     _approval_policy_to_codex,
     _image_suffix,
@@ -131,6 +137,10 @@ class StdioCodexAdapter(SessionAdapter):
         # item/tool/requestUserInput prompts (the "pick from these options"
         # dialogs codex uses for plan mode and other interactive tools).
         self._pending_user_inputs: dict[str, int] = {}
+        # call_id → {rpc_id, spec} for MCP elicitations. Separate from
+        # _pending_user_inputs because the reply shape differs: codex wants
+        # {action, content} here, {answers} there. See adapters/elicitation.py.
+        self._pending_elicitations: dict[str, dict] = {}
         # Slash-command state: if the user sends `/plan` or `/default`,
         # every subsequent turn sends a full collaborationMode payload.
         self._next_collab_mode: str | None = None
@@ -252,8 +262,87 @@ class StdioCodexAdapter(SessionAdapter):
 
     # --- inbound frames from the relay ----------------------------------
 
+    def _build_input(self, frame: dict) -> list[dict]:
+        """Client frame → codex `UserInput[]`. Shared by turn-start and
+        turn-steer; image attachments become temp files codex reads back."""
+        codex_input: list[dict] = []
+        text = frame.get("input", "")
+        if text:
+            codex_input.append({
+                "type": "text",
+                "text": text,
+                "text_elements": [],
+            })
+        # Optional image attachments — each `{data: base64, mime: ...}`
+        # becomes a temp file that codex reads as a localImage input.
+        images = frame.get("images")
+        if isinstance(images, list):
+            for img in images:
+                if not isinstance(img, dict):
+                    continue
+                data = img.get("data")
+                if not isinstance(data, str) or not data:
+                    continue
+                suffix = _image_suffix(img.get("mime"))
+                try:
+                    raw = base64.b64decode(data, validate=False)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("failed to decode image: %s", exc)
+                    continue
+                fd, path = tempfile.mkstemp(prefix="remotex-img-", suffix=suffix)
+                try:
+                    with os.fdopen(fd, "wb") as fh:
+                        fh.write(raw)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("failed to write image temp: %s", exc)
+                    continue
+                self._turn_tmp_files.append(path)
+                codex_input.append({"type": "localImage", "path": path})
+        if not codex_input:
+            # Shouldn't happen but codex rejects empty input.
+            codex_input.append({
+                "type": "text",
+                "text": "",
+                "text_elements": [],
+            })
+        return codex_input
+
+    async def _steer_turn(self, frame: dict) -> None:
+        """Inject a message into the running turn (codex `turn/steer`).
+
+        Codex requires `expectedTurnId` to match the active turn and fails the
+        request otherwise, so a stale steer can't silently land on the wrong
+        turn. We surface that failure as a `steer-failed` event rather than
+        ending the turn — the turn is still running.
+        """
+        turn_id = self._turn_id
+        if not self._thread_id or not self._ready or turn_id is None:
+            await self._queue.put(SessionEvent("steer-failed", {
+                "error": "no turn is running to steer",
+            }))
+            return
+        params = {
+            "threadId": self._thread_id,
+            "expectedTurnId": turn_id,
+            "input": self._build_input(frame),
+        }
+        client_message_id = frame.get("client_message_id")
+        if isinstance(client_message_id, str) and client_message_id:
+            params["clientUserMessageId"] = client_message_id
+        try:
+            await self._request("turn/steer", params, timeout=30.0)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("turn/steer failed: %s", exc)
+            await self._queue.put(SessionEvent("steer-failed", {
+                "turn_id": turn_id,
+                "error": str(exc) or type(exc).__name__,
+            }))
+
     async def handle(self, frame: dict) -> None:
         ftype = frame.get("type")
+        if ftype == "turn-steer":
+            await self._steer_turn(frame)
+            return
         if ftype == "approval-response":
             await self._resolve_approval(frame)
             return
@@ -283,46 +372,7 @@ class StdioCodexAdapter(SessionAdapter):
                     "error": message,
                 }))
                 return
-            text = frame.get("input", "")
-            codex_input: list[dict] = []
-            if text:
-                codex_input.append({
-                    "type": "text",
-                    "text": text,
-                    "text_elements": [],
-                })
-            # Optional image attachments — each `{data: base64, mime: ...}`
-            # becomes a temp file that codex reads as a localImage input.
-            images = frame.get("images")
-            if isinstance(images, list):
-                for img in images:
-                    if not isinstance(img, dict):
-                        continue
-                    data = img.get("data")
-                    if not isinstance(data, str) or not data:
-                        continue
-                    suffix = _image_suffix(img.get("mime"))
-                    try:
-                        raw = base64.b64decode(data, validate=False)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("failed to decode image: %s", exc)
-                        continue
-                    fd, path = tempfile.mkstemp(prefix="remotex-img-", suffix=suffix)
-                    try:
-                        with os.fdopen(fd, "wb") as fh:
-                            fh.write(raw)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("failed to write image temp: %s", exc)
-                        continue
-                    self._turn_tmp_files.append(path)
-                    codex_input.append({"type": "localImage", "path": path})
-            if not codex_input:
-                # Shouldn't happen but codex rejects empty input.
-                codex_input.append({
-                    "type": "text",
-                    "text": "",
-                    "text_elements": [],
-                })
+            codex_input = self._build_input(frame)
             params: dict = {
                 "threadId": self._thread_id,
                 "input": codex_input,
@@ -784,7 +834,11 @@ class StdioCodexAdapter(SessionAdapter):
         call_id = frame.get("call_id")
         if not call_id:
             return
-        rpc_id = self._pending_user_inputs.pop(call_id, None)
+        elicitation = self._pending_elicitations.pop(call_id, None)
+        if elicitation is not None:
+            rpc_id = elicitation["rpc_id"]
+        else:
+            rpc_id = self._pending_user_inputs.pop(call_id, None)
         if rpc_id is None:
             log.info("user-input-response for unknown call %s; ignoring", call_id)
             return
@@ -802,7 +856,11 @@ class StdioCodexAdapter(SessionAdapter):
             else:
                 arr = [str(value)]
             normalized[str(qid)] = {"answers": [str(a) for a in arr]}
-        await self._send({"id": rpc_id, "result": {"answers": normalized}})
+        if elicitation is not None:
+            result = elicitation_result(elicitation["spec"], normalized)
+        else:
+            result = {"answers": normalized}
+        await self._send({"id": rpc_id, "result": result})
 
     # --- history replay -------------------------------------------------
 
@@ -995,6 +1053,20 @@ class StdioCodexAdapter(SessionAdapter):
             }))
             return
 
+        # An MCP server is asking the user a question through codex. Render
+        # it with the same dialog as requestUserInput above; the reply shape
+        # differs, so track it in its own map.
+        if "id" in msg and method == "mcpServer/elicitation/request":
+            call_id = f"ui_{uuid.uuid4().hex[:8]}"
+            questions, spec = elicitation_questions(params)
+            self._pending_elicitations[call_id] = {"rpc_id": msg["id"], "spec": spec}
+            await self._queue.put(SessionEvent("user-input-request", {
+                "call_id": call_id,
+                "turn_id": self._turn_id,
+                "questions": questions,
+            }))
+            return
+
         # Server-initiated request (approvals, tool prompts). These carry
         # an `id` and expect a response — we forward to the client and
         # record the rpc id so approval-response frames can reply.
@@ -1074,6 +1146,50 @@ class StdioCodexAdapter(SessionAdapter):
                 "item_type": _snake_item_type(codex_type),
                 **_item_extras(item),
             }))
+        elif method == "item/commandExecution/outputDelta":
+            # Codex names this `outputDelta`, so the generic
+            # `item/*/delta` branch below never matched it and live command
+            # output only reached clients at item/completed.
+            # `item/fileChange/outputDelta` has the same shape but codex
+            # 0.147 marks it deprecated and no longer emits it.
+            await self._queue.put(SessionEvent("item-delta", {
+                **_thread_extra(params),
+                "turn_id": params.get("turnId"),
+                "item_id": params.get("itemId"),
+                # commandExecution → tool_call; both clients append tool
+                # deltas to the item's `output` field.
+                "item_type": _snake_item_type("commandExecution"),
+                "delta": params.get("delta", ""),
+            }))
+        elif method == "item/fileChange/patchUpdated":
+            # Progressive edit progress: codex resends the FULL changes list
+            # each time, so this replaces the item's diff rather than
+            # appending. Codex 0.147 usually just re-sends the whole item
+            # instead, but the notification is in the protocol and used to
+            # be dropped silently.
+            summary, diff = _format_changes(params.get("changes") or [])
+            await self._queue.put(SessionEvent("item-patch", {
+                **_thread_extra(params),
+                "turn_id": params.get("turnId"),
+                "item_id": params.get("itemId"),
+                "item_type": "tool_call",
+                "tool": "edit",
+                "args": {"command": summary},
+                "output": diff,
+                "changes": params.get("changes") or [],
+            }))
+        elif method == "item/commandExecution/terminalInteraction":
+            # Codex wrote to an interactive process's stdin. Echo it into the
+            # tool output so the transcript shows what was typed.
+            stdin = params.get("stdin") or ""
+            if stdin:
+                await self._queue.put(SessionEvent("item-delta", {
+                    **_thread_extra(params),
+                    "turn_id": params.get("turnId"),
+                    "item_id": params.get("itemId"),
+                    "item_type": "tool_call",
+                    "delta": stdin,
+                }))
         elif method == "item/mcpToolCall/progress":
             message = params.get("message") or ""
             if message:
@@ -1172,6 +1288,20 @@ class StdioCodexAdapter(SessionAdapter):
                 "context_window": usage.get("modelContextWindow"),
                 "raw_total": total,
             }))
+        elif method == "serverRequest/resolved":
+            # Codex resolved one of its own requests to us — an auto-approval
+            # rule matched, or the turn was aborted. Whichever client is
+            # showing that dialog must drop it; nobody is going to answer.
+            await self._retract_server_request(params.get("requestId"))
+        elif method == "thread/compacted":
+            # Deprecated in codex 0.147 in favour of the `contextCompaction`
+            # item, which we already forward. Kept because /compact gives no
+            # other completion signal on older hosts.
+            await self._queue.put(SessionEvent("slash-ack", {
+                "command": "compact",
+                "ok": True,
+                "message": "context compacted",
+            }))
         elif method == "thread/goal/updated":
             await self._queue.put(SessionEvent("goal-updated", {
                 "thread_id": params.get("threadId"),
@@ -1186,7 +1316,51 @@ class StdioCodexAdapter(SessionAdapter):
             # Drop mcpServer/*, account/*, etc.
             log.debug("ignored codex notification: %s", method)
 
+    async def _retract_server_request(self, rpc_id) -> None:
+        """Codex answered a request it had sent us — tell clients to close it.
+
+        `serverRequest/resolved` identifies the request by codex's rpc id, so
+        we reverse-look our own id maps. Nothing is sent back to codex: the
+        request is already resolved on its side.
+        """
+        if rpc_id is None:
+            return
+        for approval_id, pending in list(self._pending_approvals.items()):
+            if pending.get("rpc_id") == rpc_id:
+                self._pending_approvals.pop(approval_id, None)
+                await self._queue.put(SessionEvent("approval-resolved", {
+                    "approval_id": approval_id,
+                    "resolved_by": "codex",
+                }))
+                return
+        for call_id, pending_id in list(self._pending_user_inputs.items()):
+            if pending_id == rpc_id:
+                self._pending_user_inputs.pop(call_id, None)
+                await self._queue.put(SessionEvent("user-input-resolved", {
+                    "call_id": call_id,
+                    "resolved_by": "codex",
+                }))
+                return
+        for call_id, pending in list(self._pending_elicitations.items()):
+            if pending.get("rpc_id") == rpc_id:
+                self._pending_elicitations.pop(call_id, None)
+                await self._queue.put(SessionEvent("user-input-resolved", {
+                    "call_id": call_id,
+                    "resolved_by": "codex",
+                }))
+                return
+        log.debug("serverRequest/resolved for unknown rpc id %r", rpc_id)
+
     async def _reject_unsupported_server_request(self, rpc_id, method: str) -> None:
+        """Answer -32601 and keep the turn alive.
+
+        Codex asks the client for things we deliberately don't implement
+        (`item/tool/call` — we expose no client-side tools) and for pure
+        plumbing (`account/chatgptAuthTokens/refresh`, `attestation/generate`,
+        `openai/form`). This used to also push a `turn-completed` error,
+        which killed the user's turn over a request codex is fine handling
+        on its own. Log it and move on.
+        """
         message = f"unsupported Codex server request: {method}"
         log.warning(message)
         await self._send({
@@ -1196,7 +1370,6 @@ class StdioCodexAdapter(SessionAdapter):
                 "message": message,
             },
         })
-        await self._queue.put(SessionEvent("turn-completed", {"error": message}))
 
 def _normalize_goal_status(status: str) -> str | None:
     compact = status.replace("_", "").replace("-", "").lower()

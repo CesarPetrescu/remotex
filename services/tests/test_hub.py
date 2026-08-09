@@ -286,6 +286,38 @@ async def test_restore_is_dropped_once_the_prompt_was_invalidated():
 
 
 @pytest.mark.asyncio
+async def test_codex_resolved_prompt_cannot_race_back_into_queue():
+    """A client claim can be in flight when Codex resolves the same prompt.
+
+    Per-prompt tombstones reject only that claim's later restore; another
+    concurrent prompt in the same turn remains answerable.
+    """
+    hub = Hub()
+
+    await hub.note_approval_request("sess_1", "appr_1", {"approval_id": "appr_1"})
+    await hub.note_approval_request("sess_1", "appr_2", {"approval_id": "appr_2"})
+    approval = await hub.resolve_approval("sess_1", "appr_1")
+    assert approval is not None
+    await hub.invalidate_approval("sess_1", "appr_1")
+    await hub.restore_approval(approval)
+
+    await hub.note_user_input_request("sess_1", "call_1", {"call_id": "call_1"})
+    user_input = await hub.resolve_user_input("sess_1", "call_1")
+    assert user_input is not None
+    await hub.invalidate_user_input("sess_1", "call_1")
+    await hub.restore_user_input(user_input)
+
+    snapshot = await hub.pending_prompt_snapshot("sess_1")
+    assert [entry["approval_id"] for entry in snapshot["approvals"]] == ["appr_2"]
+    assert snapshot["user_inputs"] == []
+
+    # A genuinely new request may reuse an id and clears the old tombstone.
+    await hub.note_user_input_request("sess_1", "call_1", {"call_id": "call_1"})
+    snapshot = await hub.pending_prompt_snapshot("sess_1")
+    assert [entry["call_id"] for entry in snapshot["user_inputs"]] == ["call_1"]
+
+
+@pytest.mark.asyncio
 async def test_restore_after_forget_session_does_not_leak():
     hub = Hub()
 

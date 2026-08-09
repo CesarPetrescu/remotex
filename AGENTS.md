@@ -7,6 +7,48 @@
 
 ---
 
+## Before you touch anything: the shared log
+
+Agents run here in parallel, in separate sessions, with no view of each
+other. Four files carry state between them — treat them as part of the
+build, not as documentation:
+
+- **`WorkLog.md`** — append-only record of what changed. **Read the last
+  few entries first**: someone may be mid-edit in your file. **Write an
+  entry before you report done**, including what you verified versus
+  assumed, and which restart ritual your change needs. Newest on top.
+  Template is in the file.
+- **`Issues.md`** — known problems we chose not to fix yet. Numbered
+  `I-NNN`, permanent IDs, with symptom / cause / how-to-fix / evidence.
+  Noticed something and walked past it? File it. Fixed one? Set status
+  and add a Resolution line pointing at your WorkLog entry.
+- **`ToDo.md`** — analysed-but-unstarted work, with `file:line` steps.
+  Ranked bugs first. Also records how the codex protocol audit was done,
+  so the next bump doesn't start from zero.
+- **`CLAUDE.md`** — always loaded; conventions and restart rituals.
+
+Rules of thumb: don't rewrite another agent's entry, cross-reference
+IDs instead of restating findings, and if you stop half-way, log the
+half. A silent partial change is worse than no change.
+
+### Ground truth for the codex protocol
+
+The installed binary emits its own schema — prefer it over the
+`/tmp/codex` clone, which tracks HEAD and is ahead of what hosts run:
+
+```bash
+codex --version
+codex app-server generate-json-schema --out /tmp/codex-schema
+codex app-server generate-ts --out /tmp/codex-ts
+```
+
+Use the dump for **field shapes**. Use a live probe for **whether a
+method exists** — the dump is incomplete (see `I-007`), and it omits
+methods Remotex successfully calls today. Any probe needs an unbounded
+line reader; `skills/list` alone exceeds asyncio's 64KB default.
+
+---
+
 ## What Remotex actually is
 
 Remotex is a **remote-control plane for OpenAI's Codex CLI**.
@@ -159,20 +201,39 @@ It **is**:
 
 ---
 
-## Codex source clone — required reading before touching codex code
+## Hard gate: inspect Codex source before daemon ↔ Codex work
 
 The codex JSON-RPC app-server protocol is undocumented outside the
 codex repo itself. The schema changes between minor versions
 (e.g. 0.122 → 0.128 added `tool_search`, changed `RequestUserInput`
 shape, etc). Your training data is almost certainly stale.
 
-**Mandatory first step** for any work touching codex behavior:
+This gate applies to any implementation, diagnosis, or review involving the
+daemon's Codex connection: JSON-RPC methods or notifications, session and
+admin adapters, item translation, approvals, permissions, goals, thread
+start/resume configuration, rollout history, or Codex process lifecycle.
+
+**Before editing code**, clone Codex into `/tmp/codex`, or fast-forward the
+existing checkout:
 
 ```bash
-test -d /tmp/codex || git clone https://github.com/openai/codex /tmp/codex
+if test -d /tmp/codex/.git; then
+  git -C /tmp/codex pull --ff-only
+else
+  git clone https://github.com/openai/codex /tmp/codex
+fi
+codex --version
 ```
 
-Then grep the source. The files you'll need most often:
+If the refresh fails, do not delete or reset the checkout; report that it may
+be stale and continue only with explicit source inspection plus a real binary
+probe. Prefer source matching the installed Codex version when a matching tag
+exists. The installed binary's observed behavior is decisive when it differs
+from the current source checkout.
+
+Then grep and read the relevant source yourself before deciding what to
+change. Do not infer a wire shape from memory, existing Remotex fixtures, or
+client types alone. The files you'll need most often:
 
 | You're working on | Read |
 |---|---|

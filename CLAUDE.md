@@ -5,6 +5,22 @@ Keep it short. Keep it accurate. **For deeper architecture, protocol
 shape, and test workflow notes, read `AGENTS.md` (sibling of this
 file).**
 
+## Shared agent memory — read and write these
+
+Several agents work this repo in parallel and cannot see each other's
+sessions. These three log files are the shared work state:
+
+| File | Read | Write |
+|---|---|---|
+| `WorkLog.md` | last ~3 entries, **before you start** | an entry when you finish or stop |
+| `Issues.md` | when a bug looks familiar — it may be filed | file anything you notice and walk past |
+| `ToDo.md` | before picking up work | tick items off; add ones you analysed but didn't do |
+
+Non-negotiable: **log your work in `WorkLog.md` before you report done.**
+An unlogged change is invisible to the next agent and will get
+re-investigated or clobbered. Say plainly what you verified and what you
+only assumed. Never edit someone else's entry — append a new one.
+
 ## What this repo is
 
 **Remotex** is a remote-control plane for OpenAI's Codex CLI. The
@@ -39,21 +55,36 @@ user's OpenAI auth. Codex runs as a child process of the daemon.
   default URL is `10.0.2.2`, which only works on emulators).
 - `apple/` — SwiftUI iPhone client.
 
-## Codex source clone (mandatory before touching codex protocol)
+## Hard gate: inspect Codex source before daemon ↔ Codex work
 
 The codex JSON-RPC app-server protocol is large and undocumented
-outside the codex repo itself. Before adding a new event handler,
-new MCP tool, new approval flow, etc., **clone the codex source**:
+outside the codex repo itself. This gate applies to implementation,
+diagnosis, or review of daemon JSON-RPC, adapters, item translation,
+approvals, permissions, goals, thread configuration, rollout history,
+or Codex process lifecycle.
+
+**Before editing code**, clone Codex into `/tmp/codex`, or refresh the
+existing checkout, then check the installed binary version:
 
 ```bash
-test -d /tmp/codex || git clone https://github.com/openai/codex /tmp/codex
+if test -d /tmp/codex/.git; then
+  git -C /tmp/codex pull --ff-only
+else
+  git clone https://github.com/openai/codex /tmp/codex
+fi
+codex --version
 ```
 
-Then grep `/tmp/codex/codex-rs/` for the wire shape you need —
-`protocol/src/`, `app-server-protocol/src/protocol/v2.rs`,
-`codex-mcp/src/`. Don't guess from training data; codex moves fast
-and the wire format changes between minor versions. See AGENTS.md
-for the canonical files to read.
+If refresh fails, do not reset or delete the checkout. Say that it may be
+stale, inspect it anyway, and probe the installed app-server. Prefer a source
+tag matching the installed version when available; observed binary behavior
+wins when it differs from the checkout.
+
+Then grep and read `/tmp/codex/codex-rs/` yourself for the wire shape —
+`protocol/src/`, `app-server-protocol/src/protocol/v2/`,
+`codex-mcp/src/`. Do not guess from training data, Remotex fixtures, or
+client types. Codex moves fast and wire formats change between minor
+versions. See AGENTS.md for the canonical files to read.
 
 ## Test the change against a real codex BEFORE writing code
 
@@ -88,11 +119,12 @@ so any web change requires a relay image rebuild.
 
 ## Relay URL (matters for Android builds)
 
-The relay binds inside docker on `:8080`; the host port comes from
-`RELAY_HOST_PORT` / `RELAY_HOST_BIND` in `deploy/.env` (gitignored —
-this box uses `18080` on `0.0.0.0`; read the file, don't assume). For
-LAN access from a phone: `http://<LAN-IP>:<RELAY_HOST_PORT>`. The
-Android build script reads it for you — see `android/README.md`.
+The relay binds inside Docker on `:8080`. Base Compose publishes it using
+`RELAY_HOST_PORT` / `RELAY_HOST_BIND` from the gitignored `deploy/.env`;
+the SparkTunnel override publishes no host port and reaches `relay:8080`
+on the private Compose network. Read the selected Compose files and `.env`
+instead of assuming a mode. For direct LAN access from a phone, use
+`http://<LAN-IP>:<RELAY_HOST_PORT>`; see `android/README.md`.
 
 The relay also needs `RELAY_DATABASE_URL`; it raises on startup without
 one. Compose supplies it, running `relay/app.py` from source does not.

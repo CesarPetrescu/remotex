@@ -113,8 +113,9 @@ explicitly including nulls (`ModelListParams` in
 pick" sentinel at the head of both the model list and every effort list,
 and gives that sentinel row the union of every effort any model accepts.
 Hidden models are dropped. Anything that fails becomes a
-`models-list-response {error}` and the relay falls back to its static
-list, so this path is never fatal.
+`models-list-response {error}` and the relay falls back to its hostless
+"let Codex decide" sentinel, so this path is never fatal and never names a
+model it could not verify.
 
 Any failed admin call tears the subprocess down so the next one respawns
 rather than timing out against a wedged process. Its stderr is drained

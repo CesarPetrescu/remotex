@@ -13,7 +13,11 @@ _ITEM_TYPE_MAP = {
     "mcpToolCall": "mcp_tool_call",
     "dynamicToolCall": "dynamic_tool_call",
     "collabAgentToolCall": "collab_agent_tool_call",
-    "fileChange": "file_change",
+    # fileChange rides the tool_call renderer: `_item_extras` flattens its
+    # `changes` into the tool/args/output fields every client already draws
+    # (collapsible, copyable, truncated). It used to map to `file_change`,
+    # which no client had a case for — edits showed as an empty system row.
+    "fileChange": "tool_call",
     "userMessage": "user_message",  # echoed; we drop these client-side
 }
 
@@ -30,6 +34,31 @@ def _join_input(items) -> str:
         if isinstance(part, dict) and part.get("type") == "text":
             out.append(part.get("text", ""))
     return "".join(out)
+
+
+def _format_changes(changes: list) -> tuple[str, str]:
+    """A fileChange item's `changes` → (summary line, concatenated diff).
+
+    Codex shape (0.147, `FileUpdateChange`):
+        {path, kind: {type: "add"|"delete"|"update", move_path?}, diff}
+    """
+    summary: list[str] = []
+    diffs: list[str] = []
+    multi = len(changes) > 1
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        path = change.get("path") or "?"
+        kind = change.get("kind") if isinstance(change.get("kind"), dict) else {}
+        verb = kind.get("type") or "update"
+        moved = kind.get("move_path")
+        summary.append(f"{verb} {path}" + (f" → {moved}" if moved else ""))
+        diff = change.get("diff") or ""
+        if diff:
+            # Prefix the path only when there's more than one file, so a
+            # single-file edit reads as a plain diff.
+            diffs.append(f"--- {path}\n{diff}" if multi else diff)
+    return "\n".join(summary), "\n".join(diffs)
 
 
 def _item_extras(item: dict) -> dict:
@@ -63,8 +92,15 @@ def _item_extras(item: dict) -> dict:
         if "exitCode" in item:
             extras["exit_code"] = item["exitCode"]
     elif t == "fileChange":
-        if "changes" in item:
-            extras["changes"] = item["changes"]
+        changes = item.get("changes")
+        if isinstance(changes, list) and changes:
+            summary, diff = _format_changes(changes)
+            extras["changes"] = changes  # raw, for clients that want structure
+            extras["tool"] = "edit"
+            extras["args"] = {"command": summary}
+            extras["output"] = diff
+        if "status" in item:
+            extras["status"] = item["status"]
     elif t == "mcpToolCall":
         for src, dst in (
             ("server", "server"),

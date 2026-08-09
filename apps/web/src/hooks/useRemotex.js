@@ -79,6 +79,10 @@ function clearPromptBackup(sessionId) {
 // Kept identical in RemotexViewModel.kt and RemotexViewModel.swift.
 export const DEFAULT_APPROVAL_DECISIONS = ['accept', 'acceptForSession', 'decline', 'cancel'];
 
+export function attachedTurnInFlight(frame) {
+  return typeof frame?.turn_in_flight === 'boolean' ? frame.turn_in_flight : null;
+}
+
 function normalizeApprovalPrompt(data = {}) {
   if (!data.approval_id) return null;
   return {
@@ -302,8 +306,7 @@ export const initialState = {
   // }
   hostTelemetry: {},
   // Model picker list: asked of the selected host first, then the relay's
-  // static /api/models list, then this embedded fallback. See
-  // services/relay/models.py for the canonical source of truth.
+  // hostless /api/models response, then this "let codex decide" fallback.
   modelOptions: FALLBACK_MODEL_OPTIONS,
 };
 
@@ -431,10 +434,14 @@ export function reducer(state, action) {
         }),
       };
     case 'COMPLETE_EVENT':
+      // keepPending: apply the patch but leave the item streaming — used by
+      // item-patch, where codex resends a growing diff mid-edit.
       return {
         ...state,
         events: state.events.map((e) =>
-          e.id === action.id ? { ...e, ...action.patch, completed: true } : e,
+          e.id === action.id
+            ? { ...e, ...action.patch, completed: action.keepPending ? e.completed : true }
+            : e,
         ),
       };
 
@@ -656,6 +663,10 @@ export function useRemotex() {
   const handleFrame = useCallback((frame) => {
     if (frame.type === 'attached') {
       reconnectAttemptRef.current = 0;
+      const turnInFlight = attachedTurnInFlight(frame);
+      if (turnInFlight !== null) {
+        dispatch({ type: 'PENDING', pending: turnInFlight });
+      }
       dispatch({
         type: 'SESSION_STATUS',
         status: Number(frame.replay_from || 0) > 0 ? STATUS.Connected : STATUS.Connecting,
@@ -778,6 +789,23 @@ export function useRemotex() {
         if (data.delta) {
           dispatch({ type: 'APPEND_DELTA', id: data.item_id, delta: data.delta });
         }
+        return;
+      case 'item-patch':
+        // Progressive file-edit update. Codex resends the whole patch each
+        // time, so this replaces the item's diff instead of appending.
+        dispatch({
+          type: 'COMPLETE_EVENT',
+          id: data.item_id,
+          patch: { output: data.output || '', command: data.args?.command || '' },
+          keepPending: true,
+        });
+        return;
+      case 'steer-failed':
+        // The turn is still running — surface the failure without ending it.
+        dispatch({
+          type: 'SET_ERROR',
+          error: data.error || 'could not steer this turn',
+        });
         return;
       case 'item-completed': {
         const patch = {};
@@ -929,10 +957,14 @@ export function useRemotex() {
           }
           if (s === 'disconnected' || s === 'error') {
             if (userClosedRef.current) {
+              dispatch({ type: 'PENDING', pending: false });
               dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
               return;
             }
-            dispatch({ type: 'PENDING', pending: false });
+            // Preserve the turn state during a transient transport drop.
+            // The relay's next `attached.turn_in_flight` is authoritative;
+            // clearing here makes a live turn look idle when replay starts
+            // after its old turn-started frame.
             dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
             scheduleReconnectRef.current?.(sid);
           }
@@ -1029,7 +1061,7 @@ export function useRemotex() {
   }, [refreshHosts]);
 
   // Model list, most-specific source first (contract B): what the selected
-  // host's codex actually offers → the relay's static list → the fallback
+  // host's codex actually offers → the hostless default → the fallback
   // constant already sitting in state. Re-runs when the host changes, so
   // switching hosts re-asks that host.
   useEffect(() => {
@@ -1296,6 +1328,25 @@ export function useRemotex() {
     [],
   );
 
+  // Send into the running turn instead of ending it. The relay echoes the
+  // message to every attached client, so we don't append it locally.
+  const steerTurn = useCallback((rawText) => {
+    const input = (rawText || '').trim();
+    const { pendingImages } = latestInputsRef.current;
+    if (!input && pendingImages.length === 0) return;
+    const sock = socketRef.current;
+    if (!sock) return;
+    const sent = sock.sendSteer({
+      input,
+      images: pendingImages.map((a) => ({ mime: a.mime, data: a.base64 })),
+    });
+    if (!sent) {
+      dispatch({ type: 'SET_ERROR', error: 'socket is not connected' });
+      return;
+    }
+    dispatch({ type: 'CLEAR_IMAGES' });
+  }, []);
+
   const interruptTurn = useCallback(() => {
     socketRef.current?.sendInterrupt();
   }, []);
@@ -1494,6 +1545,7 @@ export function useRemotex() {
       sendTurn,
       sendSlash,
       interruptTurn,
+      steerTurn,
       resolveApproval,
       resolveUserInput,
       cancelUserInput,
@@ -1527,6 +1579,7 @@ export function useRemotex() {
       sendTurn,
       sendSlash,
       interruptTurn,
+      steerTurn,
       resolveApproval,
       resolveUserInput,
       cancelUserInput,
@@ -1597,8 +1650,19 @@ function buildItemEvent(data) {
     case 'user_message':
       return { id, role: 'user', text: data.text || '', imageCount: data.image_count || 0 };
     default:
-      return { id, role: 'system', label: data.item_type || 'item', detail: '' };
+      // Codex has item types we don't render specially — contextCompaction,
+      // webSearch, plan, sleep, subAgentActivity, enteredReviewMode… Show a
+      // readable name rather than a raw camelCase identifier.
+      return { id, role: 'system', label: humanizeItemType(data.item_type), detail: '' };
   }
+}
+
+function humanizeItemType(type) {
+  if (!type) return 'item';
+  return type
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .toLowerCase();
 }
 
 function formatCollabTool(tool) {

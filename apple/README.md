@@ -86,6 +86,19 @@ Still to add for Android parity:
 - Reconnect backoff
 - Push notifications for approval requests
 
+## Build from the command line
+
+```bash
+xcodebuild \
+  -project apple/Remotex.xcodeproj \
+  -scheme Remotex \
+  -configuration Debug \
+  -sdk iphonesimulator \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+```
+
 ## CI
 
 The `ios` job in `.github/workflows/ci.yml` builds against an iPhone

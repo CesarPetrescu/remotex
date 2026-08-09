@@ -14,11 +14,10 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
 - Opens a session, attaches to `/ws/client`, and streams events:
   reasoning, tool calls, file changes, MCP tool calls, and agent messages
   with delta streaming and syntax-highlighted markdown.
-- Sends turns with optional image attachments, model, reasoning effort,
-  and permission chips. The model list comes from
-  `/api/hosts/{host_id}/models` (what that host's codex actually offers),
-  falling back to `/api/models` and then to `FALLBACK_MODEL_OPTIONS` in
-  `src/config.js`.
+- Sends or steers turns with optional image attachments, model, reasoning
+  effort, and permission chips. The model list comes from
+  `/api/hosts/{host_id}/models` (what that host's Codex actually offers);
+  if the host cannot supply it, the default entry lets Codex choose.
 - Queues approval prompts and Codex user-input dialogs — a second
   concurrent prompt lines up behind the first instead of replacing it —
   with first-response-wins arbitration when several clients are attached.
@@ -43,11 +42,38 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
   `MAX_FILE_BYTES` (25 MB, matching the relay's `REMOTEX_MAX_FILE_BYTES`)
   with a readable error instead of a failed request.
 
-## Dev
+## Architecture
+
+```text
+App.jsx
+├── DashboardScreen           host, thread, folder, and session entry points
+├── SessionScreen             event stream + composer
+├── FilesScreen / JumpPicker  choose a working directory
+├── HostsSidebar              hosts and resumable threads
+├── RightSidebar              approvals, questions, telemetry
+└── useRemotex                state reducer + REST/WS orchestration
+    ├── api/relayClient.js     HTTP client
+    └── api/sessionSocket.js   WebSocket framing and client identity
+```
+
+`useRemotex` is the client state machine. It reduces normalized relay events,
+tracks the last sequence number, reconnects with capped exponential backoff,
+and exposes UI actions. Presentation components do not speak the wire protocol
+directly.
+
+Persistent browser state is intentionally small:
+
+- `localStorage`: user token, layout preferences, folder recents/favorites
+- `sessionStorage`: unresolved prompt backup for the current browser session
+- relay replay buffer: recent session events used after reconnect
+
+## Development
+
+Requirements: Node.js 20+ and a relay listening on `127.0.0.1:8080`.
 
 ```bash
 cd apps/web
-npm install
+npm ci
 npm run dev
 ```
 
@@ -75,7 +101,7 @@ cd deploy && docker compose build relay && docker compose up -d --force-recreate
 
 ## Project layout
 
-```
+```text
 apps/web/
 ├── index.html
 ├── vite.config.js            dev server + /api,/ws proxy
@@ -83,7 +109,7 @@ apps/web/
 └── src/
     ├── main.jsx
     ├── App.jsx               app shell: screen routing, sidebars, Jump picker wiring
-    ├── config.js             screens, statuses, permission chips, fallback model list, size cap
+    ├── config.js             screens, statuses, permission chips, default model entry, size cap
     ├── styles.css            the entire stylesheet
     ├── api/
     │   ├── relayClient.js    REST wrapper around the relay
@@ -96,7 +122,7 @@ apps/web/
     │   ├── SessionScreen.jsx     chat surface
     │   └── FilesScreen.jsx       standalone file browser
     ├── components/
-    │   ├── Composer.jsx          chip row + textarea + send/stop
+    │   ├── Composer.jsx          chip row + textarea + send/steer/stop
     │   ├── Pickers.jsx           model / effort / permission chips
     │   ├── SendOrStopButton.jsx
     │   ├── EventStream.jsx, EventRow.jsx

@@ -96,22 +96,22 @@ own per-remote cap on connection *attempts* instead
 (`RELAY_WS_CONNECT_BURST`, default 60, refilling at
 `RELAY_WS_CONNECT_PER_SECOND`, default 5/s).
 
-`request.remote` is the TCP peer, so behind a reverse proxy (the Caddy
-profile in `deploy/docker-compose.yml`) every caller collapses onto one
-address and shares one bucket. Set `RELAY_TRUST_PROXY=1` **only** in that
-deployment: it makes the relay read the client address from
+`request.remote` is the TCP peer, so behind a reverse proxy (the Caddy or
+SparkTunnel profile in `deploy/docker-compose.yml`) every caller collapses
+onto one address and shares one bucket. Set `RELAY_TRUST_PROXY=1` **only**
+in a proxied deployment: it makes the relay read the client address from
 `X-Forwarded-For`, which is a caller-supplied header and worthless
 without a proxy in front to overwrite it.
 
 | Method | Path                                | Purpose |
 |--------|-------------------------------------|---------|
-| GET    | `/api/models`                       | Static fallback model + effort catalogue (`relay/models.py`) |
+| GET    | `/api/models`                       | Hostless "let Codex decide" sentinel + fallback efforts |
 | GET    | `/api/hosts`                        | Hosts owned by the caller |
 | POST   | `/api/hosts`                        | Register a host row |
 | POST   | `/api/hosts/{id}/api-key`           | Mint a bridge key — plaintext returned once, plus its `key_id` |
 | GET    | `/api/hosts/{id}/api-key`           | List non-revoked keys by `key_id` (never the key itself) |
 | POST   | `/api/hosts/{id}/api-key/revoke`    | Revoke by `{token}` or `{key_id}`; also drops the host's live daemon socket |
-| GET    | `/api/hosts/{id}/models`            | What that host's codex reports; falls back to the static list |
+| GET    | `/api/hosts/{id}/models`            | What that host's Codex reports; falls back to the default sentinel |
 | GET    | `/api/hosts/{id}/threads`           | Proxied `thread/list` (30s timeout) |
 | GET    | `/api/hosts/{id}/fs`                | List a directory on the host |
 | POST   | `/api/hosts/{id}/fs/mkdir`          | Create a directory |
@@ -130,9 +130,10 @@ comes back (`handlers/daemon_rpc.py`).
 
 `GET /api/hosts/{id}/models` degrades instead of failing: if the host is
 offline, errors, or misses the 10s deadline, the relay answers with the
-static list and `"source": "fallback"` rather than an empty picker. A
-successful host answer is tagged `"source": "host"`. Either way the model
-objects keep the `{id, label, hint, efforts[]}` shape.
+hostless default sentinel and `"source": "fallback"` rather than naming
+models it cannot verify. A successful host answer is tagged
+`"source": "host"`. Either way the model objects keep the
+`{id, label, hint, efforts[]}` shape.
 
 Anything else under `/` serves the SPA (`handlers/static.py`).
 
@@ -194,8 +195,8 @@ Session-scoped frames carry a `session_id`.
 `models-list-response` carries `{request_id, models: [{id, label, hint,
 efforts[]}]}`, mapped from codex's `model/list` by
 `daemon/adapters/admin.py::model_options_from_codex`. On any failure the
-daemon answers `{request_id, error}` and the relay serves its static list
-instead.
+daemon answers `{request_id, error}` and the relay serves only its hostless
+default sentinel instead.
 
 Client frames are forwarded to the daemon **verbatim**, with `session_id`
 and `client_id` stamped on by the relay.
@@ -250,7 +251,10 @@ Codex types pass through unchanged.
 1. **Daemon starts** → `hello` with the bridge token. The relay resolves
    the `host_id`, records host identity, marks it online, replies
    `welcome`, then re-sends any cached `session-open` frames for that
-   host so sessions survive a daemon reconnect.
+   host so sessions resume their Codex threads after a daemon reconnect.
+   An in-flight turn cannot survive because the disconnected daemon tears
+   down its Codex subprocess; the relay completes that turn with an error,
+   clears its prompts, and leaves the resumed session ready for a retry.
 2. **User opens a session.** Client does `POST /api/sessions {host_id,
    thread_id?, cwd?}`. The relay reserves a `session_id`. Nothing happens
    on the daemon yet. If a session is already live for that
@@ -282,7 +286,8 @@ Codex types pass through unchanged.
    attached clients.
 6. **Disconnect** — see the failure table below. Sessions are *not*
    dropped when the daemon socket closes; they are held so a reconnecting
-   daemon can pick them back up.
+   daemon can pick them back up. Any active turn is explicitly failed first
+   because its adapter no longer exists.
 
 ## Multi-client semantics
 
@@ -325,13 +330,13 @@ than a running maximum, so the cursor can follow the counter back down.
 
 | Failure | Behavior |
 |---|---|
-| Relay restart | Daemons reconnect with exponential backoff + jitter (1s → 30s cap). Clients re-attach and replay from `last_seq`. |
-| Daemon crash / network loss | Host marked offline. Sessions are kept in the hub for reattach. `POST /api/sessions` for that host returns 502 until it reconnects. |
+| Relay restart | Daemons reconnect with exponential backoff + equal jitter (1s → 30s cap; reset after 60s stable). Clients re-attach; relay-memory replay is empty after the restart, while the persisted Codex thread still resumes. |
+| Daemon crash / network loss | Host marked offline. Any active turn gets a sequenced failed `turn-completed`, its prompts are invalidated, and the turn slot is released. Sessions stay in the hub and resume their persisted Codex threads when the daemon reconnects. `POST /api/sessions` returns 502 while it is offline. |
 | Client sends a turn while the host is offline | Relay clears the turn slot and synthesizes `turn-completed {error: "host offline"}` so the UI doesn't spin. |
 | Client tab closed, session idle | Closed after `RELAY_CLIENT_RECONNECT_GRACE_SECONDS` (default 75s) of no client and no daemon activity. |
 | Client tab closed, turn in flight | Kept alive as long as the daemon keeps emitting frames; killed only after `RELAY_SESSION_STALL_CEILING_SECONDS` (default 2h) of total silence. |
 | Slow consumer | Per-socket send timeout of 5s, then close with 1013 (`slow consumer`). One slow client can't wedge the relay's event loop. |
-| Second daemon for the same host | Older socket closed with 4000 (`daemon-replaced`). |
+| Second daemon for the same host | Older socket receives close 4000 (`daemon-replaced`) and exits without retrying; any old active turn fails cleanly before the replacement resumes the session. |
 | REST flood | HTTP 429 with `Retry-After`. |
 | WebSocket connect flood | Per-remote bucket; HTTP 429 with `Retry-After` before the upgrade. |
 | Invalid bridge token | Relay closes the daemon WS with 4401. |
@@ -473,7 +478,7 @@ Kept so these don't get re-proposed:
 - **Bridge-key issue / list / revoke**, including dropping the host's live
   daemon socket on revoke.
 - **Host-scoped model listing** (`GET /api/hosts/{id}/models`) with the
-  static list as an automatic fallback.
+  hostless "let Codex decide" sentinel as an automatic fallback.
 - **One transfer ceiling** (`REMOTEX_MAX_FILE_BYTES`) shared by the HTTP
   body cap, both relay websockets, and the daemon's `ws_connect`, with
   explicit errors rather than dropped sockets.

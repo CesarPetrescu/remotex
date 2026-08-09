@@ -1,7 +1,10 @@
 # Remotex Android
 
-Native Android client for the Remotex relay. Kotlin + Jetpack Compose,
-OkHttp for REST + WebSocket, kotlinx.serialization for JSON.
+The native Android client is built with Kotlin and Jetpack Compose. OkHttp
+handles REST and WebSocket transport; kotlinx.serialization handles relay
+frames.
+
+It is a working client, not a skeleton.
 
 ## Status
 
@@ -14,9 +17,9 @@ What works:
   MCP tool calls, and agent messages, grouped per turn with markdown
   rendering.
 - Composer with model, reasoning-effort, and permission pickers, image
-  attachments, send/stop, and turn interrupt. The model list comes from
-  `GET /api/hosts/{host_id}/models`, falling back to `GET /api/models`
-  and then the embedded list.
+  attachments, send/steer/stop, and turn interrupt. The model list comes
+  from `GET /api/hosts/{host_id}/models`; if the host cannot supply it,
+  the default entry lets Codex choose.
 - Approval dialogs and Codex user-input dialogs.
 - Slash commands (`/plan`, `/default`, `/cd`, `/pwd`, `/compact`,
   `/goal`, `/collab`) plus direct `goal-get` / `goal-set` / `goal-clear`
@@ -34,20 +37,39 @@ Not done — tracked in the root `README.md` and under "Known gaps" in
 - OIDC login — the token is still a plain bearer string.
 - Runtime relay switching (the URL is a compile-time constant; see below).
 
-## Build
+## Architecture
 
-Requirements:
+```text
+MainActivity
+└── RemotexApp                         screen navigation and app shell
+    ├── HostsScreen
+    ├── ThreadsScreen
+    ├── FilesScreen                    working-directory picker
+    └── SessionScreen                  events, prompts, files, composer
+         │
+         ▼
+    RemotexViewModel                   state machine and event reducer
+    ├── RelayClient                    REST calls
+    ├── SessionSocket                  `/ws/client` WebSocket → SharedFlow
+    └── SessionForegroundService       lifecycle and notifications
+```
+
+The ViewModel mirrors the web client's normalized session state. It owns the
+active socket, remembers the last event sequence for replay, and exposes UI
+actions; Compose screens remain presentation-focused.
+
+## Requirements
 
 - JDK 17 (OpenJDK or Temurin).
 - Android SDK with `platforms;android-35` + `build-tools;34.0.0`.
   Android Studio installs both; headless machines can use
   `cmdline-tools/latest/bin/sdkmanager`.
+- `adb` when installing to a device.
 
-Set `sdk.dir` by copying the template:
+Set the SDK path once:
 
 ```bash
 cp android/local.properties.example android/local.properties
-# Edit if your SDK lives somewhere other than /opt/android-sdk.
 ```
 
 ### Use `./build.sh`, not bare Gradle
@@ -186,3 +208,12 @@ when its replay buffer no longer covers a reconnecting client's cursor.
    line alone never says which file.
 
 Failing any of those fails the PR status check.
+
+## Current limits
+
+- Authentication is still a compiled relay URL plus manually entered bearer
+  token; OIDC is not implemented.
+- Completion notifications are local. There is no FCM service for approval
+  requests while the app is fully offline.
+- The client presents one active session at a time.
+- Relay changes require rebuilding and reinstalling the APK.

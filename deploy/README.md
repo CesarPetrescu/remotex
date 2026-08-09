@@ -1,27 +1,53 @@
-# Remotex deploy - Docker Compose
+# Remotex deployment
 
 Self-host the relay + web client with one command. This is the
 "single box, no Kubernetes" path; see the "Known gaps" section of
 `services/docs/architecture.md` for what needs to be done before
 you point real users at it.
 
-## What's in here
+The supported layout is one small Docker Compose stack for the control plane,
+plus a native daemon on every machine that runs Codex.
 
+```text
+internet / LAN
+      │
+      ├── Caddy (optional inbound TLS) ─────────────┐
+      └── PhotonSpark edge                         │
+                  ▲ outbound WSS                   │
+          SparkTunnel connector ──────────────────┤ private HTTP/WS
+                                                  ▼
+                                      relay container ─── Postgres container
+                                                  ▲
+                                                  │ outbound ws/wss
+                                          host daemon ─── codex app-server
 ```
+
+The web bundle is compiled into the relay image and served by the relay. There
+is no separate frontend container, and the host daemon should not run in
+Docker because it needs the host filesystem, Codex installation, credentials,
+and tools.
+
+## Files
+
+```text
 deploy/
-├── Dockerfile.relay     multi-stage image: builds apps/web with Node,
-│                        then bundles the built assets into the relay
-│                        container so one image serves both the API
-│                        and the web UI.
-├── docker-compose.yml   relay, Postgres inventory store + optional Caddy TLS
-├── Caddyfile            TLS reverse proxy config (activated with --profile tls)
-├── .env.example         TLS profile settings, host port/bind, Postgres
-│                        credentials, and the relay's tunables (grace,
-│                        reservation TTL, file ceiling, demo seeding)
-└── README.md            this file
+├── Dockerfile.relay          builds React, then the Python relay image
+├── Dockerfile.sparktunnel    pinned PhotonSpark connector image
+├── docker-compose.yml        relay, Postgres, optional ingress profiles
+├── docker-compose.sparktunnel.yml removes host ports for SparkTunnel
+├── Caddyfile                 HTTPS/WSS reverse proxy
+├── .env.example              deployment settings
+├── entrypoint.sh             unprivileged relay startup
+├── sparktunnel-entrypoint.sh validates and starts the connector
+├── install-daemon.sh         Linux daemon installer
+├── remotex-daemon.service    systemd unit template
+└── README.md
 ```
 
-## Quickstart - relay only (no TLS)
+## Start locally
+
+SparkTunnel is optional. The base Compose file needs no PhotonSpark account or
+connector token and publishes the relay on loopback:
 
 ```bash
 cd deploy
@@ -38,6 +64,24 @@ Web control UI is at http://127.0.0.1:8080/ - it's the
 `apps/web/` React client, compiled into static assets during the
 image build and served by the relay itself (no separate web
 container).
+
+For a different local interface or port, copy `.env.example` to `.env` and
+set `RELAY_HOST_BIND` / `RELAY_HOST_PORT`. Binding to `0.0.0.0` exposes the
+relay to the LAN; keep `RELAY_TRUST_PROXY=0` when clients connect directly.
+The SparkTunnel override described below is the only mode that removes this
+host port.
+
+For any persistent or published deployment, replace the bundled Postgres
+compatibility default with a random 256-bit password in the ignored,
+mode-0600 `.env` file:
+
+```bash
+openssl rand -hex 32
+```
+
+Paste the result as `POSTGRES_PASSWORD=...`. On an existing Postgres volume,
+changing only `.env` is not enough: rotate the database role password to the
+same value before recreating the relay, or Postgres will reject it.
 
 ## Getting a token
 
@@ -119,6 +163,19 @@ complete one.
 `POST /api/sessions` reservation survives with no client ever attaching
 before a background sweeper closes the row and forgets it.
 
+The host daemon also reconnects automatically when its outbound WSS socket
+dies. It waits for relay `welcome` for at most 10 seconds, then retries with
+equal-jitter exponential backoff from 1 to 30 seconds; a connection healthy
+for 60 seconds resets the next outage to the short delay. Invalid bridge
+credentials retry slowly, and a daemon displaced by a newer process exits
+instead of the two processes continually evicting each other.
+
+The saved session and Codex thread resume after reconnect, but an active turn
+cannot: losing the daemon socket tears down that turn's local Codex process.
+The relay therefore emits a failed `turn-completed`, clears stale approval and
+input prompts, and releases the turn slot so the user can retry after the host
+comes back online.
+
 ## File transfer ceiling
 
 `REMOTEX_MAX_FILE_BYTES` (default `26214400` = 25 MiB) is the single knob
@@ -148,14 +205,14 @@ that raises the server limit should rebuild the web bundle with
 Point a DNS record at the server first, then:
 
 ```bash
+cd deploy
 cp .env.example .env
-$EDITOR .env             # set REMOTEX_HOSTNAME and ACME_EMAIL
+$EDITOR .env
 docker compose --profile tls up -d --build
 ```
 
-Caddy binds `:80` and `:443`, terminates TLS, and proxies everything
-(including the `/ws/daemon` and `/ws/client` WebSocket upgrades) to
-the relay container.
+Set `REMOTEX_HOSTNAME` and `ACME_EMAIL`. Caddy binds ports 80 and 443,
+obtains certificates, and proxies HTTP and WebSocket traffic to the relay.
 
 **Set `RELAY_TRUST_PROXY=1` in `.env` when you do this.** Behind a proxy
 the relay's view of every caller is the proxy's own address, so every
@@ -165,91 +222,188 @@ peer can 429 the rest. With the flag set, the relay reads the address from
 is exposed directly — the header is caller-supplied and worthless without
 something in front to overwrite it.
 
-## Tail logs
+## Publish through SparkTunnel
+
+[SparkTunnel](https://webhost.photonspark.com) is an alternative to the
+bundled Caddy profile when this machine should have no inbound firewall rule,
+public IP, or router port-forward. A connector container dials out to
+PhotonSpark, which provides the public hostname, TLS, HTTP routing, and
+WebSocket upgrades. A PhotonSpark account and a site configured with the
+SparkTunnel deployment method are required.
+
+This mode is opt-in: `docker-compose.sparktunnel.yml` removes the relay's host
+port only when it is explicitly included. It does not change local or Caddy
+deployments that use `docker-compose.yml` by itself.
+
+Create the tunnel in the PhotonSpark dashboard and copy its one-time connector
+token. Then configure the optional Compose profile:
 
 ```bash
-docker compose logs -f relay
-docker compose logs -f postgres
-docker compose --profile tls logs -f caddy
+cd deploy
+cp -n .env.example .env
+chmod 600 .env
+$EDITOR .env
+docker compose -f docker-compose.yml -f docker-compose.sparktunnel.yml \
+  --profile sparktunnel up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sparktunnel.yml \
+  --profile sparktunnel logs -f sparktunnel
 ```
 
-## Upgrade
+Set `SPARK_TUNNEL_TOKEN`, `RELAY_TRUST_PROXY=1`, and `RELAY_SEED_DEMO=0` in
+`.env`. The connector defaults are normally correct:
 
-```bash
-git pull
-docker compose up -d --build        # or `--profile tls` if you use Caddy
+```dotenv
+RELAY_SEED_DEMO=0
+RELAY_TRUST_PROXY=1
+SPARK_TUNNEL_SERVER=https://webhost.photonspark.com
+SPARK_TUNNEL_TARGET=http://relay:8080
 ```
 
-The relay volume (`remotex_relay-data`) carries over.
+The target is deliberately the relay's private Compose address. The
+SparkTunnel override removes the relay's host port entirely; only containers
+on the private `remotex` network can reach it directly.
+Do not run the `tls` and `sparktunnel` profiles together unless you explicitly
+need two public ingress paths.
 
-## Reset
+The connector image downloads the
+[official Linux amd64 0.2.0 binary](https://webhost.photonspark.com/api/v1/downloads/spark-tunnel/linux/amd64)
+and verifies its pinned SHA-256 before installing it. The connector itself
+retries a lost broker connection with exponential backoff. Compose also
+restarts the container if the process exits.
+
+SparkTunnel does not add application authentication. Anyone who can reach the
+PhotonSpark hostname can reach Remotex's authentication boundary, so never
+publish a relay that still uses the repository's demo tokens. Keep the
+connector token out of Git and rotate it from PhotonSpark if it is exposed.
+
+## Install a host daemon
+
+The recommended Linux installation is a systemd user service:
 
 ```bash
-docker compose down -v               # -v nukes the Postgres volume too
-```
-
-## Pointing a daemon at this relay
-
-### Linux (systemd user service, recommended)
-
-On any Linux machine that should expose Codex sessions:
-
-```bash
-git clone <this repo>
-cd remotex
 deploy/install-daemon.sh \
-    --relay-url    wss://relay.example.com/ws/daemon \
-    --bridge-token <token from the relay admin flow> \
-    --nickname     mybox
+  --relay-url wss://relay.example.com/ws/daemon \
+  --bridge-token brg_live_replace_me \
+  --nickname mybox \
+  --default-cwd "$PWD"
 ```
 
-Run it with no flags to be prompted for each value. The installer
-creates a venv at `~/.local/share/remotex/venv`, writes config to
-`~/.remotex/config.toml`, drops a `remotex-daemon.service` unit into
-`~/.config/systemd/user/`, and enables it. Re-run anytime — it's
-idempotent. `deploy/install-daemon.sh --uninstall` removes the unit
-(config and venv stay).
+With no flags, the installer prompts for required values. It creates:
 
-For a relay running on the same box, use `ws://127.0.0.1:8080/ws/daemon`.
+```text
+~/.local/share/remotex/venv/
+~/.remotex/config.toml
+~/.config/systemd/user/remotex-daemon.service
+```
 
-### Cleartext relay URLs are refused
-
-`daemon run` exits rather than shipping the bridge token and every prompt
-over an unencrypted link: `wss://` is always fine, and so is `ws://` to
-loopback, but `ws://<LAN-IP>/…` is not. If you really want a plaintext LAN
-relay, add `allow_insecure = true` under `[daemon]` in
-`~/.remotex/config.toml` — the installer has no flag for it, so this is a
-deliberate hand edit — and expect a warning in the journal on every start.
-The fix, not the workaround, is the `tls` profile above.
-
-**Upgrading an existing plaintext-LAN install:** the refusal is an exit,
-and the unit is `Restart=on-failure`, so a host that was already pointed
-at `ws://<LAN-IP>/ws/daemon` will restart-loop after the upgrade with only
-a line on stderr to say why. Check with
-`journalctl --user -u remotex-daemon -n 20`, then either move it to
-`wss://` or set `allow_insecure = true`.
-
-To survive logout, allow your user to linger:
+It is safe to rerun. Existing configuration is preserved unless
+`--force-config` is supplied. Useful operations:
 
 ```bash
-sudo loginctl enable-linger $USER
+systemctl --user status remotex-daemon
+journalctl --user -u remotex-daemon -f
+deploy/install-daemon.sh --uninstall
 ```
 
-### Manual / non-Linux
+The uninstall operation removes the service but deliberately keeps the config
+and virtual environment. To keep a user daemon alive after logout:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+`install-daemon.sh --system` is also available for system-wide installation;
+run its `--help` before using that mode because the chosen service account must
+own the relevant Codex credentials and workspace files.
+
+For a relay on the same machine, use
+`ws://127.0.0.1:8080/ws/daemon`. The daemon refuses cleartext `ws://` for a
+non-loopback address because that would expose its bridge token and prompts.
+Use `wss://` for LAN or public relays. A deliberate plaintext LAN deployment
+requires `allow_insecure = true` under `[daemon]` in the daemon config and
+logs a warning on every start.
+
+For manual or non-Linux operation:
 
 ```bash
 cd services
 pip install -r requirements.txt
 python3 -m daemon init \
-    --relay-url wss://relay.example.com/ws/daemon \
-    --bridge-token <token from the relay admin flow> \
-    --nickname mybox \
-    --mode stdio \
-    --config ./demo-config.toml
+  --relay-url wss://relay.example.com/ws/daemon \
+  --bridge-token <token from the relay admin flow> \
+  --nickname mybox \
+  --mode stdio \
+  --config ./demo-config.toml
 python3 -m daemon run --config ./demo-config.toml
 ```
 
-## What's still TODO before "production"
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RELAY_HOST_BIND` | `127.0.0.1` | Host interface exposed by Compose |
+| `RELAY_HOST_PORT` | `8080` | Host port mapped to relay port 8080 |
+| `RELAY_CLIENT_RECONNECT_GRACE_SECONDS` | `75` | Idle-client reconnect window |
+| `RELAY_SESSION_STALL_CEILING_SECONDS` | `7200` | Silence limit for an in-flight turn |
+| `RELAY_SESSION_REPLAY_LIMIT` | `1000` | Events retained per live session |
+| `RELAY_SESSION_RESERVATION_TTL_SECONDS` | `600` | Lifetime of an unattached session reservation |
+| `REMOTEX_MAX_FILE_BYTES` | `26214400` | File and derived WebSocket size ceiling |
+| `RELAY_SEED_DEMO` | `0` | Opt-in public demo credentials; never enable on a published relay |
+| `RELAY_TRUST_PROXY` | `0` | Trust proxy-supplied client addresses; set to `1` behind Caddy or SparkTunnel |
+| `POSTGRES_DB` | `remotex` | Inventory database |
+| `POSTGRES_USER` | `remotex` | Inventory database user |
+| `POSTGRES_PASSWORD` | `remotex-search` | Inventory database password |
+| `REMOTEX_HOSTNAME` | `localhost` | Caddy hostname |
+| `ACME_EMAIL` | invalid placeholder | Certificate contact email |
+| `SPARK_TUNNEL_TOKEN` | none | PhotonSpark one-time connector bearer token |
+| `SPARK_TUNNEL_SERVER` | `https://webhost.photonspark.com` | PhotonSpark connector endpoint |
+| `SPARK_TUNNEL_TARGET` | `http://relay:8080` | Private HTTP/WebSocket target inside Compose |
+| `SPARK_TUNNEL_DOWNLOAD_URL` | official Linux amd64 artifact | Connector image build source |
+| `SPARK_TUNNEL_SHA256` | pinned 0.2.0 digest | Connector artifact integrity check |
+
+The stall-ceiling and replay-limit variables are not present in
+`docker-compose.yml`; add them to the relay service's `environment` section
+when their defaults are unsuitable.
+
+## Storage and restart behavior
+
+- `remotex_search-data` contains Postgres inventory: users, hosts, bridge
+  keys, and session records.
+- `remotex_relay-data` exists only for one-time migration from older SQLite
+  installations.
+- `remotex_caddy-data` and `remotex_caddy-config` contain Caddy state.
+- Live sockets, event replay, active turns, and pending prompts are in relay
+  memory and do not survive a relay restart.
+- Codex thread history stays on each daemon host.
+
+## Operations
+
+```bash
+cd deploy
+docker compose ps
+docker compose logs -f relay
+docker compose logs -f postgres
+docker compose --profile tls logs -f caddy
+docker compose -f docker-compose.yml -f docker-compose.sparktunnel.yml \
+  --profile sparktunnel logs -f sparktunnel
+docker compose up -d --build
+```
+
+To remove the stack while keeping data:
+
+```bash
+docker compose down
+```
+
+To remove the stack and all Compose volumes:
+
+```bash
+docker compose down -v
+```
+
+The second command permanently deletes the Postgres inventory and Caddy state.
+
+## Production limits
 
 Docker Compose gets you a self-hosted demo, not a hardened service.
 Open items tracked against the roadmap:

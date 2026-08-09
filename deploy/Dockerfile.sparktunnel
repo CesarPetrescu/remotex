@@ -1,0 +1,34 @@
+FROM alpine:3.22 AS downloader
+
+ARG TARGETARCH
+ARG SPARK_TUNNEL_DOWNLOAD_URL=https://webhost.photonspark.com/api/v1/downloads/spark-tunnel/linux/amd64
+ARG SPARK_TUNNEL_SHA256=e57b3293f8c4dcb2a55e0a5fbd44e040e87b6b55be7b99222c287248e422d6b7
+
+RUN test "$TARGETARCH" = "amd64" \
+    || { echo "SparkTunnel 0.2.0 is pinned to the official Linux amd64 build" >&2; exit 1; } \
+    && apk add --no-cache ca-certificates curl \
+    && test -n "$SPARK_TUNNEL_SHA256" \
+    && curl --fail --silent --show-error --location \
+        --proto '=https' --tlsv1.2 \
+        "$SPARK_TUNNEL_DOWNLOAD_URL" \
+        --output /spark-tunnel \
+    && echo "$SPARK_TUNNEL_SHA256  /spark-tunnel" | sha256sum -c - \
+    && chmod 0555 /spark-tunnel
+
+FROM alpine:3.22
+
+LABEL org.opencontainers.image.title="Remotex SparkTunnel connector" \
+      org.opencontainers.image.version="0.2.0" \
+      org.opencontainers.image.source="https://webhost.photonspark.com"
+
+RUN apk add --no-cache ca-certificates
+
+COPY --from=downloader /spark-tunnel /usr/local/bin/spark-tunnel
+COPY deploy/sparktunnel-entrypoint.sh /usr/local/bin/sparktunnel-entrypoint
+
+RUN chmod 0555 /usr/local/bin/spark-tunnel \
+    /usr/local/bin/sparktunnel-entrypoint
+
+USER 65532:65532
+
+ENTRYPOINT ["/usr/local/bin/sparktunnel-entrypoint"]

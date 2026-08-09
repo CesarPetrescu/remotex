@@ -17,7 +17,7 @@ sibling module:
   * ``hub.py``       — in-memory routing maps
   * ``auth.py``      — bearer token middleware
   * ``limits.py``    — transfer size ceilings (HTTP body + WS frame)
-  * ``models.py``    — fallback model list served at /api/models
+  * ``models.py``    — hostless default sentinel served at /api/models
   * ``logging.py``   — JSON formatter + audit() helper
   * ``middleware/``  — rate limit middleware
   * ``handlers/``    — REST + WS handlers

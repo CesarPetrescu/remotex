@@ -192,6 +192,9 @@ final class RemotexViewModel: ObservableObject {
         switch frame.string("type") {
         case "attached":
             status = .connected
+            if frame["turn_in_flight"] != nil {
+                pending = frame.bool("turn_in_flight")
+            }
         case "pending-prompts":
             applyPendingPrompts(frame)
         case "approval-resolved":

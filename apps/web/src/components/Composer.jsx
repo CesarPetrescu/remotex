@@ -56,6 +56,7 @@ export function Composer({
   onPermissionsChange,
   onSend,
   onStop,
+  onSteer,
   onAttachImage,
   onRemoveImage,
   onSlashCommand,
@@ -63,8 +64,12 @@ export function Composer({
   const [text, setText] = useState('');
   const [slashIdx, setSlashIdx] = useState(0);
   const fileInputRef = useRef(null);
-  const enabled = connected && !pending;
-  const canSend = enabled && (text.trim().length > 0 || pendingImages.length > 0);
+  // While a turn runs you can still type: the message is steered into the
+  // running turn (codex turn/steer) instead of interrupting and retyping.
+  const enabled = connected;
+  const hasContent = text.trim().length > 0 || pendingImages.length > 0;
+  const canSend = enabled && hasContent && !pending;
+  const canSteer = enabled && hasContent && pending && Boolean(onSteer);
   const goalMode = isGoalCommand(text);
   // Plan + goal are mutually exclusive in the UI: while you're composing a
   // /goal command the plan chip never reads "on" (the chips already
@@ -107,6 +112,11 @@ export function Composer({
         onSlashCommand?.(cmd, args);
         return;
       }
+    }
+    if (canSteer) {
+      onSteer(text);
+      setText('');
+      return;
     }
     if (!canSend) return;
     onSend(text);
@@ -252,7 +262,7 @@ export function Composer({
         <textarea
           className="prompt"
           rows={1}
-          placeholder={pending ? '' : 'ask codex'}
+          placeholder={pending ? 'steer this turn' : 'ask codex'}
           value={text}
           onChange={(e) => enabled && setText(e.target.value)}
           onKeyDown={onKeyDown}
@@ -261,7 +271,9 @@ export function Composer({
         <SendOrStopButton
           pending={pending}
           canSend={canSend}
+          canSteer={canSteer}
           onSend={submit}
+          onSteer={submit}
           onStop={onStop}
         />
       </div>

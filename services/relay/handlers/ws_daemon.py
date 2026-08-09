@@ -25,6 +25,45 @@ from ..store import Store
 log = logging.getLogger("relay.ws.daemon")
 
 
+async def _broadcast_interrupted_turn(
+    hub: Hub,
+    host_id: str,
+    session_id: str,
+) -> None:
+    """Tell one session that a daemon handoff destroyed its Codex turn."""
+    await hub.broadcast_to_session(session_id, {
+        "type": "session-event",
+        "session_id": session_id,
+        "event": {
+            "kind": "turn-completed",
+            "data": {
+                "status": "failed",
+                "error": (
+                    "Host daemon connection was interrupted; the active "
+                    "turn stopped. Retry when the host is online."
+                ),
+            },
+        },
+    })
+    audit(
+        "turn.aborted.daemon_disconnect",
+        session_id=session_id,
+        host_id=host_id,
+    )
+
+
+async def _broadcast_interrupted_turns(
+    hub: Hub,
+    host_id: str,
+    session_ids: list[str],
+) -> None:
+    """Fan interrupted-turn completions out concurrently across sessions."""
+    await asyncio.gather(*(
+        _broadcast_interrupted_turn(hub, host_id, session_id)
+        for session_id in session_ids
+    ))
+
+
 async def _owns_session(hub: Hub, store: Store, host_id: str, session_id: str) -> bool:
     """Is this session really served by the daemon that just sent a frame?
 
@@ -78,11 +117,24 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             hello.get("home_dir", "") or "",
             hello.get("default_cwd", "") or "",
         )
-        await store.mark_host(host_id, True)
-        old_ws = await hub.attach_daemon(host_id, ws)
+        # Install this socket as current but keep it unavailable to REST and
+        # client forwarding until its welcome and cached session-open frames
+        # are queued in order.
+        old_ws = await hub.attach_daemon(host_id, ws, ready=False)
         if old_ws is not None and not old_ws.closed:
             await old_ws.close(code=4000, message=b"daemon-replaced")
+        interrupted = await hub.abort_host_turns(host_id)
         await ws.send_json({"type": "welcome", "host_id": host_id})
+        for open_frame in await hub.session_open_frames_for_host(host_id):
+            await ws.send_json(open_frame)
+        # Keep the new socket gated until clients have observed the old turn
+        # ending. Across sessions these sends run concurrently, so slow peers
+        # consume one timeout window rather than one window per session.
+        await _broadcast_interrupted_turns(hub, host_id, interrupted)
+        if not await hub.mark_daemon_ready(host_id, ws):
+            await ws.close(code=4000, message=b"daemon-replaced")
+            return ws
+        await store.mark_host(host_id, True)
         log.info("daemon online", extra={
             "host_id": host_id,
             "hostname": hello.get("hostname"),
@@ -90,10 +142,13 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
         })
         audit("daemon.connected", host_id=host_id,
               hostname=hello.get("hostname"), platform=hello.get("platform"))
-        for open_frame in await hub.session_open_frames_for_host(host_id):
-            await ws.send_json(open_frame)
-
         async for msg in ws:
+            # attach_daemon installs a replacement before closing this socket.
+            # aiohttp can still yield a TEXT frame that was already queued on
+            # the displaced connection, so socket identity—not just the bridge
+            # key's host—is the authority for every frame in this loop.
+            if hub.daemon_for(host_id, include_unready=True) is not ws:
+                break
             if msg.type == WSMsgType.ERROR:
                 # Usually an oversize frame (a file read past
                 # WS_MAX_MSG_SIZE). aiohttp closes the socket before we see
@@ -123,6 +178,11 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                     audit("daemon.session.foreign",
                           host_id=host_id, session_id=sid, frame_type=ftype)
                     continue
+                # _owns_session may consult Postgres. A replacement can win
+                # while that await is in flight; do not let the old socket
+                # mutate turn/prompt/replay state after the handoff.
+                if hub.daemon_for(host_id, include_unready=True) is not ws:
+                    break
                 # Track turn lifecycle + per-session activity so the
                 # client-grace loop knows whether a session is idle or
                 # actively producing output. Any daemon frame counts as
@@ -146,6 +206,33 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                         call_id = data.get("call_id")
                         if call_id:
                             await hub.note_user_input_request(sid, call_id, data)
+                    elif kind in ("approval-resolved", "user-input-resolved"):
+                        # Codex resolved its own request (auto-approval rule,
+                        # aborted turn). Drop it from the pending map and tell
+                        # every attached client to close the dialog, reusing
+                        # the frames they already handle for the case where
+                        # one client answers for everyone.
+                        data = event.get("data") or {}
+                        if kind == "approval-resolved":
+                            approval_id = data.get("approval_id")
+                            if approval_id:
+                                await hub.invalidate_approval(sid, approval_id)
+                                await hub.broadcast_to_session(sid, {
+                                    "type": "approval-resolved",
+                                    "session_id": sid,
+                                    "approval_id": approval_id,
+                                    "resolved_by": data.get("resolved_by") or "codex",
+                                })
+                        else:
+                            call_id = data.get("call_id")
+                            if call_id:
+                                await hub.invalidate_user_input(sid, call_id)
+                                await hub.broadcast_to_session(sid, {
+                                    "type": "user-input-resolved",
+                                    "session_id": sid,
+                                    "call_id": call_id,
+                                    "resolved_by": data.get("resolved_by") or "codex",
+                                })
                 elif ftype == "session-closed":
                     hub.mark_turn_completed(sid)
                     await hub.clear_session_prompts(sid)
@@ -225,6 +312,11 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
         if host_id:
             detached = await hub.detach_daemon(host_id, ws)
             if detached:
+                # DaemonClient closes every Codex adapter when this socket
+                # dies. Keep the resumable session, but end the unrecoverable
+                # active turn and invalidate prompts owned by that process.
+                interrupted = await hub.abort_host_turns(host_id)
+                await _broadcast_interrupted_turns(hub, host_id, interrupted)
                 await store.mark_host(host_id, False)
                 hub.host_telemetry.pop(host_id, None)
                 hub.host_telemetry_log.pop(host_id, None)

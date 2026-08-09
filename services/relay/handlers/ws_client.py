@@ -226,6 +226,10 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
             "host_id": host_id,
             "client_id": client_id,
             "peer_count": peer_count,
+            "replay_from": last_seq,
+            # A reconnect cursor may already be past turn-started, so clients
+            # cannot reconstruct this bit from replay alone.
+            "turn_in_flight": bool(hub.turn_in_flight.get(session_id, False)),
         })
         await ws.send_json(await hub.pending_prompt_snapshot(session_id))
         gap = await hub.replay_gap(session_id, last_seq)
@@ -310,6 +314,45 @@ async def ws_client(request: web.Request) -> web.WebSocketResponse:
                 explicit_close = True
                 await ws.close(code=1000, message=b"session closed")
                 break
+            if frame.get("type") == "turn-steer":
+                # Steering is only meaningful *during* a turn, so it must
+                # skip try_begin_turn() — that guard exists to reject a
+                # second concurrent turn and would block every steer.
+                if not hub.turn_in_flight.get(session_id, False):
+                    await ws.send_json({
+                        "type": "error",
+                        "error": "no turn is running to steer",
+                    })
+                    continue
+                frame["client_id"] = client_id
+                frame["client_message_id"] = (
+                    frame.get("client_message_id")
+                    or f"msg_{uuid.uuid4().hex[:12]}"
+                )
+                images = frame.get("images")
+                # Echo it like a user message so every attached client sees
+                # what was steered in, same as turn-start does.
+                await hub.broadcast_to_session(session_id, {
+                    "type": "session-event",
+                    "session_id": session_id,
+                    "event": {
+                        "kind": "item-started",
+                        "data": {
+                            "item_id": frame["client_message_id"],
+                            "item_type": "user_message",
+                            "text": frame.get("input") or "",
+                            "image_count": len(images) if isinstance(images, list) else 0,
+                            "source_client_id": client_id,
+                            "steered": True,
+                        },
+                    },
+                })
+                audit(
+                    "turn.steered",
+                    session_id=session_id,
+                    host_id=host_id,
+                    client_id=client_id,
+                )
             if frame.get("type") == "turn-start":
                 if not await hub.try_begin_turn(session_id):
                     await ws.send_json({

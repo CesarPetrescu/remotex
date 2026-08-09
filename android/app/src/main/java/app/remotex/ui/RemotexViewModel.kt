@@ -54,6 +54,28 @@ enum class Screen { Hosts, Threads, Files, Session }
 
 enum class Status { Idle, Opening, Connecting, Connected, Disconnected, Error }
 
+internal fun attachedTurnInFlight(msg: JsonObject): Boolean? =
+    msg["turn_in_flight"]
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.toBooleanStrictOrNull()
+
+internal fun prepareSessionReplayCursor(
+    cursors: MutableMap<String, Long>,
+    sessionId: String,
+    replayFromStart: Boolean,
+): Long {
+    if (replayFromStart) cursors[sessionId] = 0L
+    return cursors[sessionId] ?: 0L
+}
+
+internal fun attachedStatus(msg: JsonObject): Status =
+    if ((msg["replay_from"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L) > 0L) {
+        Status.Connected
+    } else {
+        Status.Connecting
+    }
+
 data class SessionInfo(
     val sessionId: String,
     val hostId: String,
@@ -198,9 +220,14 @@ fun formatBytes(n: Long): String = when {
 }
 
 /**
- * Visible models from `codex 0.122.0` model/list, with the exact
- * supported reasoning efforts per model so the effort picker can
- * filter itself. Keep in sync with codex upgrades.
+ * One entry in the model picker. Filled from the selected host's codex via
+ * `GET /api/hosts/{id}/models` (→ codex `model/list`), which reports the
+ * models that host offers and the reasoning efforts each one supports.
+ *
+ * No model names are hardcoded in this client. A shipped list goes stale
+ * silently — this file used to name `gpt-5.5` as "newest frontier" while
+ * hosts served `gpt-5.6-*`, and its effort list had no `max`/`ultra`, so
+ * those were unselectable. See Issues.md I-002.
  */
 data class ModelOption(
     val id: String,
@@ -209,14 +236,13 @@ data class ModelOption(
     val efforts: List<String>,
 )
 
+/**
+ * The only option we can offer before a host answers: id "" means "send no
+ * model override", so codex picks its own default. Replaced by the host's
+ * real list as soon as [RemotexViewModel] fetches it.
+ */
 val MODEL_OPTIONS = listOf(
     ModelOption("", "default", "codex picks", ALL_EFFORTS),
-    ModelOption("gpt-5.5", "gpt-5.5", "newest frontier",
-        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
-    ModelOption("gpt-5.4", "gpt-5.4", "frontier",
-        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
-    ModelOption("gpt-5.3-codex-spark", "gpt-5.3 · codex spark", "ultra-fast coding",
-        listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")),
 )
 
 /** Effort list the UI should show given the currently-picked model. */
@@ -397,7 +423,7 @@ class RemotexViewModel(
     }
 
     init {
-        // No host picked yet, so this can only reach the relay's static
+        // No host picked yet, so this can only reach the hostless default
         // list; selecting a host re-asks that host (see [refreshModelOptions]).
         refreshModelOptions(null)
         observePendingForNotifications()
@@ -406,13 +432,15 @@ class RemotexViewModel(
 
     /**
      * Model list, most-specific source first (contract B): what the selected
-     * host's codex actually offers → the relay's static /api/models →
+     * host's codex actually offers → the hostless /api/models response →
      * the embedded MODEL_OPTIONS already sitting in state. Every failure is
      * silent; the picker is never left empty.
      */
     private fun refreshModelOptions(hostId: String?) {
-        if (hostId != null && hostId == modelOptionsHostId) return
         modelFetchJob?.cancel()
+        // Even a cached-host selection must cancel the previous host's slow
+        // request, otherwise B can overwrite the picker after switching B→A.
+        if (hostId != null && hostId == modelOptionsHostId) return
         modelFetchJob = viewModelScope.launch {
             if (hostId != null) {
                 try {
@@ -990,11 +1018,14 @@ class RemotexViewModel(
                     status = Status.Connecting,
                 )
             }
-            attachSocket(sid)
+            // State above deliberately cleared the transcript. A reused live
+            // session id must therefore replay from zero; transport-only
+            // reconnects keep their cursor in attachSocket's default path.
+            attachSocket(sid, replayFromStart = true)
         }
     }
 
-    private fun attachSocket(sid: String) {
+    private fun attachSocket(sid: String, replayFromStart: Boolean = false) {
         socket?.close()
         socketJob?.cancel()
         val sock = SessionSocket(
@@ -1002,7 +1033,7 @@ class RemotexViewModel(
             _state.value.userToken,
             sid,
             clientId = clientId,
-            lastSeq = lastSeqBySession[sid] ?: 0L,
+            lastSeq = prepareSessionReplayCursor(lastSeqBySession, sid, replayFromStart),
         )
         socket = sock
         socketJob = viewModelScope.launch {
@@ -1025,7 +1056,6 @@ class RemotexViewModel(
         _state.update {
             it.copy(
                 status = Status.Disconnected,
-                pending = false,
                 error = "reconnecting… ($reason)",
             )
         }
@@ -1142,6 +1172,43 @@ class RemotexViewModel(
         }
     }
 
+    /**
+     * Send a message into the turn that's already running (codex
+     * `turn/steer`) instead of interrupting and retyping. The relay rejects
+     * the frame when no turn is in flight, and echoes it to every attached
+     * client — so we don't append it locally.
+     */
+    fun steerTurn(text: String) {
+        val input = text.trim()
+        val attachments = _state.value.pendingImages
+        if (input.isEmpty() && attachments.isEmpty()) return
+        if (!_state.value.pending) return
+        val sock = socket ?: return
+        val frame = Json.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject {
+                put("type", "turn-steer")
+                put("input", input)
+                put("client_message_id", "msg-${UUID.randomUUID().toString().take(8)}")
+                if (attachments.isNotEmpty()) {
+                    put("images", buildJsonArray {
+                        attachments.forEach { img ->
+                            addJsonObject {
+                                put("mime", img.mime)
+                                put("data", img.base64)
+                            }
+                        }
+                    })
+                }
+            },
+        )
+        if (!sock.sendJson(frame)) {
+            _state.update { it.copy(error = "socket is not connected") }
+            return
+        }
+        _state.update { it.copy(pendingImages = emptyList()) }
+    }
+
     /** Called from the UI when the user picks an image. Handles reading +
      *  base64-encoding off the main thread. */
     fun attachImage(uri: Uri) {
@@ -1247,7 +1314,16 @@ class RemotexViewModel(
         when (msg.string("type")) {
             "attached" -> {
                 reconnectAttempt = 0
-                _state.update { it.copy(status = Status.Connecting, error = null) }
+                val turnInFlight = attachedTurnInFlight(msg)
+                _state.update {
+                    it.copy(
+                        status = attachedStatus(msg),
+                        error = null,
+                        // Older relays omit the field; preserve local state
+                        // until a turn event supplies an authoritative value.
+                        pending = turnInFlight ?: it.pending,
+                    )
+                }
             }
             "approval-resolved" -> {
                 // Answered here or by a peer client — either way this prompt
@@ -1411,6 +1487,33 @@ class RemotexViewModel(
                             else -> e
                         }
                     })
+                }
+            }
+
+            "item-patch" -> {
+                // Progressive file-edit update: codex resends the whole patch
+                // each time, so this replaces the diff instead of appending.
+                val itemId = data.string("item_id") ?: return
+                val output = data.string("output") ?: ""
+                val command = data.obj("args")?.string("command") ?: ""
+                _state.update { s ->
+                    s.copy(events = s.events.map { e ->
+                        if (e.id != itemId || e !is UiEvent.Tool) {
+                            e
+                        } else {
+                            e.copy(
+                                output = output,
+                                command = command.ifEmpty { e.command },
+                            )
+                        }
+                    })
+                }
+            }
+
+            "steer-failed" -> {
+                // The turn is still running; surface the error without ending it.
+                _state.update {
+                    it.copy(error = data.string("error") ?: "could not steer this turn")
                 }
             }
 
@@ -1690,8 +1793,21 @@ private fun buildUiEvent(
         imageCount = data["image_count"]?.jsonPrimitive?.contentOrNull
             ?.toIntOrNull() ?: 0,
     )
-    else -> UiEvent.System(id = itemId, label = itemType, detail = "")
+    // Codex has item types we don't render specially — contextCompaction,
+    // webSearch, plan, sleep, subAgentActivity, enteredReviewMode… Show a
+    // readable name instead of a raw camelCase identifier.
+    else -> UiEvent.System(id = itemId, label = humanizeItemType(itemType), detail = "")
 }
+
+/** "contextCompaction" / "file_change" → "context compaction" / "file change". */
+internal fun humanizeItemType(type: String): String =
+    if (type.isEmpty()) {
+        "item"
+    } else {
+        type.replace(Regex("([a-z0-9])([A-Z])"), "$1 $2")
+            .replace('_', ' ')
+            .lowercase()
+    }
 
 private fun formatCollabTool(tool: String?): String =
     when (tool) {

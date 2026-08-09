@@ -18,6 +18,7 @@ export function SessionScreen({
   state,
   onSend,
   onStop,
+  onSteer,
   onModelChange,
   onEffortChange,
   onPermissionsChange,
@@ -122,6 +123,7 @@ export function SessionScreen({
         onPermissionsChange={onPermissionsChange}
         onSend={onSend}
         onStop={onStop}
+        onSteer={onSteer}
         onAttachImage={onAttachImage}
         onRemoveImage={onRemoveImage}
         onSlashCommand={workspaceApi?.sendSlash}
