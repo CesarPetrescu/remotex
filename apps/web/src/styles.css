@@ -1188,17 +1188,117 @@ main.screen-host {
   z-index: 1000;
 }
 .dd-item {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   width: 100%;
   text-align: left;
   background: transparent;
   border: none;
   padding: 8px 10px;
+  cursor: pointer;
 }
-.dd-item + .dd-item { border-top: 1px solid var(--line); }
+/* Hairlines rather than the full --line grid: 8 stacked full-strength rules
+   read as a table, not a menu. */
+.dd-item + .dd-item {
+  border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+}
+.dd-item:hover,
+.dd-item:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: none;
+}
+.dd-item.selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.dd-item.selected .dd-line { color: var(--amber); }
+/* Fixed-width gutter so labels align whether or not a row is ticked. */
+.dd-check {
+  flex: 0 0 auto;
+  width: 11px;
+  color: var(--amber);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.dd-item-main { min-width: 0; flex: 1 1 auto; }
 .dd-line { color: var(--ink); font-size: 13px; font-family: var(--mono); }
 .dd-line.danger { color: var(--warn); }
 .dd-hint { color: var(--ink-dim); font-size: 11px; font-family: var(--mono); }
+
+/* Says what you are choosing — three chips open three near-identical lists. */
+.dd-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.dd-close { display: none; }
+.dd-scrim { display: none; }
+
+/* The portal is a <body> child, so the dashboard's global square-off does not
+   reach it — these corners survive. */
+.dd-portal {
+  border-radius: 10px;
+  box-shadow: var(--shadow-2);
+  border-color: var(--line-strong);
+}
+
+/* Phones: dock it to the bottom as a sheet. Anchoring a 168px menu to a chip
+   in a horizontally-scrolling row is unusable at thumb size. The inline
+   coords from JS are the desktop anchor, hence !important here. */
+@media (max-width: 640px) {
+  .dd-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--scrim);
+    z-index: 999;
+  }
+  .dd.dd-portal {
+    left: 0 !important;
+    right: 0 !important;
+    width: auto !important;
+    top: auto !important;
+    bottom: 0 !important;
+    z-index: 1000;
+    max-height: min(72dvh, 560px);
+    border-radius: 14px 14px 0 0;
+    border-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .dd-portal .dd-item {
+    align-items: center;
+    min-height: 46px;
+    padding: 12px 16px;
+  }
+  .dd-portal .dd-line { font-size: 15px; }
+  .dd-portal .dd-hint { font-size: 12px; }
+  .dd-portal .dd-check { width: 14px; font-size: 13px; }
+  .dd-head { padding: 12px 16px; font-size: 11px; }
+  .dd-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin: -6px -6px -6px 0;
+    background: transparent;
+    border: 0;
+    color: var(--ink-dim);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+  }
+}
 
 .plan-hint {
   color: var(--amber);

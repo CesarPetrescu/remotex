@@ -20,6 +20,7 @@ export function ModelPicker({ value, onChange, models }) {
       renderItem={(opt) => (
         <div className="dd-line" title={opt.hint || ''}>{opt.label}</div>
       )}
+      selectedId={current.id}
       onPick={(opt) => onChange(opt.id)}
     />
   );
@@ -34,6 +35,7 @@ export function EffortPicker({ model, value, onChange, models }) {
       value={display || 'default'}
       items={options.map((e) => ({ id: e, label: e || 'default' }))}
       renderItem={(opt) => <div className="dd-line">{opt.label}</div>}
+      selectedId={display}
       onPick={(opt) => onChange(opt.id)}
     />
   );
@@ -54,6 +56,7 @@ export function PermissionsPicker({ value, onChange }) {
           <div className="dd-hint">{opt.hint}</div>
         </div>
       )}
+      selectedId={current.id}
       onPick={(opt) => onChange(opt.id)}
     />
   );
@@ -61,7 +64,9 @@ export function PermissionsPicker({ value, onChange }) {
 
 // --- internal primitive ---
 
-function ChipDropdown({ label, value, chipClass = '', items, renderItem, onPick }) {
+function ChipDropdown({
+  label, value, chipClass = '', items, renderItem, onPick, selectedId,
+}) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const ref = useRef(null);
@@ -81,11 +86,16 @@ function ChipDropdown({ label, value, chipClass = '', items, renderItem, onPick 
       if (e.target === menuRef.current) return;
       setOpen(false);
     }
+    function onKey(e) {
+      if (e.key === 'Escape') setOpen(false);
+    }
     document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
     window.addEventListener('resize', onReflow);
     window.addEventListener('scroll', onReflow, true);
     return () => {
       document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', onReflow);
       window.removeEventListener('scroll', onReflow, true);
     };
@@ -104,31 +114,64 @@ function ChipDropdown({ label, value, chipClass = '', items, renderItem, onPick 
 
   return (
     <div ref={ref} className={`chip ${chipClass}`}>
-      <button type="button" className="chip-button" onClick={toggle}>
+      <button
+        type="button"
+        className="chip-button"
+        onClick={toggle}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
         <span className="chip-label">{label}</span>
         <span className="chip-value">{value}</span>
       </button>
       {open && pos
         && createPortal(
-          <div
-            ref={menuRef}
-            className="dd dd-portal"
-            style={{ left: pos.left, width: pos.width, bottom: pos.bottom }}
-          >
-            {items.map((it, i) => (
-              <button
-                key={i}
-                type="button"
-                className="dd-item"
-                onClick={() => {
-                  onPick(it);
-                  setOpen(false);
-                }}
-              >
-                {renderItem(it)}
-              </button>
-            ))}
-          </div>,
+          <>
+            {/* Phone-only: the menu becomes a bottom sheet, so it needs a
+                scrim to read as modal and to catch taps outside it. Hidden
+                on desktop, where the mousedown listener already suffices. */}
+            <div className="dd-scrim" onClick={() => setOpen(false)} aria-hidden="true" />
+            <div
+              ref={menuRef}
+              className="dd dd-portal"
+              role="listbox"
+              aria-label={label}
+              /* Inline coords are the desktop anchor; the phone media query
+                 overrides them with !important to dock this to the bottom. */
+              style={{ left: pos.left, width: pos.width, bottom: pos.bottom }}
+            >
+              <div className="dd-head">
+                <span className="dd-head-label">{label}</span>
+                <button
+                  type="button"
+                  className="dd-close"
+                  onClick={() => setOpen(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              {items.map((it, i) => {
+                const active = selectedId !== undefined && it.id === selectedId;
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    className={`dd-item${active ? ' selected' : ''}`}
+                    onClick={() => {
+                      onPick(it);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="dd-check" aria-hidden="true">{active ? '✓' : ''}</span>
+                    <span className="dd-item-main">{renderItem(it)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </>,
           document.body,
         )}
     </div>
