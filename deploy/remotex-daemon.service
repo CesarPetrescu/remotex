@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=@@WORKING_DIR@@
-Environment=PATH=@@VENV_BIN@@:/usr/local/bin:/usr/bin:/bin
+Environment="PATH=@@SERVICE_PATH@@"
 ExecStart=@@VENV_BIN@@/python3 -m daemon run --config @@CONFIG_PATH@@
 Restart=on-failure
 RestartSec=3

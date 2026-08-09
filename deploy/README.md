@@ -313,6 +313,16 @@ journalctl --user -u remotex-daemon -f
 deploy/install-daemon.sh --uninstall
 ```
 
+Leave `codex_binary` at its default, `codex`, unless you intentionally want to
+pin a custom executable. The generated unit searches the service account's
+`~/.local/bin` (the official standalone installer), normal system locations,
+and the directory of the `codex` command selected when the daemon installer
+runs. That last entry supports npm under nvm or a custom global prefix and also
+keeps its adjacent `node` executable reachable. Re-run this installer after
+switching nvm versions or moving an npm prefix. With `--system --run-as-user`,
+pass an absolute `--codex-binary` for nonstandard locations because the root
+installer cannot reliably reconstruct another user's shell environment.
+
 The uninstall operation removes the service but deliberately keeps the config
 and virtual environment. To keep a user daemon alive after logout:
 

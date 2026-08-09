@@ -97,6 +97,7 @@ if [[ ${SYSTEM} -eq 1 ]]; then
   UNIT_DIR="/etc/systemd/system"
   UNIT_PATH="${UNIT_DIR}/remotex-daemon.service"
 else
+  RUN_AS_HOME="${HOME}"
   VENV_DIR="${HOME}/.local/share/remotex/venv"
   CONFIG_DIR="${HOME}/.remotex"
   CONFIG_PATH="${CONFIG_DIR}/config.toml"
@@ -227,11 +228,51 @@ else
   fi
 fi
 
+CODEX_COMMAND="$("${VENV_DIR}/bin/python3" -c '
+import shlex
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as fh:
+    value = tomllib.load(fh).get("daemon", {}).get("codex_binary", "codex")
+parts = shlex.split(value)
+print(parts[0] if parts else "codex")
+' "${CONFIG_PATH}")"
+
+# A global npm/nvm install can put both the codex shim and its node binary
+# outside systemd's default PATH. Preserve the directory selected by the
+# invoking user's shell, but never dereference Codex's stable symlink.
+DETECTED_CODEX=""
+if [[ "${CODEX_COMMAND}" == /* ]]; then
+  DETECTED_CODEX="${CODEX_COMMAND}"
+elif [[ ${SYSTEM} -eq 0 || "${RUN_AS_USER}" == "$(id -un)" ]]; then
+  DETECTED_CODEX="$(type -P -- "${CODEX_COMMAND}" || true)"
+fi
+
+SERVICE_PATH=""
+append_service_path() {
+  local directory="$1"
+  [[ -n "${directory}" ]] || return
+  case ":${SERVICE_PATH}:" in
+    *":${directory}:"*) ;;
+    *) SERVICE_PATH="${SERVICE_PATH:+${SERVICE_PATH}:}${directory}" ;;
+  esac
+}
+append_service_path "${VENV_DIR}/bin"
+if [[ -n "${DETECTED_CODEX}" ]]; then
+  append_service_path "$(dirname "${DETECTED_CODEX}")"
+fi
+append_service_path "${RUN_AS_HOME}/.local/bin"
+append_service_path "/usr/local/bin"
+append_service_path "/usr/bin"
+append_service_path "/bin"
+
 info "rendering systemd unit to ${UNIT_PATH}"
 mkdir -p "${UNIT_DIR}"
 RENDERED="$(sed \
   -e "s|@@WORKING_DIR@@|${SERVICES_DIR}|g" \
   -e "s|@@VENV_BIN@@|${VENV_DIR}/bin|g" \
+  -e "s|@@SERVICE_PATH@@|${SERVICE_PATH}|g" \
   -e "s|@@CONFIG_PATH@@|${CONFIG_PATH}|g" \
   "${UNIT_TEMPLATE}")"
 if [[ ${SYSTEM} -eq 1 ]]; then
@@ -247,8 +288,9 @@ systemctl ${SYSTEMCTL_SCOPE} daemon-reload
 if [[ ${NO_ENABLE} -eq 1 ]]; then
   info "skipping enable/start (--no-enable)"
 else
-  info "enabling and starting remotex-daemon.service"
-  systemctl ${SYSTEMCTL_SCOPE} enable --now remotex-daemon.service
+  info "enabling and restarting remotex-daemon.service"
+  systemctl ${SYSTEMCTL_SCOPE} enable remotex-daemon.service
+  systemctl ${SYSTEMCTL_SCOPE} restart remotex-daemon.service
 fi
 
 echo

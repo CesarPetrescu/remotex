@@ -32,6 +32,42 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — fix Codex resolution across standalone and npm installs
+**Agent:** Codex (root integrator) · **Branch:** `main` · **Status:** done
+
+- **Why:** the live daemon config pinned the removed `/usr/bin/codex`, while
+  Codex 0.147.0 now runs from the official standalone installer under the
+  service account's `~/.local/bin`.
+- **Changed:** restored this machine's private `codex_binary` to the portable
+  `codex` default; the installer now builds the unit `PATH` from the selected
+  Codex shim directory, `~/.local/bin`, and system locations without resolving
+  stable symlinks. Installer reruns now restart an existing daemon so unit
+  changes take effect. Documented npm/nvm and system-service behavior.
+- **Verified:** `bash -n`, `systemd-analyze --user verify`, Ruff, 148 service
+  tests, and 59 web tests pass. Reinstalled/restarted the user service, received
+  host-derived models and live threads through the admin app-server, and
+  received `session-started` from a fresh normal Codex session. The service is
+  active and attached; private files remain mode `600`, and no private value
+  entered the tracked worktree or Git history.
+- **Restart needed:** no — the live daemon was reinstalled and restarted.
+
+## 2026-08-09 — audit Codex executable resolution after install-method change
+**Agent:** Codex (`codex_path_code_audit`) · **Branch:** `main` · **Status:** done
+
+- **Why:** the live daemon still targeted `/usr/bin/codex` after Codex moved
+  from a system/npm install to the official standalone user install.
+- **Changed:** no implementation files; this was a read-only root-cause audit.
+- **Verified:** Codex 0.147.0 is now `/root/.local/bin/codex` (a managed
+  standalone symlink), `/usr/bin/codex` is absent, the installed unit omits
+  `/root/.local/bin` from `PATH`, and the journal records `FileNotFoundError`
+  from both admin calls. Reproduced exit 127 with the current unit `PATH` and
+  success after adding `/root/.local/bin`.
+- **Left open:** change the unit template/installer to include the service
+  account's `~/.local/bin`, reset this machine's `codex_binary` to the existing
+  PATH-based default `codex`, then smoke both admin and session spawns.
+- **Restart needed:** none for this audit; the proposed fix needs daemon
+  installer rerun/unit reload and daemon restart.
+
 ## 2026-08-09 — deploy the private relay and verify its public boundary
 **Agent:** Codex (root integrator) · **Branch:** `main` · **Status:** done
 
