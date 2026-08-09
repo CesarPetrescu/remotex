@@ -32,6 +32,22 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — post-deploy GitHub and dependency triage
+**Agent:** Codex · **Branch:** main · **Status:** done
+
+- **Why:** the push reported nine Dependabot alerts, including four marked
+  high, so release readiness needed a runtime-impact check rather than
+  dismissing the banner.
+- **Verified:** GitHub has no open repository issues. The last completed CI
+  before the concurrent web follow-up was green; the newer follow-up CI was
+  still running when checked. `npm audit --omit=dev --json` reports zero
+  production dependency vulnerabilities, so the deployed Python relay/static
+  web bundle does not execute an affected Node package.
+- **Left open:** I-020 records the build/dev dependency alerts. Vite/esbuild's
+  complete fix is a semver-major Vite upgrade and should be handled as a
+  focused change.
+- **Restart needed:** none.
+
 ## 2026-08-09 — header popover z-index + jump-to-latest pill
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** fixed, verified in a real browser; NOT deployed
 

@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-020**.
+  never reuse. Next free ID: **I-021**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -45,6 +45,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-017 | open | info | daemon | GPU telemetry is NVIDIA-only; Intel/AMD accelerators are not sampled |
 | I-018 | open | medium | process | `git add -A` in this shared tree commits other agents' in-flight work |
 | I-019 | open | medium | codex/upstream | Codex 0.147 `thread/delete` fails against its migrated state database |
+| I-020 | open | medium | web/tooling | Dependabot reports high-severity vulnerabilities in web build/dev dependencies |
 
 ---
 
@@ -502,3 +503,25 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 - **Next:** retest after the next Codex CLI release and close this issue when
   `thread/delete` returns `{}` and emits `thread/deleted` on the managed
   app-server daemon.
+
+### I-020 — vulnerable web build/dev dependencies
+
+- **Status:** open · **Severity:** medium · **Area:** web/tooling
+- **What:** GitHub Dependabot reports nine open npm advisories (four high,
+  four moderate, one low). A current local `npm audit` collapses them into
+  five affected packages: direct `vite`, plus transitive `esbuild`,
+  `js-yaml`, `brace-expansion`, and `@babel/core`.
+- **Production boundary:** `npm audit --omit=dev --json` reports zero
+  vulnerabilities across the seven production dependencies. The relay image
+  uses Node only in its build stage and serves static output from Python, so
+  none of these packages execute in the deployed container. The Vite/esbuild
+  advisories chiefly matter when running the development server, especially
+  if someone exposes it beyond localhost.
+- **Why deferred:** safe fixes for the transitive parser/glob packages are
+  available, but npm's complete Vite/esbuild resolution proposes Vite 8.2.1,
+  a semver-major upgrade from the repository's Vite 5 line. That deserves a
+  focused dependency update and browser/build regression pass rather than an
+  unrelated deployment-time lockfile rewrite.
+- **Evidence:** GitHub Dependabot API on 2026-08-09; local full audit reports
+  three high, one moderate, one low package groups, while the production-only
+  audit reports zero.
