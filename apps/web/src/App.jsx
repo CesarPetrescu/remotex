@@ -226,6 +226,8 @@ function AuthenticatedApp({ auth, onLogout }) {
             onSend={r.sendTurn}
             onStop={r.interruptTurn}
             onSteer={r.steerTurn}
+            onQueue={r.queueTurn}
+            onRemoveQueued={r.removeQueuedTurn}
             onLoadOlder={r.loadOlderHistory}
             onModelChange={r.setModel}
             onEffortChange={r.setEffort}

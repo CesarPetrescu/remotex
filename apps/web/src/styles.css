@@ -1207,6 +1207,51 @@ main.screen-host {
 }
 
 .prompt-row { display: flex; gap: 8px; align-items: flex-end; }
+.turn-queue {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.turn-queue-label {
+  flex: 0 0 auto;
+  padding-top: 5px;
+  color: var(--amber);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.turn-queue-items {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+  overflow-x: auto;
+}
+.turn-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  padding: 3px 4px 3px 7px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.turn-queue-item > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn-queue-item > button {
+  flex: 0 0 auto;
+  width: 22px;
+  min-height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink-dim);
+}
 .prompt { max-height: 132px; overflow-y: auto; }
 .prompt {
   flex: 1;
@@ -1236,6 +1281,8 @@ main.screen-host {
 .send-stop.send { background: var(--panel-2); border-color: var(--line); color: var(--ink-dim); }
 .send-stop.send.ready { background: var(--amber); border-color: var(--amber); color: var(--on-accent); }
 .send-stop.stop { background: var(--warn); border-color: var(--warn); color: var(--on-accent); }
+.send-stop.queue { background: var(--panel-2); border-color: var(--amber); color: var(--amber); }
+.turn-actions { display: flex; gap: 5px; }
 
 /* --- modal --- */
 

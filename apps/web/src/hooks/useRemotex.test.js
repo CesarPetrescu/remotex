@@ -42,6 +42,27 @@ describe('attached turn state', () => {
   });
 });
 
+describe('queued follow-up turns', () => {
+  it('keeps FIFO display order and removes only the requested turn', () => {
+    const first = { id: 'q1', text: 'first', imageCount: 0 };
+    const second = { id: 'q2', text: 'second', imageCount: 1 };
+    const queued = run([
+      { type: 'QUEUE_TURN', turn: first },
+      { type: 'QUEUE_TURN', turn: second },
+      { type: 'DEQUEUE_TURN', id: 'q1' },
+    ]);
+    expect(queued.queuedTurns).toEqual([second]);
+  });
+
+  it('clears queued previews with the session', () => {
+    const queued = run([
+      { type: 'QUEUE_TURN', turn: { id: 'q1', text: 'next', imageCount: 0 } },
+      { type: 'SESSION_RESET' },
+    ]);
+    expect(queued.queuedTurns).toEqual([]);
+  });
+});
+
 const approval = (id, extra = {}) => ({ approvalId: id, decisions: ['accept', 'decline'], ...extra });
 const userInput = (id, extra = {}) => ({ callId: id, questions: [], ...extra });
 

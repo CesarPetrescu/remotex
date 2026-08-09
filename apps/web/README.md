@@ -14,8 +14,11 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
 - Opens a session, attaches to `/ws/client`, and streams events:
   reasoning, tool calls, file changes, MCP tool calls, and agent messages
   with delta streaming and syntax-highlighted markdown.
-- Sends or steers turns with optional image attachments, model, reasoning
-  effort, and permission chips. The model list comes from
+- Sends, steers the active turn, or queues FIFO follow-up turns with optional
+  image attachments, model, reasoning effort, and permission chips. Queuing is
+  client-side, like the Codex TUI: exactly one normal `turn-start` is sent when
+  the active turn becomes idle, and unsent items survive WebSocket reconnects.
+  The model list comes from
   `/api/hosts/{host_id}/models` (what that host's Codex actually offers);
   if the host cannot supply it, the default entry lets Codex choose.
 - Queues approval prompts and Codex user-input dialogs — a second
@@ -126,7 +129,7 @@ apps/web/
     │   ├── SessionScreen.jsx     chat surface
     │   └── FilesScreen.jsx       standalone file browser
     ├── components/
-    │   ├── Composer.jsx          chip row + textarea + send/steer/stop
+    │   ├── Composer.jsx          chip row + textarea + queue/steer/send/stop
     │   ├── Pickers.jsx           model / effort / permission chips
     │   ├── SendOrStopButton.jsx
     │   ├── EventStream.jsx, EventRow.jsx

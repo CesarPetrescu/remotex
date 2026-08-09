@@ -32,6 +32,30 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — web follow-up queue and explicit steer controls
+**Agent:** Codex · **Branch:** main · **Status:** done, pending deploy
+
+- **Why:** the web composer could only steer a running Codex turn; users also
+  need a deliberate FIFO follow-up that starts as a separate turn afterward.
+- **Changed:** `apps/web/src/hooks/useRemotex.js` keeps queued payloads locally,
+  preserves their images and turn settings, sends exactly one `turn-start` on
+  each idle transition, retains unsent items through WebSocket reconnects, and
+  removes an item only after the relay acknowledges it with the user-message
+  echo so a concurrent-turn rejection cannot lose the prompt.
+- **Changed:** `Composer.jsx`, `SendOrStopButton.jsx`, `SessionScreen.jsx`,
+  `App.jsx`, and `styles.css` expose distinct Queue, Steer-now, and Stop actions
+  plus a removable FIFO preview that uses the existing responsive theme tokens.
+- **Changed:** `README.md` and `apps/web/README.md` document that steering is a
+  Codex RPC while queuing is intentionally client-side, matching Codex TUI.
+- **Verified:** installed Codex 0.147 schema and `/tmp/codex` source both confirm
+  `turn/steer` exists and no queue RPC exists; 84 web tests, ESLint, production
+  Vite build, 196 service tests, and `git diff --check` pass. A disposable live
+  app-server probe could not finish initialization under a temporary
+  `CODEX_HOME`; no daemon/Codex wire behavior was changed by this unit.
+- **Left open:** none.
+- **Restart needed:** relay rebuild (web assets are baked into it). The prior
+  Dark/White/High Contrast theme release is already deployed and healthy.
+
 ## 2026-08-09 — transcript typography: prose in Inter, mono for code
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** committed, verified locally, NOT deployed
 

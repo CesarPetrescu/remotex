@@ -19,6 +19,8 @@ export function SessionScreen({
   onSend,
   onStop,
   onSteer,
+  onQueue,
+  onRemoveQueued,
   onLoadOlder,
   onModelChange,
   onEffortChange,
@@ -134,12 +136,15 @@ export function SessionScreen({
         models={state.modelOptions}
         planMode={state.planMode}
         pendingImages={state.pendingImages}
+        queuedTurns={state.queuedTurns}
         onModelChange={onModelChange}
         onEffortChange={onEffortChange}
         onPermissionsChange={onPermissionsChange}
         onSend={onSend}
         onStop={onStop}
         onSteer={onSteer}
+        onQueue={onQueue}
+        onRemoveQueued={onRemoveQueued}
         onAttachImage={onAttachImage}
         onRemoveImage={onRemoveImage}
         onSlashCommand={workspaceApi?.sendSlash}

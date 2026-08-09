@@ -403,6 +403,11 @@ with `session_id` and `client_id` stamped on by the relay.
 | `approval-resolved` / `user-input-resolved` | relay -> client | Tell other peers a prompt was answered |
 | `host-telemetry` | daemon -> relay -> client | CPU / memory / GPU / network samples |
 | `threads-list-request` / `models-list-request` / `fs-*-request` | relay -> daemon | REST calls proxied to the host |
+
+The web client's follow-up queue is intentionally not a wire frame. Codex has
+no queue RPC: the browser retains FIFO items locally, then sends one ordinary
+`turn-start` after `turn-completed`. Use **Steer** to affect the running turn
+immediately, or **Queue** to start a separate turn afterward.
 | `threads-list-response` / `models-list-response` / `fs-*-response` | daemon -> relay | Correlated by `(host_id, request_id)` |
 | `session-closed` | daemon -> client | End the session |
 | `ping` / `pong` | either way | Keepalive; also marks the session active |

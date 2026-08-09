@@ -51,12 +51,15 @@ export function Composer({
   models,
   planMode,
   pendingImages,
+  queuedTurns = [],
   onModelChange,
   onEffortChange,
   onPermissionsChange,
   onSend,
   onStop,
   onSteer,
+  onQueue,
+  onRemoveQueued,
   onAttachImage,
   onRemoveImage,
   onSlashCommand,
@@ -84,6 +87,10 @@ export function Composer({
   const hasContent = text.trim().length > 0 || pendingImages.length > 0;
   const canSend = enabled && hasContent && !pending;
   const canSteer = enabled && hasContent && pending && Boolean(onSteer);
+  // Slash commands are control actions, not future user turns. Keep their
+  // existing immediate behavior instead of queuing the literal `/command`.
+  const slashOnly = pendingImages.length === 0 && text.trimStart().startsWith('/');
+  const canQueue = enabled && hasContent && pending && Boolean(onQueue) && !slashOnly;
   const goalMode = isGoalCommand(text);
   // Plan + goal are mutually exclusive in the UI: while you're composing a
   // /goal command the plan chip never reads "on" (the chips already
@@ -135,6 +142,11 @@ export function Composer({
     if (!canSend) return;
     onSend(text);
     setTextSized('');
+  }
+
+  function queue() {
+    if (!canQueue) return;
+    if (onQueue(text) !== false) setTextSized('');
   }
 
   function onKeyDown(e) {
@@ -253,6 +265,26 @@ export function Composer({
           ))}
         </div>
       )}
+      {queuedTurns.length > 0 && (
+        <div className="turn-queue" aria-live="polite">
+          <span className="turn-queue-label">next ({queuedTurns.length})</span>
+          <div className="turn-queue-items">
+            {queuedTurns.map((turn) => (
+              <div className="turn-queue-item" key={turn.id}>
+                <span title={turn.text || `${turn.imageCount} attached image(s)`}>
+                  {turn.text || `${turn.imageCount} image${turn.imageCount === 1 ? '' : 's'}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveQueued?.(turn.id)}
+                  aria-label="Remove queued turn"
+                  title="Remove queued turn"
+                >×</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="prompt-row">
         <button
           type="button"
@@ -285,8 +317,10 @@ export function Composer({
           pending={pending}
           canSend={canSend}
           canSteer={canSteer}
+          canQueue={canQueue}
           onSend={submit}
           onSteer={submit}
+          onQueue={queue}
           onStop={onStop}
         />
       </div>

@@ -299,6 +299,9 @@ export const initialState = {
   historyPrepend: false,
   pending: false,
   pendingSinceMs: 0,
+  // Follow-up turns explicitly queued by this web client. The payloads live
+  // in a ref; reducer state is only the small, renderable preview list.
+  queuedTurns: [],
   model: '',
   effort: 'medium',
   permissions: 'default',
@@ -409,6 +412,7 @@ export function reducer(state, action) {
         slashFeedback: null,
         pendingImages: [],
         pending: false,
+        queuedTurns: [],
         planMode: false,
         resuming: false,
         resumingSinceMs: 0,
@@ -510,6 +514,13 @@ export function reducer(state, action) {
           ? (state.pending ? state.pendingSinceMs : Date.now())
           : 0,
       };
+
+    case 'QUEUE_TURN':
+      return { ...state, queuedTurns: [...state.queuedTurns, action.turn] };
+    case 'DEQUEUE_TURN':
+      return { ...state, queuedTurns: state.queuedTurns.filter((turn) => turn.id !== action.id) };
+    case 'CLEAR_TURN_QUEUE':
+      return { ...state, queuedTurns: [] };
 
     case 'SHARED_TURN_RECONCILED':
       if (action.active) return { ...state, pending: true };
@@ -697,6 +708,10 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
   // echo only carries a count; the sender is the one client that can show
   // the actual pixels, so stash them until the echo arrives.
   const sentImagesRef = useRef(new Map());
+  // Codex has no queue RPC: its own TUI keeps queued follow-ups locally and
+  // sends exactly one ordinary turn/start after the active turn completes.
+  const queuedTurnsRef = useRef([]);
+  const drainQueuedTurnRef = useRef(() => false);
   const reconnectRef = useRef(null);
   const reconnectAttemptRef = useRef(0);
   const userClosedRef = useRef(false);
@@ -736,6 +751,7 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       socketRef.current = null;
     }
     promptBackupSessionRef.current = null;
+    queuedTurnsRef.current = [];
     dispatch({ type: 'SESSION_RESET', status: STATUS.Idle });
   }, []);
 
@@ -752,6 +768,7 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       sock.close();
     }
     promptBackupSessionRef.current = null;
+    queuedTurnsRef.current = [];
     dispatch({ type: 'SESSION_RESET', status });
   }, []);
 
@@ -773,6 +790,7 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       const turnInFlight = attachedTurnInFlight(frame);
       if (turnInFlight !== null) {
         dispatch({ type: 'PENDING', pending: turnInFlight });
+        if (!turnInFlight) queueMicrotask(() => drainQueuedTurnRef.current());
       }
       dispatch({
         type: 'SESSION_STATUS',
@@ -836,9 +854,17 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       dispatch({ type: 'PENDING_PROMPTS', approvals: [], userInputs: [] });
       dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
       dispatch({ type: 'PENDING', pending: false });
+      queuedTurnsRef.current = [];
+      dispatch({ type: 'CLEAR_TURN_QUEUE' });
       return;
     }
     if (frame.type === 'error') {
+      // A queued turn is removed only after the relay echoes its user item.
+      // If the relay rejected the optimistic send (usually a peer won the
+      // single-turn race), leave it queued so the next idle transition can
+      // retry it instead of silently losing the prompt.
+      const queued = queuedTurnsRef.current[0];
+      if (queued?.sending) queued.sending = false;
       dispatch({ type: 'SET_ERROR', error: frame.error || 'relay error' });
       if (frame.fatal) {
         // The relay will refuse this session id on every attempt (closed,
@@ -847,6 +873,8 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         userClosedRef.current = true;
         dispatch({ type: 'SESSION_STATUS', status: STATUS.Disconnected });
         dispatch({ type: 'PENDING', pending: false });
+        queuedTurnsRef.current = [];
+        dispatch({ type: 'CLEAR_TURN_QUEUE' });
       }
       return;
     }
@@ -892,6 +920,13 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         return;
       }
       case 'item-started': {
+        if (data.item_type === 'user_message') {
+          const queued = queuedTurnsRef.current[0];
+          if (queued?.sending && queued.clientMessageId === data.item_id) {
+            queuedTurnsRef.current.shift();
+            dispatch({ type: 'DEQUEUE_TURN', id: queued.id });
+          }
+        }
         const stamp = (ev) => {
           if (!ev) return ev;
           ev.ts = Number.isFinite(data.ts) ? data.ts : Date.now() / 1000;
@@ -976,6 +1011,9 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         dispatch({ type: 'PENDING_PROMPTS', approvals: [], userInputs: [] });
         dispatch({ type: 'PENDING', pending: false });
         if (data.error) dispatch({ type: 'SET_ERROR', error: data.error });
+        // ws_daemon releases the relay's single-turn guard before it fans this
+        // completion out, so the next FIFO item can safely start now.
+        queueMicrotask(() => drainQueuedTurnRef.current());
         return;
       case 'approval-request':
         {
@@ -1723,6 +1761,62 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     [],
   );
 
+  const queueTurn = useCallback((rawText) => {
+    const input = (rawText || '').trim();
+    const { pendingImages, model, effort, permissions } = latestInputsRef.current;
+    if (!input && pendingImages.length === 0) return false;
+    const id = `queued-${Math.random().toString(36).slice(2, 12)}`;
+    const clientMessageId = `msg-${Math.random().toString(36).slice(2, 12)}`;
+    queuedTurnsRef.current.push({
+      id,
+      input,
+      model,
+      effort,
+      permissions,
+      images: [...pendingImages],
+      clientMessageId,
+    });
+    dispatch({
+      type: 'QUEUE_TURN',
+      turn: {
+        id,
+        text: input,
+        imageCount: pendingImages.length,
+      },
+    });
+    dispatch({ type: 'CLEAR_IMAGES' });
+    return true;
+  }, []);
+
+  const removeQueuedTurn = useCallback((id) => {
+    queuedTurnsRef.current = queuedTurnsRef.current.filter((turn) => turn.id !== id);
+    dispatch({ type: 'DEQUEUE_TURN', id });
+  }, []);
+
+  // Match Codex TUI semantics: FIFO, and at most one queued message starts
+  // per idle transition. Keep an unsent item in place across a socket drop;
+  // the authoritative `attached.turn_in_flight=false` snapshot retries it.
+  drainQueuedTurnRef.current = () => {
+    const turn = queuedTurnsRef.current[0];
+    const sock = socketRef.current;
+    if (!turn || turn.sending || !sock?.isOpen?.()) return false;
+    const sent = sock.sendTurn({
+      input: turn.input,
+      model: turn.model,
+      effort: turn.effort,
+      permissions: turn.permissions,
+      images: turn.images.map((image) => ({ mime: image.mime, data: image.base64 })),
+      clientMessageId: turn.clientMessageId,
+    });
+    if (!sent) return false;
+    turn.sending = true;
+    if (turn.images.length) {
+      sentImagesRef.current.set(turn.clientMessageId, turn.images.map((image) => image.dataUrl));
+    }
+    dispatch({ type: 'PENDING', pending: true });
+    return true;
+  };
+
   // Send into the running turn instead of ending it. The relay echoes the
   // message to every attached client, so we don't append it locally.
   // Ask the daemon for the next page of older turns. Guards live here so
@@ -1850,6 +1944,7 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     }
     promptBackupSessionRef.current = null;
     dispatch({ type: 'SESSION_RESET', status: STATUS.Opening });
+    queuedTurnsRef.current = [];
     dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
     dispatch({
       type: 'SESSION_ATTACHED',
@@ -1959,6 +2054,8 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         openSession({ cwd: latestInputsRef.current.browsePath || null }),
       closeSession,
       sendTurn,
+      queueTurn,
+      removeQueuedTurn,
       sendSlash,
       interruptTurn,
       steerTurn,
@@ -1995,6 +2092,8 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       openSession,
       closeSession,
       sendTurn,
+      queueTurn,
+      removeQueuedTurn,
       sendSlash,
       interruptTurn,
       steerTurn,
