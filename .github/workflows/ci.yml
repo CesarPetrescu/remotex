@@ -222,9 +222,10 @@ jobs:
           path: android/app/build/reports/
           if-no-files-found: ignore
 
-  # iPhone build runs on expensive macos-15 minutes, so (1) gate it on
-  # paths that actually affect the build, and (2) cache DerivedData so
-  # cold runs don't re-compile unchanged Swift.
+  # macOS runners are free for public repos, but the macOS concurrency cap
+  # is 5 jobs account-wide, so (1) gate the job on
+  # paths that actually affect it, and (2) cache DerivedData so cold runs
+  # don't re-compile unchanged Swift.
   ios-changes:
     name: iPhone · detect changes
     runs-on: ubuntu-latest
@@ -241,7 +242,7 @@ jobs:
               - '.github/workflows/ci.yml'
 
   ios:
-    name: iPhone · Xcode build
+    name: iPhone · Xcode test
     runs-on: macos-15
     needs: ios-changes
     if: needs.ios-changes.outputs.touched == 'true'
@@ -257,9 +258,26 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          key: ios-deriveddata-${{ runner.os }}-${{ hashFiles('apple/Remotex.xcodeproj/project.pbxproj', 'apple/Remotex/**/*.swift', 'apple/Remotex/Info.plist', 'apple/Remotex/Assets.xcassets/**') }}
+          key: ios-deriveddata-${{ runner.os }}-${{ hashFiles('apple/Remotex.xcodeproj/project.pbxproj', 'apple/Remotex/**/*.swift', 'apple/RemotexTests/**/*.swift', 'apple/Remotex/Info.plist', 'apple/Remotex/Assets.xcassets/**') }}
           restore-keys: ios-deriveddata-${{ runner.os }}-
-      - name: Build iPhone simulator app
+      - name: Pick a simulator
+        id: sim
+        # `xcodebuild test` needs a CONCRETE destination — `generic/platform`
+        # only ever builds. Resolve whatever iPhone this runner image ships
+        # instead of pinning a model that a runner bump would remove.
+        run: |
+          set -o pipefail
+          name=$(xcrun simctl list devices available -j | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | .name | select(startswith("iPhone"))] | first // ""')
+          if [ -z "$name" ] || [ "$name" = "null" ]; then
+            echo 'no iPhone simulator available on this runner'
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Using simulator: $name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - name: Test iPhone app
+        # Builds the app + RemotexTests and runs the unit tests on the
+        # simulator. No signing needed for a simulator run.
         run: |
           set -o pipefail
           xcodebuild \
@@ -267,6 +285,14 @@ jobs:
             -scheme Remotex \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            test
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: ~/Library/Developer/Xcode/DerivedData/**/Logs/Test/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

@@ -188,7 +188,13 @@ final class RemotexViewModel: ObservableObject {
         appendSystem("Disconnected", reason)
     }
 
-    private func handle(frame: [String: Any]) {
+    /// Reduce one relay frame into published state.
+    ///
+    /// Internal rather than private so `RemotexTests` can drive it directly
+    /// with captured frames — it's the whole client-side protocol surface, and
+    /// the only part testable without a relay. Everything it calls stays
+    /// private; tests go through real frames, not internals.
+    func handle(frame: [String: Any]) {
         switch frame.string("type") {
         case "attached":
             status = .connected
@@ -255,6 +261,15 @@ final class RemotexViewModel: ObservableObject {
             let delta = data.string("delta") ?? ""
             updateItem(id: itemId) { item in
                 item.text += delta
+            }
+
+        case "item-patch":
+            // Progressive file-edit diff. Codex resends the whole patch each
+            // time, so replace the body rather than appending to it.
+            guard let itemId = data.string("item_id") else { return }
+            let output = data.string("output") ?? ""
+            updateItem(id: itemId) { item in
+                item.text = output
             }
 
         case "item-completed":

@@ -17,6 +17,7 @@
 		91A000000000000000000108 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 91A000000000000000000208 /* Assets.xcassets */; };
 		91A000000000000000000109 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A000000000000000000211 /* Keychain.swift */; };
 		91A000000000000000000110 /* PendingPromptsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A000000000000000000212 /* PendingPromptsView.swift */; };
+		91A000000000000000000121 /* FrameHandlingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A000000000000000000221 /* FrameHandlingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,10 +33,19 @@
 		91A000000000000000000210 /* Remotex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Remotex.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91A000000000000000000211 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		91A000000000000000000212 /* PendingPromptsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingPromptsView.swift; sourceTree = "<group>"; };
+		91A000000000000000000221 /* FrameHandlingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameHandlingTests.swift; sourceTree = "<group>"; };
+		91A000000000000000000222 /* RemotexTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemotexTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		91A000000000000000000301 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		91A000000000000000000302 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -49,6 +59,7 @@
 			isa = PBXGroup;
 			children = (
 				91A000000000000000000402 /* Remotex */,
+				91A000000000000000000404 /* RemotexTests */,
 				91A000000000000000000403 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -75,8 +86,17 @@
 			isa = PBXGroup;
 			children = (
 				91A000000000000000000210 /* Remotex.app */,
+				91A000000000000000000222 /* RemotexTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		91A000000000000000000404 /* RemotexTests */ = {
+			isa = PBXGroup;
+			children = (
+				91A000000000000000000221 /* FrameHandlingTests.swift */,
+			);
+			path = RemotexTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -99,6 +119,23 @@
 			productReference = 91A000000000000000000210 /* Remotex.app */;
 			productType = "com.apple.product-type.application";
 		};
+		91A000000000000000000502 /* RemotexTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 91A000000000000000000902 /* Build configuration list for PBXNativeTarget "RemotexTests" */;
+			buildPhases = (
+				91A000000000000000000603 /* Sources */,
+				91A000000000000000000302 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				91A000000000000000001101 /* PBXTargetDependency */,
+			);
+			name = RemotexTests;
+			productName = RemotexTests;
+			productReference = 91A000000000000000000222 /* RemotexTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -111,6 +148,10 @@
 				TargetAttributes = {
 					91A000000000000000000501 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					91A000000000000000000502 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 91A000000000000000000501;
 					};
 				};
 			};
@@ -128,6 +169,7 @@
 			projectRoot = "";
 			targets = (
 				91A000000000000000000501 /* Remotex */,
+				91A000000000000000000502 /* RemotexTests */,
 			);
 		};
 /* End PBXProject section */
@@ -160,7 +202,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		91A000000000000000000603 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				91A000000000000000000121 /* FrameHandlingTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		91A000000000000000001201 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 91A000000000000000000701 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 91A000000000000000000501;
+			remoteInfo = Remotex;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		91A000000000000000001101 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 91A000000000000000000501 /* Remotex */;
+			targetProxy = 91A000000000000000001201 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		91A000000000000000001001 /* Debug */ = {
@@ -336,6 +404,46 @@
 			};
 			name = Release;
 		};
+		91A000000000000000001005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.remotex.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Remotex.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Remotex";
+			};
+			name = Debug;
+		};
+		91A000000000000000001006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.remotex.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Remotex.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Remotex";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -353,6 +461,15 @@
 			buildConfigurations = (
 				91A000000000000000001003 /* Debug */,
 				91A000000000000000001004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		91A000000000000000000902 /* Build configuration list for PBXNativeTarget "RemotexTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				91A000000000000000001005 /* Debug */,
+				91A000000000000000001006 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
