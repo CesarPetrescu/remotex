@@ -215,6 +215,7 @@ function AuthenticatedApp({ auth, onLogout }) {
           threadId: thread.id,
           cwd: thread.cwd || null,
         })}
+        onPrefetchThread={r.prefetchThreadPreview}
       />
 
       <main className="dashboard-main">
@@ -224,6 +225,7 @@ function AuthenticatedApp({ auth, onLogout }) {
             onSend={r.sendTurn}
             onStop={r.interruptTurn}
             onSteer={r.steerTurn}
+            onLoadOlder={r.loadOlderHistory}
             onModelChange={r.setModel}
             onEffortChange={r.setEffort}
             onPermissionsChange={r.setPermissions}
@@ -255,10 +257,15 @@ function AuthenticatedApp({ auth, onLogout }) {
               closeDrawers();
             }}
             onEndSession={r.closeSession}
-            onNewSession={openNewSessionBrowser}
             onBrowseFiles={() => openJump('browse')}
             onOpenFolderPicker={() => openJump('search')}
             onStartInCwd={() => openSession({ cwd: state.browsePath || null })}
+            onResumeThread={(thread) => openSession({
+              hostId: thread.host_id,
+              threadId: thread.id,
+              cwd: thread.cwd || null,
+            })}
+            onPrefetchThread={r.prefetchThreadPreview}
             onRefreshThreads={() => r.refreshThreads()}
             onOpenManageHosts={() => setLeftOpen(true)}
           />

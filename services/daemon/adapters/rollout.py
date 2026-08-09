@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+from collections import OrderedDict
 from pathlib import Path
 
 log = logging.getLogger("daemon.adapters.rollout")
@@ -89,6 +90,63 @@ def _load_rollout_history(thread_id: str, max_items: int = 500) -> list[dict]:
     if not turns:
         return []
     return _trim_history_items(turns, max_items)
+
+
+# Hover/press prefetch previews. Keyed on (thread_id, file mtime, turns):
+# a rollout that grew a new turn changes mtime and misses naturally, so
+# there is no TTL or invalidation to get wrong. 64 entries of ≤600-char
+# text is a few hundred KB at most.
+_PREVIEW_CACHE: OrderedDict[str, dict] = OrderedDict()
+_PREVIEW_CACHE_MAX = 64
+_PREVIEW_TEXT_LIMIT = 600
+
+
+def load_rollout_preview(thread_id: str, turns: int = 2) -> dict:
+    """Compact tail of a saved thread, read straight from disk.
+
+    Codex is never involved — this is what makes hover-prefetching many
+    rows at once harmless. Only user/agent messages make the preview;
+    tools and reasoning stay out of a two-line teaser.
+    """
+    path = _find_rollout_path(thread_id)
+    if not path:
+        return {"available": False, "turns": []}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {"available": False, "turns": []}
+    key = f"{thread_id}:{mtime}:{turns}"
+    hit = _PREVIEW_CACHE.get(key)
+    if hit is not None:
+        _PREVIEW_CACHE.move_to_end(key)
+        return hit
+
+    history = _load_rollout_history(thread_id)
+    compact: list[dict] = []
+    for turn in history[-max(1, turns):]:
+        for item in turn.get("items", []):
+            kind = item.get("type")
+            if kind == "userMessage":
+                role = "user"
+                text = " ".join(
+                    c.get("text", "")
+                    for c in item.get("content") or []
+                    if isinstance(c, dict) and c.get("type") == "text"
+                )
+            elif kind == "agentMessage":
+                role = "agent"
+                text = item.get("text", "")
+            else:
+                continue
+            text = (text or "").strip()
+            if text:
+                compact.append({"role": role, "text": text[:_PREVIEW_TEXT_LIMIT]})
+
+    preview = {"available": bool(compact), "turns": compact}
+    _PREVIEW_CACHE[key] = preview
+    while len(_PREVIEW_CACHE) > _PREVIEW_CACHE_MAX:
+        _PREVIEW_CACHE.popitem(last=False)
+    return preview
 
 
 def _load_rollout_metadata(thread_id: str) -> dict:

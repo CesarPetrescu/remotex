@@ -150,6 +150,13 @@ export class SessionSocket {
     return this.send(frame);
   }
 
+  // Pull older transcript turns (scroll-up backfill). `before` is the
+  // oldest turn index the client already has; the daemon serves the
+  // preceding `limit` turns as one history chunk.
+  sendHistoryMore(before, limit = 10) {
+    return this.send({ type: 'history-more', before, limit });
+  }
+
   sendSlash(cmd, args) {
     const frame = { type: 'slash-command', command: cmd };
     if (args) frame.args = args;

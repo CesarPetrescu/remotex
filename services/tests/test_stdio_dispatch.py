@@ -481,3 +481,110 @@ def test_array_field_keeps_every_answer():
     assert elicitation_result(
         {"tags": {"type": "array"}}, {"tags": {"answers": ["x", "y"]}}
     ) == {"action": "accept", "content": {"tags": ["x", "y"]}}
+
+
+# --- tail-first history replay + paging -----------------------------------
+
+
+def _fake_turns(n: int) -> list:
+    """n turns, each with one user + one agent item, chronological."""
+    turns = []
+    for i in range(n):
+        turns.append({
+            "id": f"turn_{i}",
+            "startedAt": 1000 + i,
+            "items": [
+                {"type": "userMessage", "id": f"u_{i}",
+                 "content": [{"type": "text", "text": f"question {i}"}]},
+                {"type": "agentMessage", "id": f"a_{i}", "text": f"answer {i}"},
+            ],
+        })
+    return turns
+
+
+@pytest.mark.asyncio
+async def test_replay_ships_only_the_tail():
+    adapter, _ = _adapter()
+    adapter._thread_id = "th_1"
+
+    await adapter._replay_history(_fake_turns(30))
+
+    events = await _drain(adapter)
+    begin, end = events[0], events[-1]
+    assert begin.kind == "history-begin"
+    assert begin.data == {"turns": 30, "shown": 2, "has_more": True}
+    assert end.kind == "history-end"
+    assert end.data == {"oldest": 28, "has_more": True}
+    # Only the last two turns' items, in order, all marked replayed.
+    item_ids = [e.data["item_id"] for e in events[1:-1] if e.kind == "item-started"]
+    assert item_ids == ["u_28", "a_28", "u_29", "a_29"]
+    assert all(e.data["replayed"] for e in events[1:-1])
+    # Indices let the client anchor its next history-more request.
+    assert {e.data["turn_index"] for e in events[1:-1]} == {28, 29}
+
+
+@pytest.mark.asyncio
+async def test_short_history_has_no_more():
+    adapter, _ = _adapter()
+    adapter._thread_id = "th_1"
+
+    await adapter._replay_history(_fake_turns(1))
+
+    events = await _drain(adapter)
+    assert events[0].data == {"turns": 1, "shown": 1, "has_more": False}
+    assert events[-1].data == {"oldest": 0, "has_more": False}
+
+
+@pytest.mark.asyncio
+async def test_history_more_pages_older_turns():
+    adapter, _ = _adapter()
+    adapter._thread_id = "th_1"
+    await adapter._replay_history(_fake_turns(30))
+    await _drain(adapter)
+
+    await adapter.handle({"type": "history-more", "before": 28, "limit": 10})
+
+    events = await _drain(adapter)
+    begin, end = events[0], events[-1]
+    assert begin.kind == "history-chunk-begin"
+    assert begin.data == {"before": 28, "count": 10, "oldest": 18, "has_more": True}
+    assert end.kind == "history-chunk-end"
+    assert end.data == {"oldest": 18, "has_more": True}
+    item_ids = [e.data["item_id"] for e in events[1:-1] if e.kind == "item-started"]
+    assert item_ids[0] == "u_18"
+    assert item_ids[-1] == "a_27"
+
+
+@pytest.mark.asyncio
+async def test_history_more_final_page_reports_no_more():
+    adapter, _ = _adapter()
+    adapter._thread_id = "th_1"
+    await adapter._replay_history(_fake_turns(5))
+    await _drain(adapter)
+
+    await adapter.handle({"type": "history-more", "before": 3, "limit": 10})
+
+    events = await _drain(adapter)
+    assert events[0].data == {"before": 3, "count": 3, "oldest": 0, "has_more": False}
+    assert events[-1].data == {"oldest": 0, "has_more": False}
+
+
+@pytest.mark.asyncio
+async def test_history_more_with_bad_inputs_is_safe():
+    adapter, _ = _adapter()
+    adapter._thread_id = "th_1"
+    await adapter._replay_history(_fake_turns(3))
+    await _drain(adapter)
+
+    # `before: 0` — nothing older; garbage limit; out-of-range before.
+    await adapter.handle({"type": "history-more", "before": 0})
+    await adapter.handle({"type": "history-more", "before": 99, "limit": "wat"})
+    events = await _drain(adapter)
+
+    kinds = [e.kind for e in events]
+    assert "item-started" not in kinds[:2]  # first chunk is empty
+    first_begin = events[0]
+    assert first_begin.data["count"] == 0
+    # Out-of-range `before` clamps to the total (3) and still serves turns.
+    later = [e for e in events if e.kind == "history-chunk-begin"][1]
+    assert later.data["before"] == 3

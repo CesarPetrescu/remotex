@@ -84,6 +84,10 @@ def make_app(database_url: str | None, static_root: Path) -> web.Application:
     app.router.add_post("/api/hosts/{host_id}/api-key/revoke", hosts_h.revoke_api_key)
     app.router.add_get("/api/hosts/{host_id}/models", models_h.get_host_models)
     app.router.add_get("/api/hosts/{host_id}/threads", threads_h.list_host_threads)
+    app.router.add_get(
+        "/api/hosts/{host_id}/threads/{thread_id}/preview",
+        threads_h.get_thread_preview,
+    )
     app.router.add_get("/api/hosts/{host_id}/fs", fs_h.list_host_fs)
     app.router.add_post("/api/hosts/{host_id}/fs/mkdir", fs_h.mkdir_host_fs)
     app.router.add_get("/api/hosts/{host_id}/fs/read", fs_h.read_host_file)

@@ -33,6 +33,11 @@ from .rollout import (
 
 log = logging.getLogger("daemon.adapters.stdio")
 
+# Turns shipped immediately when a saved chat opens (last user + agent
+# exchange, typically), and the page size for scroll-up backfill.
+HISTORY_TAIL_TURNS = 2
+HISTORY_CHUNK_TURNS = 10
+
 
 def _thread_extra(params: dict) -> dict:
     thread_id = params.get("threadId")
@@ -119,6 +124,12 @@ class StdioCodexAdapter(SessionAdapter):
         self._resume_task: asyncio.Task | None = None
         self._resume_error: str | None = None
         self._history_replayed = False
+        # Full parsed transcript (list of turns). Replay ships only the last
+        # HISTORY_TAIL_TURNS immediately; clients page older turns in with
+        # `history-more` frames, sliced from this list. Kept in memory for
+        # the adapter's lifetime — it was already parsed for the tail.
+        self._history_turns: list[dict] = []
+        self._history_oldest_sent = 0
         self._reasoning_summary = "auto"
         # Live turn id — set on turn/started, cleared on turn/completed.
         # Needed because turn/interrupt wants turnId, not threadId.
@@ -354,6 +365,9 @@ class StdioCodexAdapter(SessionAdapter):
             return
         if ftype == "slash-command":
             await self._handle_slash(frame)
+            return
+        if ftype == "history-more":
+            await self._send_history_chunk(frame)
             return
         if ftype == "turn-start":
             if not self._ready and self._resume_task and not self._resume_task.done():
@@ -865,7 +879,14 @@ class StdioCodexAdapter(SessionAdapter):
     # --- history replay -------------------------------------------------
 
     async def _replay_history(self, turns: list[dict] | None = None) -> None:
-        """Fetch prior turns and emit them as completed session-events."""
+        """Emit the transcript TAIL as completed session-events.
+
+        Only the last HISTORY_TAIL_TURNS turns ship immediately — opening a
+        saved chat shows the latest exchange instantly instead of streaming
+        the whole history past the user. The full parsed list stays in
+        `self._history_turns`; clients pull older turns with
+        `{type: "history-more", before: <turn_index>, limit: N}`.
+        """
         assert self._thread_id
         if turns is None:
             resp = await self._request("thread/turns/list", {
@@ -877,44 +898,95 @@ class StdioCodexAdapter(SessionAdapter):
         if not turns:
             return
         turns = _sort_turns_chronological(turns)
-        await self._queue.put(SessionEvent("history-begin", {"turns": len(turns)}))
-        for turn in turns:
-            turn_id = turn.get("id")
-            for item in turn.get("items", []):
-                codex_type = item.get("type", "")
-                snake = _snake_item_type(codex_type)
-                item_id = item.get("id") or f"hist_{uuid.uuid4().hex[:8]}"
-                started_payload: dict = {
-                    "turn_id": turn_id,
-                    "item_id": item_id,
-                    "item_type": snake,
-                    "replayed": True,
-                }
-                if codex_type == "userMessage":
-                    # Flatten content array: keep text, list any image paths.
-                    text_parts: list[str] = []
-                    for c in item.get("content", []) or []:
-                        if isinstance(c, dict) and c.get("type") == "text":
-                            text_parts.append(c.get("text", ""))
-                        elif isinstance(c, dict) and c.get("type") == "localImage":
-                            text_parts.append(f"[image: {os.path.basename(str(c.get('path', '')))}]")
-                    started_payload["text"] = "\n".join(p for p in text_parts if p)
-                elif codex_type in ("reasoning", "agentReasoning"):
-                    started_payload.update(_item_extras(item))
-                elif codex_type == "agentMessage":
-                    started_payload["text"] = item.get("text", "")
-                else:
-                    started_payload.update(_item_extras(item))
-                await self._queue.put(SessionEvent("item-started", started_payload))
-                completed_payload: dict = {
-                    "turn_id": turn_id,
-                    "item_id": item_id,
-                    "item_type": snake,
-                    "replayed": True,
-                    **started_payload,
-                }
-                await self._queue.put(SessionEvent("item-completed", completed_payload))
-        await self._queue.put(SessionEvent("history-end", {}))
+        self._history_turns = turns
+        total = len(turns)
+        shown = min(HISTORY_TAIL_TURNS, total)
+        start = total - shown
+        self._history_oldest_sent = start
+        await self._queue.put(SessionEvent("history-begin", {
+            "turns": total,
+            "shown": shown,
+            "has_more": start > 0,
+        }))
+        for idx in range(start, total):
+            await self._emit_history_turn(turns[idx], idx)
+        await self._queue.put(SessionEvent("history-end", {
+            "oldest": start,
+            "has_more": start > 0,
+        }))
+
+    async def _send_history_chunk(self, frame: dict) -> None:
+        """Serve one page of older turns, newest-adjacent first.
+
+        `before` is a turn index into the transcript (0 = oldest). The
+        chunk covers [max(0, before - limit), before). Chunks broadcast to
+        every attached client like any session-event — clients dedupe by
+        item id, so all attached views converge on the same window.
+        """
+        turns = self._history_turns
+        before = frame.get("before")
+        if not isinstance(before, int):
+            before = self._history_oldest_sent
+        before = max(0, min(before, len(turns)))
+        try:
+            limit = int(frame.get("limit") or HISTORY_CHUNK_TURNS)
+        except (TypeError, ValueError):
+            limit = HISTORY_CHUNK_TURNS
+        limit = max(1, min(limit, 50))
+        start = max(0, before - limit)
+        count = before - start
+        await self._queue.put(SessionEvent("history-chunk-begin", {
+            "before": before,
+            "count": count,
+            "oldest": start,
+            "has_more": start > 0,
+        }))
+        for idx in range(start, before):
+            await self._emit_history_turn(turns[idx], idx)
+        if count:
+            self._history_oldest_sent = min(self._history_oldest_sent, start)
+        await self._queue.put(SessionEvent("history-chunk-end", {
+            "oldest": start,
+            "has_more": start > 0,
+        }))
+
+    async def _emit_history_turn(self, turn: dict, turn_index: int) -> None:
+        turn_id = turn.get("id")
+        for item in turn.get("items", []):
+            codex_type = item.get("type", "")
+            snake = _snake_item_type(codex_type)
+            item_id = item.get("id") or f"hist_{uuid.uuid4().hex[:8]}"
+            started_payload: dict = {
+                "turn_id": turn_id,
+                "item_id": item_id,
+                "item_type": snake,
+                "replayed": True,
+                "turn_index": turn_index,
+            }
+            if codex_type == "userMessage":
+                # Flatten content array: keep text, list any image paths.
+                text_parts: list[str] = []
+                for c in item.get("content", []) or []:
+                    if isinstance(c, dict) and c.get("type") == "text":
+                        text_parts.append(c.get("text", ""))
+                    elif isinstance(c, dict) and c.get("type") == "localImage":
+                        text_parts.append(f"[image: {os.path.basename(str(c.get('path', '')))}]")
+                started_payload["text"] = "\n".join(p for p in text_parts if p)
+            elif codex_type in ("reasoning", "agentReasoning"):
+                started_payload.update(_item_extras(item))
+            elif codex_type == "agentMessage":
+                started_payload["text"] = item.get("text", "")
+            else:
+                started_payload.update(_item_extras(item))
+            await self._queue.put(SessionEvent("item-started", started_payload))
+            completed_payload: dict = {
+                "turn_id": turn_id,
+                "item_id": item_id,
+                "item_type": snake,
+                "replayed": True,
+                **started_payload,
+            }
+            await self._queue.put(SessionEvent("item-completed", completed_payload))
 
     # --- JSON-RPC plumbing ----------------------------------------------
 

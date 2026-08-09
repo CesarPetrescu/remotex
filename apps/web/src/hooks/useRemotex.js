@@ -19,6 +19,7 @@ import { parseSlash } from '../util/slash';
 import { parentPath } from '../util/path';
 import { hostHomePath } from '../util/host';
 import { buildUrl, parseUrl } from '../util/url';
+import { getCachedPreview, prefetchPreview } from '../util/threadPreview';
 
 const PROMPT_BACKUP_PREFIX = 'remotex.pendingPrompts.';
 
@@ -271,6 +272,14 @@ export const initialState = {
   status: STATUS.Idle,
   session: null,
   events: [],
+  // Tail-first history: the daemon ships only the last couple of turns on
+  // open; scrolling up pages older ones in via `history-more`. `historyTick`
+  // bumps on every committed batch so EventStream can anchor scroll.
+  historyHasMore: false,
+  historyOldest: 0,
+  historyLoading: false,
+  historyTick: 0,
+  historyPrepend: false,
   pending: false,
   model: '',
   effort: 'medium',
@@ -370,6 +379,10 @@ export function reducer(state, action) {
       return withPromptQueues({
         ...state,
         events: [],
+        historyHasMore: false,
+        historyOldest: 0,
+        historyLoading: false,
+        historyPrepend: false,
         session: null,
         slashFeedback: null,
         pendingImages: [],
@@ -407,6 +420,27 @@ export function reducer(state, action) {
     case 'SESSION_STATUS':
       return { ...state, status: action.status };
 
+    case 'HISTORY_LOADING':
+      return { ...state, historyLoading: true };
+    case 'HISTORY_COMMIT': {
+      // One commit per replay batch: the buffered tail (or an older chunk)
+      // lands in a single render instead of streaming past the user.
+      // Prepending before existing events is correct for both cases — on
+      // the initial tail, `events` holds at most live frames that raced in.
+      // The authoritative tail replaces any instant-paint preview rows.
+      const kept = state.events.filter((e) => !String(e.id).startsWith('preview_'));
+      const seen = new Set(kept.map((e) => e.id));
+      const incoming = action.events.filter((e) => e && !seen.has(e.id));
+      return {
+        ...state,
+        events: [...incoming, ...kept],
+        historyHasMore: !!action.hasMore,
+        historyOldest: action.oldest,
+        historyLoading: false,
+        historyTick: state.historyTick + 1,
+        historyPrepend: !!action.prepend,
+      };
+    }
     case 'APPEND_EVENT':
       if (action.event?.id && state.events.some((e) => e.id === action.event.id)) {
         return state;
@@ -580,6 +614,9 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
   // I/O handles that outlive renders.
   const apiRef = useRef(new RelayClient(state.userToken));
   const socketRef = useRef(null);
+  // Non-null while a history batch is streaming in: replayed items collect
+  // here and commit as ONE dispatch on history-end / history-chunk-end.
+  const historyBufRef = useRef(null);
   const reconnectRef = useRef(null);
   const reconnectAttemptRef = useRef(0);
   const userClosedRef = useRef(false);
@@ -768,6 +805,11 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         return;
       }
       case 'item-started': {
+        if (data.replayed && historyBufRef.current) {
+          const ev = buildItemEvent(data);
+          if (ev) historyBufRef.current.items.push(ev);
+          return;
+        }
         const ev = buildItemEvent(data);
         if (ev) dispatch({ type: 'APPEND_EVENT', event: ev });
         if (data.item_type === 'user_message' && !data.replayed) {
@@ -798,6 +840,9 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         });
         return;
       case 'item-completed': {
+        // Replayed completions mirror their item-started payloads exactly
+        // (see daemon _emit_history_turn) — nothing to patch while buffering.
+        if (data.replayed && historyBufRef.current) return;
         const patch = {};
         if (data.item_type === 'agent_message' || data.item_type === 'agent_reasoning') {
           if (data.text) patch.text = data.text;
@@ -916,8 +961,24 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         dispatch({ type: 'PENDING', pending: true });
         return;
       case 'history-begin':
-      case 'history-end':
+        historyBufRef.current = { items: [], prepend: false };
         return;
+      case 'history-chunk-begin':
+        historyBufRef.current = { items: [], prepend: true };
+        return;
+      case 'history-end':
+      case 'history-chunk-end': {
+        const buf = historyBufRef.current;
+        historyBufRef.current = null;
+        dispatch({
+          type: 'HISTORY_COMMIT',
+          events: buf?.items || [],
+          prepend: !!buf?.prepend,
+          oldest: Number.isFinite(data.oldest) ? data.oldest : 0,
+          hasMore: !!data.has_more,
+        });
+        return;
+      }
       default:
         return;
     }
@@ -1243,6 +1304,24 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       detachSession(STATUS.Opening);
       userClosedRef.current = false;
       dispatch({ type: 'SET_SCREEN', screen: SCREENS.Session });
+      // Instant paint: if a hover/press prefetch cached this thread's tail,
+      // show it right away. The rows use `preview_` ids; HISTORY_COMMIT
+      // drops them when the authoritative tail arrives.
+      if (threadId) {
+        const cached = getCachedPreview(hostId, threadId);
+        cached?.forEach((turn, i) => {
+          if (!turn?.text) return;
+          dispatch({
+            type: 'APPEND_EVENT',
+            event: {
+              id: `preview_${threadId}_${i}`,
+              role: turn.role === 'user' ? 'user' : 'agent',
+              text: turn.text,
+              completed: true,
+            },
+          });
+        });
+      }
       try {
         const sid = await apiRef.current.openSession(hostId, { threadId, cwd });
         dispatch({
@@ -1320,6 +1399,24 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
 
   // Send into the running turn instead of ending it. The relay echoes the
   // message to every attached client, so we don't append it locally.
+  // Ask the daemon for the next page of older turns. Guards live here so
+  // EventStream's sentinel can fire blindly.
+  const loadOlderHistory = useCallback(() => {
+    if (!state.historyHasMore || state.historyLoading) return;
+    const sock = socketRef.current;
+    if (!sock?.isOpen?.()) return;
+    dispatch({ type: 'HISTORY_LOADING' });
+    sock.sendHistoryMore(state.historyOldest, 10);
+  }, [state.historyHasMore, state.historyLoading, state.historyOldest]);
+
+  // Hover/press prefetch for a saved-thread row. Cheap server-side (disk
+  // + LRU on the daemon, never codex), deduped and capped client-side.
+  const prefetchThreadPreview = useCallback((thread) => {
+    if (!thread?.id) return;
+    const hostId = thread.host_id || latestInputsRef.current.selectedHostId;
+    prefetchPreview(apiRef.current, hostId, thread.id);
+  }, []);
+
   const steerTurn = useCallback((rawText) => {
     const input = (rawText || '').trim();
     const { pendingImages } = latestInputsRef.current;
@@ -1534,6 +1631,8 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       sendSlash,
       interruptTurn,
       steerTurn,
+      loadOlderHistory,
+      prefetchThreadPreview,
       resolveApproval,
       resolveUserInput,
       cancelUserInput,
@@ -1568,6 +1667,8 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       sendSlash,
       interruptTurn,
       steerTurn,
+      loadOlderHistory,
+      prefetchThreadPreview,
       resolveApproval,
       resolveUserInput,
       cancelUserInput,

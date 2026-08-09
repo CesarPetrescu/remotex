@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import {
   attachedTurnInFlight,
   dequeuePrompt,
@@ -194,5 +194,44 @@ describe('reducer: model options', () => {
       { type: 'MODEL_OPTIONS', options: [options[0], { ...options[1], efforts: [''] }] },
     ]);
     expect(s.effort).toBe('');
+  });
+});
+
+describe('tail-first history commits', () => {
+  const base = { ...initialState, events: [{ id: 'live_1', role: 'agent', text: 'hi' }] };
+
+  test('HISTORY_COMMIT prepends, dedupes, and updates paging meta', () => {
+    const next = reducer(base, {
+      type: 'HISTORY_COMMIT',
+      events: [
+        { id: 'h_1', role: 'user', text: 'old question' },
+        { id: 'live_1', role: 'agent', text: 'dupe of a live event' },
+      ],
+      prepend: true,
+      oldest: 18,
+      hasMore: true,
+    });
+    expect(next.events.map((e) => e.id)).toEqual(['h_1', 'live_1']);
+    expect(next.historyOldest).toBe(18);
+    expect(next.historyHasMore).toBe(true);
+    expect(next.historyLoading).toBe(false);
+    expect(next.historyPrepend).toBe(true);
+    expect(next.historyTick).toBe(base.historyTick + 1);
+  });
+
+  test('final page flips has_more off', () => {
+    const next = reducer(base, {
+      type: 'HISTORY_COMMIT', events: [], prepend: true, oldest: 0, hasMore: false,
+    });
+    expect(next.historyHasMore).toBe(false);
+    expect(next.historyOldest).toBe(0);
+  });
+
+  test('SESSION_RESET clears history paging state', () => {
+    const dirty = { ...base, historyHasMore: true, historyOldest: 7, historyLoading: true };
+    const next = reducer(dirty, { type: 'SESSION_RESET' });
+    expect(next.historyHasMore).toBe(false);
+    expect(next.historyOldest).toBe(0);
+    expect(next.historyLoading).toBe(false);
   });
 });

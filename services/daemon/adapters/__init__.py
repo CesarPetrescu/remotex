@@ -25,6 +25,7 @@ from __future__ import annotations
 from .admin import AdminCodex, model_options_from_codex
 from .base import SessionAdapter, SessionEvent
 from .factory import build_adapter
+from .rollout import load_rollout_preview
 from .mock import MockCodexAdapter
 from .stdio import StdioCodexAdapter
 
@@ -36,4 +37,5 @@ __all__ = [
     "SessionEvent",
     "StdioCodexAdapter",
     "build_adapter",
+    "load_rollout_preview",
 ]

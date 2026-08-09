@@ -1,4 +1,5 @@
 import { STATUS } from '../config';
+import { ThemeToggle } from './ThemeToggle';
 
 const STATUS_LABELS = {
   [STATUS.Idle]: 'idle',
@@ -68,6 +69,7 @@ export function DashboardHeader({
       </div>
 
       <div className="dashboard-header-right">
+        <ThemeToggle />
         {onRightView && (
           <div className="header-tools" aria-label="Tools">
             <HeaderTool

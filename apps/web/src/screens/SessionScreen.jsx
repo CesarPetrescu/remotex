@@ -19,6 +19,7 @@ export function SessionScreen({
   onSend,
   onStop,
   onSteer,
+  onLoadOlder,
   onModelChange,
   onEffortChange,
   onPermissionsChange,
@@ -104,6 +105,11 @@ export function SessionScreen({
       <EventStream
         events={state.events}
         pending={state.pending}
+        historyHasMore={state.historyHasMore}
+        historyLoading={state.historyLoading}
+        historyTick={state.historyTick}
+        historyPrepend={state.historyPrepend}
+        onLoadOlder={onLoadOlder}
         placeholder={
           state.status === STATUS.Connected ? 'send a prompt to start…' : 'connecting…'
         }

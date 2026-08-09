@@ -295,3 +295,109 @@ nobody re-discovers them:
 (pairing, client list/revoke, enable/disable). It overlaps Remotex's core
 premise. Read it before the next architecture decision — it may be a
 transport to adopt rather than a competitor.
+
+---
+
+# Plan: tail-first transcripts, scroll-up backfill, hover prefetch (2026-08-09)
+
+Owner-requested. Goal: clicking a saved chat shows the **last user + agent
+turn instantly**, older turns load as you scroll up **without scroll jumps**,
+and hovering (desktop) / pressing (phone) a chat row prefetches so open
+feels instant — without hammering the codex app-server.
+
+## Design facts that shape this (verified)
+
+- `services/daemon/adapters/rollout.py:_load_rollout_history()` already
+  parses the full transcript **from the rollout JSONL on disk** — codex is
+  never involved. Prefetch and tail replay must use this path; the
+  "don't overload codex" worry then disappears by construction. Caching
+  only protects against re-parsing large JSONL, not against codex load.
+- The relay forwards client frames it doesn't know to the daemon untouched
+  (`ws_client.py` "Forward client-originated frames"), so the new
+  `history-more` frame needs no relay routing work.
+- `thread/list` already returns `preview` text per row — rows are fine;
+  this plan is about the transcript body.
+- Today `_replay_history()` ships ALL turns (≤500 items) as one burst of
+  replayed session-events; the client renders them incrementally → the
+  scroll-spam the owner sees.
+- Hub replay deques are bounded (`maxlen`), but history bursts can evict
+  *live* events from the reconnect buffer — phase 1 should mark replayed
+  history events so the hub skips buffering them.
+
+## Phase 1 — daemon: tail replay + paging — DONE 2026-08-09
+
+`services/daemon/adapters/stdio.py`:
+
+1. Adapter keeps the parsed turns list in memory (`self._history_turns`)
+   after `_load_rollout_history` / resume — it already holds it briefly;
+   just don't drop it.
+2. `_replay_history(tail=2)`: emit `history-begin {turns: total, shown: N,
+   has_more: bool}` + only the last 2 turns' items + `history-end`.
+3. New client frame:
+   `{type: "history-more", before: <turn_index>, limit: 10}` →
+   `history-chunk-begin {before, count}` + replayed items (each tagged
+   `replayed: true`, plus `turn_index`) + `history-chunk-end`.
+   Broadcast like any session-event: all attached clients converge, and
+   clients dedupe by item id anyway.
+4. Fallback when no local rollout (fresh host, foreign thread):
+   `thread/turns/list` with `sortDirection: "desc"` + `limit` — **probe
+   cursor semantics against real codex first** (AGENTS.md ritual); cache
+   the fetched turns in the same `self._history_turns`.
+5. Tag replayed items `ephemeral: true`; relay `ws_daemon.py` skips
+   putting ephemeral events into the reconnect replay deque (one `if`).
+
+Tests: `test_stdio_dispatch.py` — tail emits exactly last-2-turns items;
+`history-more` returns the right slice; out-of-range `before` is a no-op.
+
+## Phase 2 — web: stable rendering — DONE 2026-08-09
+
+`apps/web/src/hooks/useRemotex.js` + `EventStream.jsx`:
+
+1. Buffer replayed events between `history-begin`/`history-end`; commit in
+   ONE dispatch, then jump-scroll to bottom (no smooth), then reveal.
+   Kills the replay scroll-spam.
+2. Top sentinel (IntersectionObserver) mounts only after `history-end`
+   +300ms and only while `has_more`; on hit → send `history-more`.
+3. Prepend with scroll anchoring: record `scrollHeight`/`scrollTop`
+   before commit, restore `scrollTop += delta` in `useLayoutEffect`;
+   `overflow-anchor: none` on the scroller so the browser doesn't fight.
+4. Dedupe prepends by item id (events already keyed by id).
+
+## Phase 3 — hover/press prefetch + caches — DONE 2026-08-09
+
+1. Daemon: new admin-style frame `thread-preview-request {thread_id,
+   turns: 2}` → reads rollout from disk, returns compact
+   `{title, turns: [{role, text≤600ch, ts}], available}`. **No codex.**
+   LRU cache ~64 entries keyed `(thread_id, rollout mtime)` — mtime makes
+   invalidation free.
+2. Relay: `GET /api/hosts/{id}/threads/{tid}/preview` following the
+   models/threads handler pattern (auth + `await_daemon_request`).
+   No relay cache in v1 — the daemon answer is disk-cheap.
+3. Web: prefetch on `mouseenter` with ~150 ms delay (drive-by guard) and
+   on `pointerdown` (phone press = the opening tap; prefetch races the
+   session-open). In-memory Map + sessionStorage cache, TTL ~5 min.
+   SessionScreen paints the cached preview immediately, replaced by the
+   real tail on `history-end`. In-flight dedupe so hovering 20 rows ≠ 20
+   parallel requests (cap ~3 concurrent, drop stale).
+
+## Phase 4 — Android/iOS (follow-up)
+
+The wire protocol (tail + `history-more` + preview endpoint) is
+client-agnostic by design. Android: same buffering in `RemotexViewModel`
+(`history-begin/end` are currently no-op markers) + `LazyColumn`
+`prependedItems` scroll anchoring; press-prefetch via the same REST
+endpoint. iOS after Android.
+
+## Order & size
+
+1 → 2 ship together (that's the felt fix); 3 after; 4 later. Rough:
+daemon ~150 lines + tests, web ~200, relay ~40, preview stack ~200.
+
+## Risks
+
+- Scroll anchoring is the fiddly part — test with a 300-turn fixture in
+  the mock adapter rig (scratchpad `ui-shots.mjs` infra reusable).
+- `thread/turns/list` cursor shape unverified → probe before coding the
+  fallback.
+- Multi-client: a second client attached mid-backfill receives chunks it
+  didn't request — id-dedupe makes this benign; verify with two tabs.

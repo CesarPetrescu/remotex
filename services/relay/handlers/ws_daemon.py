@@ -269,6 +269,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             elif ftype in (
                 "threads-list-response",
                 "models-list-response",
+                "thread-preview-response",
                 "fs-read-response",
                 "fs-mkdir-response",
                 "fs-readfile-response",

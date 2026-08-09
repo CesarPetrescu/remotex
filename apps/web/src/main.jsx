@@ -1,7 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
+import { initTheme } from './util/theme';
 import './styles.css';
+
+initTheme();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

@@ -1,4 +1,5 @@
 import { relativeAge } from '../util/time';
+import { usePrefetchIntent } from '../hooks/usePrefetchIntent';
 import { shortenCwd } from '../util/path';
 import { hostHomePath } from '../util/host';
 import { SCREENS } from '../config';
@@ -21,6 +22,7 @@ export function HostsSidebar({
   onSelectHost,
   onNewSession,
   onResumeThread,
+  onPrefetchThread,
   onAddHost,
   onOpenSettings,
 }) {
@@ -110,6 +112,7 @@ export function HostsSidebar({
               <SessionRow
                 key={t.id}
                 thread={t}
+                onPrefetch={onPrefetchThread}
                 active={state.session?.threadId === t.id || state.session?.thread_id === t.id}
                 onClick={() => onResumeThread(t)}
               />
@@ -187,7 +190,8 @@ function HostRow({ host, active, onClick }) {
   );
 }
 
-function SessionRow({ thread, active, onClick }) {
+function SessionRow({ thread, active, onClick, onPrefetch }) {
+  const intent = usePrefetchIntent(() => onPrefetch?.(thread));
   const hasSpecificTitle = thread.title && thread.title_is_generic === false;
   const title = hasSpecificTitle ? thread.title : (thread.preview || '(no preview)');
   const age = relativeAge(thread.updated_at ?? thread.created_at);
@@ -196,6 +200,7 @@ function SessionRow({ thread, active, onClick }) {
       type="button"
       className={`sidebar-session ${active ? 'active' : ''}`}
       onClick={onClick}
+      {...intent}
     >
       <span className={`sidebar-session-stripe ${active ? 'active' : ''}`} />
       <span className="sidebar-session-body">

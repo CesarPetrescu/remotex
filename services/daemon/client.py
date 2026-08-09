@@ -15,6 +15,7 @@ from .adapters import (
     AdminCodex,
     SessionAdapter,
     build_adapter,
+    load_rollout_preview,
     model_options_from_codex,
 )
 from .config import Config
@@ -292,6 +293,9 @@ class DaemonClient:
             return
         if ftype == "models-list-request":
             asyncio.create_task(self._handle_models_list(frame, send))
+            return
+        if ftype == "thread-preview-request":
+            asyncio.create_task(self._handle_thread_preview(frame, send))
             return
         if ftype == "fs-read-request":
             asyncio.create_task(self._handle_fs_read(frame, send))
@@ -688,6 +692,41 @@ class DaemonClient:
                 "type": "threads-list-response",
                 "request_id": request_id,
                 "error": error,
+            })
+
+    async def _handle_thread_preview(
+        self,
+        frame: dict,
+        send: Callable[[dict], Awaitable[None]],
+    ) -> None:
+        """Compact transcript tail for hover/press prefetch.
+
+        Served from the rollout file on disk — codex is never touched, so
+        a client sweeping over many rows costs this host nothing but a few
+        (LRU-cached) file parses. Parsing runs in a worker thread: a cold
+        multi-MB rollout takes ~0.3 s and must not stall the event loop.
+        """
+        request_id = frame.get("request_id")
+        thread_id = str(frame.get("thread_id") or "")
+        try:
+            turns = min(max(int(frame.get("turns") or 2), 1), 5)
+        except (TypeError, ValueError):
+            turns = 2
+        try:
+            preview = await asyncio.to_thread(load_rollout_preview, thread_id, turns)
+            await send({
+                "type": "thread-preview-response",
+                "request_id": request_id,
+                "thread_id": thread_id,
+                **preview,
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.exception("thread preview failed")
+            await send({
+                "type": "thread-preview-response",
+                "request_id": request_id,
+                "thread_id": thread_id,
+                "error": str(exc) or type(exc).__name__,
             })
 
     async def _handle_models_list(

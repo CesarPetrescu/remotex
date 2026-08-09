@@ -6,6 +6,7 @@ import {
   loadToken,
   saveToken,
 } from '../util/tokenStorage';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export function loginErrorMessage(error) {
   if (error?.status === 401) return 'That access token was not accepted.';
@@ -79,6 +80,7 @@ export function LoginScreen({ onAuthenticated }) {
 
   return (
     <main className="login-shell">
+      <ThemeToggle className="login-theme-toggle" />
       <section className="login-card" aria-labelledby="login-title">
         <div className="login-brand" aria-hidden="true">
           <span className="brand-cursor">▍</span>

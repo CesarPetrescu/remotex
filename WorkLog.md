@@ -32,6 +32,197 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — hover/press prefetch + preview cache (plan phase 3)
+**Agent:** Claude Fable 5 · **Branch:** main (uncommitted) · **Status:** done, deployed
+
+- **Why:** phase 3 of the tail-first plan — make opening a saved chat feel
+  instant, without ever touching the codex app-server.
+- **Changed:**
+  - `services/daemon/adapters/rollout.py` — `load_rollout_preview(thread_id,
+    turns)`: compact user/agent tail read straight from the rollout file.
+    LRU (64 entries) keyed `(thread_id, file mtime, turns)` — a grown file
+    changes mtime and misses naturally, so no TTL/invalidations to get
+    wrong. Measured: 70 ms cold on an 18 MB rollout, 1.5 ms warm.
+  - `services/daemon/client.py` — `thread-preview-request` handler; parse
+    runs via `asyncio.to_thread` (a cold multi-MB rollout takes ~0.3 s and
+    must not stall the event loop).
+  - `services/relay/handlers/threads.py` + `app.py` —
+    `GET /api/hosts/{id}/threads/{tid}/preview?turns=N` via
+    `await_daemon_request`.
+  - `services/relay/handlers/ws_daemon.py` — **gotcha for next time:**
+    admin responses are whitelisted by frame type; without adding
+    `thread-preview-response` there the future never resolves and the REST
+    call 504s with nothing in any log.
+  - `apps/web/src/util/threadPreview.js` — memory + sessionStorage cache
+    (5 min TTL), in-flight dedupe, max 3 concurrent prefetches.
+  - `apps/web/src/hooks/usePrefetchIntent.js` — 150 ms hover dwell +
+    `pointerdown` (the opening tap races the prefetch).
+  - `useRemotex` — `prefetchThreadPreview(thread)` exposed; `openSession`
+    paints cached turns immediately as `preview_*` rows; `HISTORY_COMMIT`
+    drops them when the authoritative tail lands. Wired into the dashboard
+    `RecentRow` and sidebar `SessionRow`.
+- **Verified:**
+  - Backend 153 + ruff, web 62 + eslint + build, all clean.
+  - REST end-to-end on the scratch rig: `available: true`, real text,
+    warm round-trip 5.8 ms.
+  - Browser e2e (Playwright): hover dwell fires the fetch; re-hover = 0
+    new requests; cache persisted in sessionStorage; sweeping 12 rows
+    produced only 1 additional request (dwell + inflight cap working);
+    after click the preview text was visible in **71 ms** while the real
+    session was still opening. Screenshot `prefetch-01-instant.png`.
+  - Deployed: daemon restarted, relay rebuilt + recreated, public edge
+    back at 200, daemon reattached.
+- **Left open:** plan phase 4 (Android/iOS tail + backfill + press
+  prefetch). Rig cleanup note: scratch relay :9099 / vite :5174 / scratch
+  daemon still running for UI work; `remotex_uidev` DB droppable.
+- **Restart needed:** already done.
+
+## 2026-08-09 — tail-first transcripts + scroll-up backfill (plan phases 1+2)
+**Agent:** Claude Fable 5 · **Branch:** main (uncommitted) · **Status:** done, deployed
+
+- **Why:** opening a saved chat streamed the whole history past the user
+  (up to 500 items in one burst); owner asked for last-turn-first with
+  stable scroll-up backfill. Plan in `ToDo.md` ("tail-first transcripts").
+- **Changed:**
+  - `services/daemon/adapters/stdio.py` — `_replay_history` now ships only
+    the last `HISTORY_TAIL_TURNS = 2` turns (`history-begin {turns, shown,
+    has_more}` → items → `history-end {oldest, has_more}`), keeping the
+    full parsed transcript in `self._history_turns`. New client frame
+    `history-more {before, limit}` → `_send_history_chunk` slices older
+    pages (`history-chunk-begin/-end`, inputs clamped, out-of-range safe).
+    Item payloads carry `turn_index` for paging anchors. Replay loop
+    extracted to `_emit_history_turn`.
+  - `apps/web/src/hooks/useRemotex.js` — replayed items buffer in
+    `historyBufRef` between begin/end and land as ONE `HISTORY_COMMIT`
+    dispatch (prepend + id-dedupe); state carries
+    `historyHasMore/Oldest/Loading/Tick/Prepend`; `loadOlderHistory()`
+    guards + sends `history-more`; `SESSION_RESET` clears it all.
+  - `apps/web/src/components/EventStream.jsx` — scroll contract: tail
+    commits pin to bottom in one jump; prepend commits keep the viewed
+    turns in place (render-phase geometry snapshot + `useLayoutEffect`
+    scrollTop compensation); live events auto-follow ONLY when already
+    near the bottom, so reading history is never yanked; "load older"
+    sentinel (IntersectionObserver, root = `.stream`) arms 300 ms after
+    the tail settles. `.stream` gets `overflow-anchor: none`; empty
+    placeholder moved inside the scroller.
+  - `apps/web/src/api/sessionSocket.js` — `sendHistoryMore(before, limit)`.
+  - `SessionScreen.jsx` / `App.jsx` — props threaded.
+  - Relay: **zero changes** — it already forwards unknown client frames to
+    the daemon untouched.
+- **Verified:**
+  - Backend 153 passed (5 new: tail slicing, paging, final page, garbage
+    inputs), ruff clean. Web 62 passed (3 new `HISTORY_COMMIT` reducer
+    tests), eslint + build clean.
+  - **Live e2e on a real 99-turn rollout** (scratch rig flipped to stdio
+    mode, real codex resume): tail rendered with sentinel; scroll-to-top
+    grew 24→48→65 groups with the viewport anchored (scrollTop 7209 after
+    first backfill — not yanked to top or bottom); anchor text still
+    on-screen; sentinel disappears when history is exhausted. Screenshots
+    `hist-01..03` in the scratchpad.
+  - Deployed: live daemon restarted, relay rebuilt + recreated; public
+    edge back in ~15 s this time, daemon reattached.
+- **Left open:** plan phases 3 (hover/press prefetch, disk-backed, LRU)
+  and 4 (Android/iOS). Note: parking at the very top chain-loads pages
+  until history is exhausted — acceptable ("keep scrolling = keep
+  loading"), mention if anyone wants a stricter gate. Fallback
+  `thread/turns/list` cursor probe still pending (only matters for
+  threads with no local rollout).
+- **Restart needed:** already done (daemon + relay).
+
+## 2026-08-09 — audit iPhone picker scroll behavior
+**Agent:** Codex · **Branch:** main · **Status:** done (read-only audit)
+
+- **Why:** check whether the model, effort, and permissions dropdown scroll bug also affects the native iPhone client.
+- **Changed:** no Apple source files. The iPhone app has no model, effort, or permissions selectors yet; `SessionSocket.sendTurn` sends only input and client-message id. This missing parity is already documented in `apple/README.md`.
+- **Verified:** searched every Swift source for `Picker`, `Menu`, popover/sheet, and model/effort/permissions selection state; inspected `ContentView.swift`, `SessionSocket.swift`, and `RemotexViewModel.swift`. Only the event stream scrolls, and there is no dismiss-on-scroll handler.
+- **Left open:** native iPhone selector parity remains intentionally unimplemented; the responsive web fix will cover Safari/Chrome on phones using the web app.
+- **Restart needed:** none.
+
+## 2026-08-09 — web UI: light/dark theming + UX audit fixes
+**Agent:** Claude Fable 5 · **Branch:** main (uncommitted) · **Status:** done
+
+- **Why:** the web app was dark-only with 87 hardcoded colors outside the
+  token block; owner asked for a real white/dark mode and a UI/UX audit.
+- **Changed:**
+  - `apps/web/src/styles.css` — token block rebuilt: dark stays the `:root`
+    base, light lives under `:root[data-theme='light']` (the `:root` prefix
+    matters — a second `:root` block at ~line 1381 defines telemetry accents
+    later in the file and would win at equal specificity). New tokens:
+    `--line-strong, --on-accent, --scrim(-heavy), --shadow-1/2/3,
+    --code-string/number/fn, --user-accent, --gold`, light values for the
+    telemetry sparkline accents. Every hardcoded rgba()/hex outside the
+    token blocks swept to tokens or `color-mix(in srgb, …)` derivations, so
+    hover washes/glass/scrims re-theme for free. Micro-type bumped
+    (10px→11px, 9px→10px). Sidebar meta no longer wraps "4m / ago".
+  - `apps/web/src/util/theme.js` — new. Resolves system preference,
+    persists an explicit choice under `remotex.theme`, stamps
+    `<html data-theme>` before first paint, updates `<meta theme-color>`,
+    follows OS changes while no explicit choice.
+  - `apps/web/src/components/ThemeToggle.jsx` — new; used in
+    `DashboardHeader.jsx` and floated on `LoginScreen.jsx`.
+  - `apps/web/src/main.jsx` — `initTheme()` before render.
+  - `apps/web/src/components/JumpPicker.jsx` — folder picker sorts
+    dotfolders (.cache, .config…) after real folders; they used to be the
+    first two screens of every "new session" flow.
+- **Verified:** drove the real UI end-to-end with a scratch rig — relay
+  from source on :9099 (`RELAY_SEED_DEMO=1`, throwaway `remotex_uidev` DB
+  in remotex-postgres-1), daemon in mock mode, vite dev + Playwright.
+  34 screenshots: dark/light × desktop/mobile × login→dashboard→folder
+  picker→session stream→slash menu. Both themes coherent; dark unchanged.
+  eslint clean, vite build clean, vitest 56 passed. Relay image rebuilt and
+  recreated per the ritual; daemon reattached after.
+- **Left open:** larger UX issues documented for the owner (dashboard
+  redundancy, disabled-button pair, mobile session flow) — analysis, not
+  code. Scratch rig still running: relay :9099, vite :5174, mock daemon
+  (kill by pattern `relay.app --port 9099` / `uidev-daemon.toml` / vite).
+  The `remotex_uidev` database can be dropped anytime.
+- **Restart needed:** already done (relay rebuild + recreate).
+
+## 2026-08-09 — web dashboard restructure + drawer inert fix (UX audit items 1–6)
+**Agent:** Claude Fable 5 · **Branch:** main (uncommitted) · **Status:** done; deploy degraded (see below)
+
+- **Why:** second half of the UI/UX audit — dashboard redundancy, ghost
+  buttons, dead desktop space, error-looking empty state, broken mobile
+  session flow, flat visual hierarchy.
+- **Changed:**
+  - `apps/web/src/screens/DashboardScreen.jsx` — rewritten. No session: one
+    `card-hero` (folder path → Start session → Choose folder… → Browse
+    files · Manage hosts links). With session: compact active-session card
+    with always-enabled Open/End. QUICK ACTIONS and WORKSPACE cards
+    deleted — they were three skins over the same action. New
+    `RecentSessions` grid in the main column (2-col ≥340px, resume on
+    click, active row highlighted) — fills the former dead space with what
+    returning users actually want. "No active session" headline gone.
+  - `apps/web/src/App.jsx` — `onResumeThread` passed to the dashboard
+    (same handler the sidebar uses); `onNewSession` prop dropped.
+  - `apps/web/src/styles.css` — `.card` default border quieted to 70%
+    line; `.card-hero` carries the weight (2px accent top border,
+    shadow-1, larger padding); `.recent-*` row styles; dead
+    `.action-tile`/`.actions-grid`/`.dashboard-row`/`.card-folder` rules
+    deleted; `.dashboard-center` 920→1060px.
+  - **Real a11y bug found via Playwright:** the closed mobile drawers kept
+    every control focusable/tappable off-canvas — a tap on "New session"
+    could target the invisible sidebar button. All three drawers now get
+    `visibility: hidden` when closed (delayed past the slide-out
+    transition, instant on open).
+  - `apps/web/src/util/theme.js` — module-level `window.matchMedia`
+    guarded; it crashed `relayClient.test.js` at import under node, which
+    is why vitest reported 56 instead of 59.
+- **Verified:** eslint clean, vite build clean, vitest **59 passed** (7
+  files). 40 Playwright screenshots (dark/light × desktop/mobile ×
+  login→dashboard→picker→streaming session→slash). **Mobile now reaches a
+  live session in both themes — it could not before.**
+- **Deploy state — recovered:** relay rebuilt + recreated with the new
+  bundle. The recreate cost ~5 minutes of public downtime: the SparkTunnel
+  connector looped on "websocket: bad handshake" until the broker accepted
+  a fresh session at 13:15:16Z, after which the public edge returned 200
+  and the daemon reattached (16:16:28 local). Lesson for the ritual: a
+  relay `--force-recreate` drops the connector's broker session, and the
+  broker takes a few minutes to accept a new handshake — expect a short
+  public outage, don't thrash the connector with restarts.
+- **Restart needed:** none beyond the above; scratch UI rig (:9099/:5174,
+  mock daemon) still running for anyone iterating on the UI.
+
 ## 2026-08-09 — fix Codex resolution across standalone and npm installs
 **Agent:** Codex (root integrator) · **Branch:** `main` · **Status:** done
 

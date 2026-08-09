@@ -55,6 +55,14 @@ export class RelayClient {
     return this.#request(`/api/hosts/${encodeURIComponent(hostId)}/models`);
   }
 
+  // GET .../threads/{id}/preview — compact last-turns teaser served from
+  // the daemon's rollout files (never codex). Safe to call on hover.
+  getThreadPreview(hostId, threadId, turns = 2) {
+    return this.#request(
+      `/api/hosts/${encodeURIComponent(hostId)}/threads/${encodeURIComponent(threadId)}/preview?turns=${turns}`,
+    );
+  }
+
   listThreads(hostId, limit = 25) {
     return this.#request(
       `/api/hosts/${encodeURIComponent(hostId)}/threads?limit=${limit}`,
