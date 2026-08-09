@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-017**.
+  never reuse. Next free ID: **I-018**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -42,6 +42,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-014 | blocked | medium | deploy/security | SparkTunnel 0.2.0 supplies no trustworthy visitor IP for per-address limits |
 | I-015 | wontfix | info | daemon/upstream | Codex external-clock mode rejects multi-subscriber shared threads |
 | I-016 | fixed | low | web | Dead `closeRightView` kept ESLint noisy |
+| I-017 | open | info | daemon | GPU telemetry is NVIDIA-only; Intel/AMD accelerators are not sampled |
 
 ---
 
@@ -431,3 +432,18 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 - **Fix:** removed the unused callback; live close paths already update the
   persisted right-view state directly.
 - **Evidence:** `cd apps/web && npm run lint` on 2026-08-09.
+
+## I-017 — telemetry does not sample non-NVIDIA GPUs
+
+**Status:** open · **Sev:** info · **Area:** daemon · **Opened:** 2026-08-09
+
+- **Scope:** `TelemetryCollector._gpus()` uses `nvidia-smi`, so it reports every
+  NVIDIA device but not Intel or AMD accelerators.
+- **Current impact:** the deployment host reports both NVIDIA GPUs correctly;
+  its integrated Intel controller is outside the existing telemetry contract.
+- **Why deferred:** cross-vendor utilization, VRAM, and temperature collection
+  requires vendor-specific tools or sysfs handling. It is separate from the
+  fixed web regression that discarded every GPU after the first.
+- **Evidence:** `nvidia-smi --query-gpu=index,name` returns two devices and the
+  live relay payload contains both; `lspci` also lists an Intel display
+  controller that `nvidia-smi` cannot sample.

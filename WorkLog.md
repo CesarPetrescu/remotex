@@ -32,6 +32,24 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — render every reported GPU in web telemetry
+**Agent:** Codex · **Branch:** main · **Status:** done, deployed
+
+- **Why:** the daemon and relay carried both NVIDIA GPUs, but the web reducer
+  collapsed telemetry to the legacy first-GPU alias.
+- **Changed:** `apps/web/src/hooks/useRemotex.js` retains a rolling history per
+  GPU with compatibility for older singular payloads;
+  `components/TelemetrySidebar.jsx` renders one complete card per GPU with
+  utilization, model, VRAM, temperature, and its own sparkline. Focused reducer
+  and server-rendered component tests cover two GPUs and the legacy shape.
+- **Verified:** the live relay payload contains two GPUs; focused tests 28
+  passed; full web suite 69 passed; ESLint and production build clean. Existing
+  responsive sidebar/drawer stacking needs no CSS change. The concurrently
+  rebuilt public relay serves the tested bundle.
+- **Left open:** I-017 tracks non-NVIDIA collection. Android and Apple were not
+  inspected or changed.
+- **Restart needed:** none; relay/web was already rebuilt and deployed.
+
 ## 2026-08-09 — chat transcript rebuilt Claude-Code style: diffs, tool rows, thinking, images
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
 
