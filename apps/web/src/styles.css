@@ -17,6 +17,7 @@
   --line-strong: #3a4a6b;
   --ink: #e3edfa;
   --ink-dim: #88a4c4;
+  --ink-soft: #b4c8de;
   --amber: #5ee1ff;
   --ok: #6ae0c2;
   --warn: #ff7070;
@@ -42,6 +43,8 @@
   /* Attention gold — pending approval/user-input highlights. */
   --gold: #ffd166;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
+  /* Comfortable line length for prose; code and output are exempt. */
+  --measure: 72ch;
   --sans: 'Inter', system-ui, sans-serif;
 }
 
@@ -54,6 +57,7 @@
   --line-strong: #64748b;
   --ink: #0f172a;
   --ink-dim: #475569;
+  --ink-soft: #2c3d52;
   /* Accents darkened for AA contrast on white; identity unchanged. */
   --amber: #007c9e;
   --ok: #0d7f66;
@@ -929,7 +933,7 @@ main.screen-host {
 .sub-reasoning.standalone { border-left-color: var(--line-strong); }
 
 /* Reasoning stays italic/dim so it recedes from agent replies. */
-.sub-reasoning { color: var(--ink-dim); font-style: italic; }
+.sub-reasoning { color: var(--ink-soft); }
 .sub-reasoning > summary {
   cursor: pointer;
   list-style: none;
@@ -1145,18 +1149,19 @@ main.screen-host {
 }
 
 .chip-row { display: flex; gap: 6px; }
-.chip { position: relative; flex: 1; min-width: 0; }
+.chip { position: relative; flex: 0 1 auto; min-width: 0; }
 .chip-button {
   width: 100%;
   background: var(--panel-2);
   border: 1px solid var(--line);
-  padding: 6px 10px;
+  padding: 4px 9px;
   text-align: left;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 6px;
   font-family: var(--mono);
   font-size: 11px;
+  white-space: nowrap;
 }
 .chip.danger .chip-button { border-color: var(--warn); }
 .chip-label { color: var(--ink-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
@@ -3510,6 +3515,7 @@ main.screen-host {
 .md-list li {
   font-family: var(--sans);
   line-height: 1.45;
+  max-width: var(--measure);
 }
 .md-h.md-h1 { font-size: 18px; font-weight: 700; }
 .md-h.md-h2 { font-size: 16px; font-weight: 700; }
@@ -3965,10 +3971,28 @@ main.screen-host {
   min-width: 0;
 }
 .tool-head .tool-meta {
-  margin-left: auto;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   color: var(--ink-dim);
   font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tool-head .tool-meta.err { color: var(--warn); }
+.tool-head .tool-meta.ok { color: color-mix(in srgb, var(--ok) 78%, var(--ink-dim)); }
+.tool-head .tool-meta.run { color: var(--accent); }
+
+/* The command on its own line: a full column instead of the sliver left
+   over beside the name and status. Aligned under the tool name, past the
+   dot. */
+.tool-cmd {
+  padding-left: 15px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ⎿ output gutter */
@@ -4032,8 +4056,15 @@ main.screen-host {
   white-space: nowrap;
   min-width: 0;
 }
-.thinking-preview { font-style: italic; opacity: 0.8; }
-.thinking-body { font-style: italic; font-size: 12px; margin-top: 2px; }
+.thinking-preview { color: var(--ink-dim); }
+.thinking-body {
+  margin-top: 3px;
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  max-width: var(--measure);
+}
 
 /* Diff view */
 .diff-view {

@@ -32,6 +32,56 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — transcript typography: prose in Inter, mono for code
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** committed, verified locally, NOT deployed
+
+Owner said the session view "looks mid" and picked a direction from options:
+hybrid typography, plus three specific fixes. Session-list hierarchy was
+offered and **declined** — left alone on purpose.
+
+- **Diagnosis:** everything in the transcript was 12px JetBrains Mono in
+  three greys, so a user message, a reasoning trace, a shell command and a
+  stack trace all carried identical weight. `--sans` was already declared
+  and the `md-*` prose rules already used it; reasoning and commands did not.
+- **I was wrong about contrast, and measured it rather than keep asserting
+  it.** `--ink-dim` is **7.74:1** on `--bg`, and 5.25:1 even at the 0.8
+  opacity `.thinking-preview` used — all passing AA. The legibility problem
+  was **italic monospace at 12px for prose**, not colour. So the change is
+  tone/weight, not a contrast lift. New `--ink-soft` (#b4c8de dark / #2c3d52
+  light) sits between chrome and reply text: 11.6:1 and 10.6:1.
+- **Changes** (`EventRow.jsx`, `styles.css`):
+  - Reasoning: italic dropped, Inter 13.5px, `--ink-soft`, 72ch measure.
+  - Tool rows restructured. Status was `margin-left: auto`, i.e. right-aligned
+    ~600px from its command — at this column width you could not tell which
+    command failed. Now `● shell · failed 127` on the header, colour-coded
+    (err/ok/run), and the command gets **its own full-width mono line**.
+  - `exit 1` → `failed 1` / `ok` / `running`: outcome in words reads at a
+    glance where an exit code needs a beat.
+  - `middleTruncate()` for commands (exported, unit-tested). Tail truncation
+    hid the payload — path, flags, redirect are usually at the end.
+  - `--measure: 72ch` applied to prose (`.md-p`, `.md-h`, `.md-list li`,
+    thinking body). Code, output and diffs are deliberately exempt.
+  - Composer chips to one row: `flex-direction: column` → baseline row.
+    **44px → 24px**, measured in-browser. They read
+    "default / medium / default" almost always.
+- **Verified:** 84/84 vitest, eslint clean, Vite build clean. Then rendered
+  against **real transcript data without deploying** — `vite preview` on the
+  built dist with a throwaway config proxying `/api` + `/ws` to the relay
+  container (`172.21.0.3:8080`). Reuse that trick; it beats redeploying to
+  look at CSS. Confirmed in both themes: 40 `.tool-cmd` lines, 42 `.ok` and
+  7 `.err` statuses, computed style on the reasoning body = `Inter 13.5px
+  font-style:normal rgb(180,200,222) max-width:648px`.
+- **Shared-tree care (I-018):** another agent was editing `styles.css` live
+  (a `.turn-queue` feature) while I was in it. Nothing was clobbered, and I
+  staged **only my own hunks** — rebuilt the file from `HEAD` with just my
+  edits, staged that, then restored the shared working copy. Verified: 0
+  `turn-queue` rules in the commit, all 6 still in the working tree. Their
+  `Composer.jsx` / `App.jsx` / `useRemotex.js` edits are untouched and
+  uncommitted.
+- **NOT deployed.** The owner's session had a live turn with a pending
+  command approval; recreating the relay drops the daemon socket under it.
+  Their call when to ship.
+
 ## 2026-08-09 — coherent dark, white, and high-contrast web themes
 **Agent:** Codex · **Branch:** main · **Status:** done, pending deploy
 

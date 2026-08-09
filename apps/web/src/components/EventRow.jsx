@@ -141,13 +141,17 @@ function ToolSub({ event, streaming, grouped }) {
   const failed = Boolean(event.error)
     || (Number.isFinite(event.exitCode) && event.exitCode !== 0);
   const dotClass = streaming ? 'run' : failed ? 'err' : 'ok';
-  const arg = firstLine(event.command);
+  const status = toolStatus(event, streaming);
+  const command = firstLineRaw(event.command);
   const hasRawDetails = event.rawArguments !== undefined
     || event.rawResult !== undefined
     || event.error;
 
   return (
     <div className={`sub sub-tool${grouped ? '' : ' standalone'}`}>
+      {/* Status sits next to the tool name, not right-aligned across the
+          row — at this column width the two ended up far enough apart that
+          you couldn't tell which command had failed. */}
       <button
         type="button"
         className="tool-head"
@@ -156,9 +160,16 @@ function ToolSub({ event, streaming, grouped }) {
       >
         <span className={`tool-dot ${dotClass}`} aria-hidden="true" />
         <span className="tool-name">{event.tool}</span>
-        {arg && !isEdit && <span className="tool-arg">({arg})</span>}
-        <span className="tool-meta">{toolMeta(event)}</span>
+        {status.text && (
+          <span className={`tool-meta ${status.kind}`}>· {status.text}</span>
+        )}
       </button>
+
+      {command && !isEdit && (
+        <div className="tool-cmd" title={command}>
+          {expanded ? command : middleTruncate(command, 150)}
+        </div>
+      )}
 
       {isEdit ? (
         <div className="tool-out">
@@ -245,13 +256,18 @@ function ToolDetail({ label, value }) {
   );
 }
 
-function toolMeta(event) {
+// Outcome first, in words, and coloured — "failed 1" reads at a glance where
+// "exit 1" needs a beat to interpret. Duration trails it when known.
+function toolStatus(event, streaming) {
+  if (streaming) return { kind: 'run', text: 'running' };
+  const badExit = Number.isFinite(event.exitCode) && event.exitCode !== 0;
+  const failed = Boolean(event.error) || badExit;
   const parts = [];
-  if (Number.isFinite(event.exitCode) && event.exitCode !== 0) parts.push(`exit ${event.exitCode}`);
-  if (event.status && event.status !== 'completed') parts.push(event.status);
+  if (failed) parts.push(badExit ? `failed ${event.exitCode}` : 'failed');
+  else if (event.status && event.status !== 'completed') parts.push(event.status);
+  else parts.push('ok');
   if (Number.isFinite(event.durationMs)) parts.push(formatMs(event.durationMs));
-  if (event.error) parts.push('error');
-  return parts.join(' · ');
+  return { kind: failed ? 'err' : 'ok', text: parts.join(' · ') };
 }
 
 function formatMs(ms) {
@@ -263,6 +279,19 @@ function firstLine(text) {
   // Strip markdown emphasis — headlines render as plain text.
   const line = (text || '').split('\n')[0].trim().replace(/\*\*?|__/g, '');
   return line.length > 80 ? `${line.slice(0, 77)}…` : line;
+}
+
+function firstLineRaw(text) {
+  return (text || '').split('\n')[0].trim();
+}
+
+// Cutting a shell command's tail hides the part that matters — the path, the
+// flags, the redirect. Keep both ends and elide the middle.
+export function middleTruncate(text, max) {
+  if (!text || text.length <= max) return text;
+  const keep = max - 1;
+  const head = Math.ceil(keep / 2);
+  return `${text.slice(0, head)}…${text.slice(text.length - (keep - head))}`;
 }
 
 function stringify(value) {
