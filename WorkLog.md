@@ -32,6 +32,44 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — shared Codex control plane, reconnect reconciliation, and web repair
+**Agent:** Codex · **Branch:** main · **Status:** done, deployment pending
+
+- **Why:** let a shell `codex` TUI and Remotex observe/control the same local
+  thread without spawning a second app-server, while retaining isolated stdio
+  as the portable default.
+- **Changed:**
+  - `services/daemon/adapters/shared.py`, `stdio.py`, `admin.py`, `factory.py`,
+    `services/daemon/client.py` — one host-level JSON-RPC WebSocket over Codex's
+    Unix socket, request/thread routing, hot-resume buffering and authoritative
+    active snapshots, local user-message forwarding/dedupe, delayed fallback
+    for unsupported shared server requests, socket-failure relay recycling,
+    and no ownership of the managed Codex process.
+  - `services/relay/{hub.py,handlers/ws_daemon.py}` — retain shared turn locks
+    across relay loss, reconcile them from `thread/resume`, but invalidate
+    adapter-owned prompt ids and send an empty authoritative prompt snapshot so
+    Codex can replay surviving requests under fresh ids. This corrects the
+    earlier reconnect entry's statement that prompt ids themselves survive.
+  - `apps/web/src/hooks/useRemotex.js` — authoritative resumed items repair
+    deltas missed during an outage; shared idle/active reconciliation repairs
+    composer and prompt state. `App.jsx` drops dead `closeRightView` (I-016).
+  - Config, installer, README/AGENTS/CLAUDE, tests, I-015, and ToDo document the
+    opt-in Unix-only shared mode, default socket, standalone/npm caveat, and
+    the external-clock upstream limitation. `stdio` remains the default.
+  - Android and Apple were explicitly excluded from this follow-up; their
+    independently owned work was not staged or modified here.
+- **Verified:** Codex 0.147 source plus matching running 0.144.3 source; real
+  WebSocket-over-UDS initialize/list/resume and active-turn probes; full Python
+  suite **174 passed** + Ruff; web ESLint clean, **66 tests**, production build;
+  disposable-Postgres relay↔daemon↔client E2E passed; focused tests prove relay
+  loss, shared socket death, prompt invalidation, hot-resume ordering, and
+  stdio compatibility; `git diff --check` and installer shell syntax clean.
+- **Left open:** running app-server is 0.144.3 while the managed CLI is 0.147.0;
+  restart it only after this active Codex session ends. I-014 remains blocked
+  on SparkTunnel supplying a trustworthy visitor IP.
+- **Restart needed:** rebuild relay/web and restart `remotex-daemon`; do not
+  restart the managed Codex app-server during this session.
+
 ## 2026-08-09 — native clients catch up: history paging (regression fix) + iOS stop/steer/patch
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done; iOS compile-verified via CI only
 

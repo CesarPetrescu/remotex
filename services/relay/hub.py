@@ -617,6 +617,38 @@ class Hub:
             )
             self._drop_session_prompt_tombstones(session_id)
 
+    async def invalidate_host_prompts(self, host_id: str) -> list[str]:
+        """Drop adapter-owned prompt ids while preserving shared turns.
+
+        A server request can survive in Codex's managed app-server, but the
+        Remotex approval/call id belongs to the adapter connection that just
+        disappeared. The resumed adapter receives Codex's replay and assigns a
+        fresh id, so retaining the old prompt would make it unanswerable and
+        duplicate the replayed request.
+
+        Return sessions whose authoritative prompt snapshot must be cleared
+        in attached clients.
+        """
+        async with self._lock:
+            session_ids = {
+                sid
+                for sid, bound_host in self.session_host.items()
+                if bound_host == host_id
+            }
+            prompt_sessions = {
+                sid for sid, _prompt_id in self.pending_approvals
+            } | {
+                sid for sid, _prompt_id in self.pending_user_inputs
+            }
+            affected = sorted(session_ids & prompt_sessions)
+            for sid in affected:
+                self._drop_session_prompts(sid)
+                self.session_prompt_gen[sid] = (
+                    self.session_prompt_gen.get(sid, 0) + 1
+                )
+                self._drop_session_prompt_tombstones(sid)
+            return affected
+
     async def try_begin_turn(self, session_id: str) -> bool:
         """Reserve the single active turn slot for a session."""
         async with self._lock:

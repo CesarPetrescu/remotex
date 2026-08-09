@@ -41,7 +41,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-013 | fixed | high | process | Local `main` was 3 commits / +7830 lines behind `origin/main`; a whole session was built on a stale base |
 | I-014 | blocked | medium | deploy/security | SparkTunnel 0.2.0 supplies no trustworthy visitor IP for per-address limits |
 | I-015 | wontfix | info | daemon/upstream | Codex external-clock mode rejects multi-subscriber shared threads |
-| I-016 | open | low | web | `closeRightView` is dead and keeps ESLint noisy |
+| I-016 | fixed | low | web | Dead `closeRightView` kept ESLint noisy |
 
 ---
 
@@ -422,12 +422,12 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 
 ## I-016 — dead `closeRightView` keeps web lint noisy
 
-**Status:** open · **Sev:** low · **Area:** web · **Opened:** 2026-08-09
+**Status:** fixed · **Sev:** low · **Area:** web · **Opened:** 2026-08-09 · **Fixed:** 2026-08-09
 
 - **Symptom:** `npm run lint` succeeds with one warning instead of cleanly:
   `apps/web/src/App.jsx:106:9 'closeRightView' is assigned a value but never used`.
 - **Cause:** the callback remained after the drawer close controls stopped
   calling it.
-- **How to fix:** delete the unused callback, or route the intended close
-  action through it if a caller still needs to be restored.
+- **Fix:** removed the unused callback; live close paths already update the
+  persisted right-view state directly.
 - **Evidence:** `cd apps/web && npm run lint` on 2026-08-09.

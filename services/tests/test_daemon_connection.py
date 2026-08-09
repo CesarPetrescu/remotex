@@ -145,6 +145,89 @@ async def test_reconnects_after_websocket_dies(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_shared_codex_socket_death_recycles_relay_and_reconnects(monkeypatch):
+    connections = 0
+    first_welcome = asyncio.Event()
+    reconnected = asyncio.Event()
+
+    async def relay_socket(request: web.Request) -> web.WebSocketResponse:
+        nonlocal connections
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        hello = await ws.receive_json()
+        assert hello["type"] == "hello"
+        assert hello["mode"] == "shared"
+        connections += 1
+        await ws.send_json({"type": "welcome", "host_id": "host_test"})
+        if connections == 1:
+            first_welcome.set()
+        else:
+            reconnected.set()
+        async for _ in ws:
+            pass
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/ws/daemon", relay_socket)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    assert site._server is not None  # type: ignore[attr-defined]
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[attr-defined]
+
+    instances = []
+
+    class FakeSharedConnection:
+        user_agent = "fake-shared-codex"
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.disconnect_handler = None
+            self.failure_task = None
+            instances.append(self)
+
+        async def start(self) -> None:
+            return None
+
+        def set_disconnect_handler(self, handler) -> None:
+            self.disconnect_handler = handler
+            if handler is not None and len(instances) == 1:
+                async def fail_after_welcome() -> None:
+                    await first_welcome.wait()
+                    await handler(RuntimeError("fake Codex socket died"))
+
+                self.failure_task = asyncio.create_task(fail_after_welcome())
+
+        async def close(self) -> None:
+            task = self.failure_task
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def idle_telemetry(*_args) -> None:
+        await asyncio.Future()
+
+    monkeypatch.setattr(client_module, "SharedCodexConnection", FakeSharedConnection)
+    monkeypatch.setattr(client_module, "_retry_delay", lambda _backoff: 0.0)
+    monkeypatch.setattr(client_module, "telemetry_loop", idle_telemetry)
+
+    cfg = _config(f"ws://127.0.0.1:{port}/ws/daemon")
+    cfg.mode = "shared"
+    cfg.codex_socket_path = "/tmp/fake-codex.sock"
+    daemon = DaemonClient(cfg)
+    daemon_task = asyncio.create_task(daemon.run())
+    try:
+        await asyncio.wait_for(reconnected.wait(), timeout=2.0)
+        assert connections == 2
+        assert len(instances) >= 2
+    finally:
+        daemon_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await daemon_task
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_real_replacement_close_stops_without_reconnecting(monkeypatch):
     """Use a real aiohttp close frame: ``ws.close_code`` can become 1006
     after receiving code 4000, so the daemon must inspect the frame itself."""

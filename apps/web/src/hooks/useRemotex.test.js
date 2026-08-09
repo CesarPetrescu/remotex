@@ -264,3 +264,30 @@ describe('resumed item snapshots', () => {
     expect(next.events[0].completed).toBe(true);
   });
 });
+
+describe('shared turn reconnect reconciliation', () => {
+  test('idle snapshot clears the stale turn lock and adapter-owned prompts', () => {
+    const stale = run([
+      { type: 'PENDING', pending: true },
+      { type: 'APPROVAL_REQUEST', prompt: approval('old-approval') },
+      { type: 'USER_INPUT_REQUEST', prompt: userInput('old-input') },
+    ]);
+
+    const next = reducer(stale, {
+      type: 'SHARED_TURN_RECONCILED',
+      active: false,
+    });
+
+    expect(next.pending).toBe(false);
+    expect(next.pendingApprovals).toEqual([]);
+    expect(next.pendingUserInputs).toEqual([]);
+  });
+
+  test('active snapshot keeps the composer locked', () => {
+    const next = reducer(initialState, {
+      type: 'SHARED_TURN_RECONCILED',
+      active: true,
+    });
+    expect(next.pending).toBe(true);
+  });
+});

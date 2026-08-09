@@ -59,6 +59,25 @@ async def test_detach_daemon_only_removes_matching_ws():
 
 
 @pytest.mark.asyncio
+async def test_invalidate_host_prompts_preserves_turn_and_other_hosts():
+    hub = Hub()
+    await hub.attach_client("sess_a", "host_a", "web", _ws_mock())
+    await hub.attach_client("sess_b", "host_b", "web", _ws_mock())
+    hub.mark_turn_started("sess_a")
+    await hub.note_approval_request("sess_a", "appr_a")
+    await hub.note_user_input_request("sess_a", "input_a")
+    await hub.note_approval_request("sess_b", "appr_b")
+
+    affected = await hub.invalidate_host_prompts("host_a")
+
+    assert affected == ["sess_a"]
+    assert hub.turn_in_flight["sess_a"] is True
+    assert (await hub.pending_prompt_snapshot("sess_a"))["approvals"] == []
+    assert (await hub.pending_prompt_snapshot("sess_a"))["user_inputs"] == []
+    assert len((await hub.pending_prompt_snapshot("sess_b"))["approvals"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_session_open_frame_replay_for_host():
     hub = Hub()
     await hub.ensure_session_open_frame("sess_1", "host_x")

@@ -64,6 +64,25 @@ async def _broadcast_interrupted_turns(
     ))
 
 
+async def _invalidate_shared_prompts(hub: Hub, host_id: str) -> None:
+    """Clear prompt ids owned by a disconnected shared adapter.
+
+    Codex replays a still-pending server request to the resumed adapter, which
+    creates a fresh Remotex id. An empty authoritative snapshot closes the old
+    dialog now; the replay opens the replacement after reconnect.
+    """
+    session_ids = await hub.invalidate_host_prompts(host_id)
+    await asyncio.gather(*(
+        hub.broadcast_to_session(session_id, {
+            "type": "pending-prompts",
+            "session_id": session_id,
+            "approvals": [],
+            "user_inputs": [],
+        })
+        for session_id in session_ids
+    ))
+
+
 async def _owns_session(hub: Hub, store: Store, host_id: str, session_id: str) -> bool:
     """Is this session really served by the daemon that just sent a frame?
 
@@ -144,6 +163,8 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             old_ws is None or old_mode == "shared"
         )
         interrupted = [] if preserve_turns else await hub.abort_host_turns(host_id)
+        if preserve_turns:
+            await _invalidate_shared_prompts(hub, host_id)
         await ws.send_json({"type": "welcome", "host_id": host_id})
         for open_frame in await hub.session_open_frames_for_host(host_id):
             await ws.send_json(open_frame)
@@ -347,13 +368,16 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             if detached:
                 # Isolated adapters own their Codex child, so their active turn
                 # dies here. Shared adapters only unsubscribe from a managed
-                # app-server; keep their turn/prompt state until the atomic
-                # resume snapshot reconciles it on the next connection.
+                # app-server; preserve the turn until its atomic resume
+                # snapshot reconciles it. Prompt ids belong to this adapter,
+                # though, so clear them and let Codex replay fresh requests.
                 interrupted = (
                     []
                     if daemon_mode == "shared"
                     else await hub.abort_host_turns(host_id)
                 )
+                if daemon_mode == "shared":
+                    await _invalidate_shared_prompts(hub, host_id)
                 await _broadcast_interrupted_turns(hub, host_id, interrupted)
                 await store.mark_host(host_id, False)
                 hub.host_telemetry.pop(host_id, None)

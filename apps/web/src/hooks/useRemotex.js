@@ -483,6 +483,10 @@ export function reducer(state, action) {
     case 'PENDING':
       return { ...state, pending: action.pending };
 
+    case 'SHARED_TURN_RECONCILED':
+      if (action.active) return { ...state, pending: true };
+      return withPromptQueues({ ...state, pending: false }, [], []);
+
     case 'SET_MODEL':
       return {
         ...state,
@@ -942,6 +946,12 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
             info: { model: data.model, cwd: data.cwd },
           });
           dispatch({ type: 'SET_ERROR', error: null });
+          if (typeof data.shared_turn_in_flight === 'boolean') {
+            dispatch({
+              type: 'SHARED_TURN_RECONCILED',
+              active: data.shared_turn_in_flight,
+            });
+          }
         } else if (data.status === 'resume-failed') {
           dispatch({ type: 'RESUMING_END' });
           dispatch({ type: 'SESSION_STATUS', status: STATUS.Error });

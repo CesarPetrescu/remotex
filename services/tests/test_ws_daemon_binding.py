@@ -218,12 +218,17 @@ async def test_shared_disconnect_preserves_turn_until_resume_reconciles(aiohttp_
     assert connection is not None and connection.transport is not None
     connection.transport.abort()
     await _wait_until(
-        lambda: hub.daemon_for("host_a", include_unready=True) is None,
+        lambda: (
+            hub.daemon_for("host_a", include_unready=True) is None
+            and watcher.send_json.await_count == 1
+        ),
     )
 
-    watcher.send_json.assert_not_awaited()
+    prompt_reset = watcher.send_json.await_args.args[0]
+    assert prompt_reset["type"] == "pending-prompts"
+    assert prompt_reset["approvals"] == []
     assert hub.turn_in_flight["sess_victim"] is True
-    assert (await hub.pending_prompt_snapshot("sess_victim"))["approvals"]
+    assert (await hub.pending_prompt_snapshot("sess_victim"))["approvals"] == []
 
     async with client.ws_connect("/ws/daemon") as reconnected:
         await reconnected.send_json({
@@ -248,10 +253,10 @@ async def test_shared_disconnect_preserves_turn_until_resume_reconciles(aiohttp_
     assert hub.turn_in_flight["sess_victim"] is False
     assert (await hub.pending_prompt_snapshot("sess_victim"))["approvals"] == []
     sent = watcher.send_json.await_args_list
-    assert len(sent) == 1
-    assert sent[0].args[0]["event"]["kind"] == "thread-status"
+    assert len(sent) == 2
+    assert sent[1].args[0]["event"]["kind"] == "thread-status"
     assert not any(
-        frame["event"].get("kind") == "turn-completed"
+        (frame.get("event") or {}).get("kind") == "turn-completed"
         for frame in await hub.replay_since("sess_victim", 0)
     )
 

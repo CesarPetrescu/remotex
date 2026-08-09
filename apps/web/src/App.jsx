@@ -103,11 +103,6 @@ function AuthenticatedApp({ auth, onLogout }) {
     }
   }, [setRightView]);
 
-  const closeRightView = useCallback(() => {
-    setRightView('off');
-    setRightOpen(false);
-  }, [setRightView]);
-
   useEffect(() => {
     if (!pendingPromptKey) {
       if (rightView === 'prompts') {
