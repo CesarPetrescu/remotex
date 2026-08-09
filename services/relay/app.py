@@ -41,6 +41,7 @@ from .handlers import static as static_h
 from .handlers import threads as threads_h
 from .handlers.ws_client import ws_client
 from .handlers.ws_daemon import ws_daemon
+from .handlers.ws_inventory import ws_inventory
 from .hub import Hub
 from .limits import HTTP_MAX_BODY_BYTES
 from .logging import configure_json_logging
@@ -99,6 +100,7 @@ def make_app(database_url: str | None, static_root: Path) -> web.Application:
     app.router.add_post("/api/sessions", sessions_h.open_session)
     app.router.add_get("/ws/daemon", ws_daemon)
     app.router.add_get("/ws/client", ws_client)
+    app.router.add_get("/ws/inventory", ws_inventory)
     # Vite drops hashed bundles into static_root/assets; the legacy
     # single-file demo has no /assets dir. Only mount the route when the
     # directory exists so the old tree still serves.

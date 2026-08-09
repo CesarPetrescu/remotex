@@ -3,42 +3,131 @@ package app.remotex.ui.theme
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// Palette derived from docs/brand/logo.png but pitched to OLED-dark:
-// the cyan/teal accents from the logo on top of near-black surfaces
-// so the phone doesn't light up a wall of blue at night.
+// Two palettes, one token set — mirrors apps/web/src/styles.css.
+//
+// The token NAMES are kept as top-level properties (Ink, InkDim, Amber…)
+// because ~20 files already import them directly. Redefining them as
+// @Composable getters over a CompositionLocal makes every existing call
+// site theme-aware without a single import change.
 
-private val Bg = Color(0xFF050910)        // near-black with a hint of navy
-private val Panel = Color(0xFF0A1120)     // one step up from bg
-private val Panel2 = Color(0xFF121A2C)    // elevated surface
-val Line = Color(0xFF1D2940)              // subtle divider
-val Ink = Color(0xFFE3EDFA)               // primary text, cool white
-val InkDim = Color(0xFF88A4C4)             // secondary text
-val Amber = Color(0xFF5EE1FF)              // brand accent (cyan from logo)
-                                          // name kept for migration — swap later
-val AccentDeep = Color(0xFF3AA0E8)        // deeper accent for hover / hint
-val Ok = Color(0xFF6AE0C2)                // teal, sits inside the blue family
-val Warn = Color(0xFFFF7070)              // soft red, legible on black
-
-private val RemotexColors = darkColorScheme(
-    primary = Amber,
-    onPrimary = Bg,
-    background = Bg,
-    onBackground = Ink,
-    surface = Panel,
-    onSurface = Ink,
-    surfaceVariant = Panel2,
-    onSurfaceVariant = InkDim,
-    error = Warn,
-    onError = Bg,
+data class RemotexPalette(
+    val bg: Color,
+    val panel: Color,
+    val panel2: Color,
+    val line: Color,
+    val ink: Color,
+    val inkDim: Color,
+    val accent: Color,
+    val accentDeep: Color,
+    val ok: Color,
+    val warn: Color,
+    val gold: Color,
+    val onAccent: Color,
+    // Syntax highlighting + diff tints.
+    val codeString: Color,
+    val codeNumber: Color,
+    val codeKeyword: Color,
+    val codeComment: Color,
+    val isDark: Boolean,
 )
+
+// OLED-dark: cyan/teal accents from docs/brand/logo.png on near-black.
+val DarkPalette = RemotexPalette(
+    bg = Color(0xFF050910),
+    panel = Color(0xFF0A1120),
+    panel2 = Color(0xFF121A2C),
+    line = Color(0xFF1D2940),
+    ink = Color(0xFFE3EDFA),
+    inkDim = Color(0xFF88A4C4),
+    accent = Color(0xFF5EE1FF),
+    accentDeep = Color(0xFF3AA0E8),
+    ok = Color(0xFF6AE0C2),
+    warn = Color(0xFFFF7070),
+    gold = Color(0xFFFFD166),
+    onAccent = Color(0xFF050910),
+    codeString = Color(0xFF9CD4A0),
+    codeNumber = Color(0xFFE0B479),
+    codeKeyword = Color(0xFF5EE1FF),
+    codeComment = Color(0xFF88A4C4),
+    isDark = true,
+)
+
+// Light: same identity, accents darkened for AA contrast on white.
+val LightPalette = RemotexPalette(
+    bg = Color(0xFFF6F8FB),
+    panel = Color(0xFFFFFFFF),
+    panel2 = Color(0xFFEEF2F8),
+    line = Color(0xFFD7DFEB),
+    ink = Color(0xFF101B2C),
+    inkDim = Color(0xFF51677F),
+    accent = Color(0xFF007C9E),
+    accentDeep = Color(0xFF1668C7),
+    ok = Color(0xFF0D7F66),
+    warn = Color(0xFFD92D20),
+    gold = Color(0xFFA97B00),
+    onAccent = Color(0xFFFFFFFF),
+    codeString = Color(0xFF1A7F37),
+    codeNumber = Color(0xFFA15C07),
+    codeKeyword = Color(0xFF007C9E),
+    codeComment = Color(0xFF51677F),
+    isDark = false,
+)
+
+val LocalPalette = compositionLocalOf { DarkPalette }
+
+// --- token accessors: same names the whole app already imports ---------
+
+val Ink: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.ink
+val InkDim: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.inkDim
+val Line: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.line
+val Amber: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.accent
+val AccentDeep: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.accentDeep
+val Ok: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.ok
+val Warn: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.warn
+val Gold: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.gold
+val OnAccent: Color @Composable @ReadOnlyComposable get() = LocalPalette.current.onAccent
+
+private fun schemeFor(p: RemotexPalette) = if (p.isDark) {
+    darkColorScheme(
+        primary = p.accent,
+        onPrimary = p.onAccent,
+        background = p.bg,
+        onBackground = p.ink,
+        surface = p.panel,
+        onSurface = p.ink,
+        surfaceVariant = p.panel2,
+        onSurfaceVariant = p.inkDim,
+        error = p.warn,
+        onError = p.bg,
+    )
+} else {
+    lightColorScheme(
+        primary = p.accent,
+        onPrimary = p.onAccent,
+        background = p.bg,
+        onBackground = p.ink,
+        surface = p.panel,
+        onSurface = p.ink,
+        surfaceVariant = p.panel2,
+        onSurfaceVariant = p.inkDim,
+        error = p.warn,
+        onError = p.panel,
+    )
+}
 
 @Composable
 fun RemotexTheme(
-    @Suppress("UNUSED_PARAMETER") darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(colorScheme = RemotexColors, content = content)
+    val palette = if (darkTheme) DarkPalette else LightPalette
+    androidx.compose.runtime.CompositionLocalProvider(LocalPalette provides palette) {
+        MaterialTheme(colorScheme = schemeFor(palette), content = content)
+    }
 }

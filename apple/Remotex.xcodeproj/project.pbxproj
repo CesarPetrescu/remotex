@@ -17,6 +17,10 @@
 		91A000000000000000000108 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 91A000000000000000000208 /* Assets.xcassets */; };
 		91A000000000000000000109 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A000000000000000000211 /* Keychain.swift */; };
 		91A000000000000000000110 /* PendingPromptsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A000000000000000000212 /* PendingPromptsView.swift */; };
+		91A00000000000000000131 /* Markdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A00000000000000000231 /* Markdown.swift */; };
+		91A00000000000000000132 /* DiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A00000000000000000232 /* DiffView.swift */; };
+		91A00000000000000000133 /* TelemetryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A00000000000000000233 /* TelemetryView.swift */; };
+		91A00000000000000000134 /* WorkspaceFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A00000000000000000234 /* WorkspaceFilesView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +36,10 @@
 		91A000000000000000000210 /* Remotex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Remotex.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91A000000000000000000211 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		91A000000000000000000212 /* PendingPromptsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingPromptsView.swift; sourceTree = "<group>"; };
+		91A00000000000000000231 /* Markdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Markdown.swift; sourceTree = "<group>"; };
+		91A00000000000000000232 /* DiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffView.swift; sourceTree = "<group>"; };
+		91A00000000000000000233 /* TelemetryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryView.swift; sourceTree = "<group>"; };
+		91A00000000000000000234 /* WorkspaceFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFilesView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -65,6 +73,10 @@
 				91A000000000000000000211 /* Keychain.swift */,
 				91A000000000000000000206 /* Models.swift */,
 				91A000000000000000000207 /* Theme.swift */,
+				91A00000000000000000234 /* WorkspaceFilesView.swift */,
+				91A00000000000000000233 /* TelemetryView.swift */,
+				91A00000000000000000232 /* DiffView.swift */,
+				91A00000000000000000231 /* Markdown.swift */,
 				91A000000000000000000209 /* Info.plist */,
 				91A000000000000000000208 /* Assets.xcassets */,
 			);
@@ -157,6 +169,10 @@
 				91A000000000000000000109 /* Keychain.swift in Sources */,
 				91A000000000000000000106 /* Models.swift in Sources */,
 				91A000000000000000000107 /* Theme.swift in Sources */,
+				91A00000000000000000134 /* WorkspaceFilesView.swift in Sources */,
+				91A00000000000000000133 /* TelemetryView.swift in Sources */,
+				91A00000000000000000132 /* DiffView.swift in Sources */,
+				91A00000000000000000131 /* Markdown.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

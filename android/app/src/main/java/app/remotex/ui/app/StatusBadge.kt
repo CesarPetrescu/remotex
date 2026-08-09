@@ -59,6 +59,8 @@ private fun StatusDot(color: androidx.compose.ui.graphics.Color, pulse: Boolean)
     Box(Modifier.size(8.dp).background(color).alpha(alpha))
 }
 
+@Composable
+@androidx.compose.runtime.ReadOnlyComposable
 private fun labelFor(state: UiState): Triple<androidx.compose.ui.graphics.Color, String, Boolean> = when (state.status) {
     Status.Connected -> Triple(Ok, "connected", false)
     Status.Opening, Status.Connecting -> Triple(Amber, "connecting…", true)

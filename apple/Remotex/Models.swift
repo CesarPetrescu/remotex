@@ -146,3 +146,92 @@ struct ModelOption: Identifiable, Decodable, Equatable {
 struct ModelsResponse: Decodable {
     let models: [ModelOption]
 }
+
+
+// Telemetry: every numeric field is optional because the daemon omits what
+// it can't measure (no GPU block on non-NVIDIA hosts, no temperature inside
+// containers).
+struct CpuTelemetry: Decodable {
+    let percent: Double?
+    let cores: Int?
+    let tempC: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case percent, cores
+        case tempC = "temp_c"
+    }
+}
+
+struct MemoryTelemetry: Decodable {
+    let usedBytes: Int64?
+    let totalBytes: Int64?
+    let percent: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case usedBytes = "used_bytes"
+        case totalBytes = "total_bytes"
+        case percent
+    }
+}
+
+struct GpuTelemetry: Decodable, Identifiable {
+    let name: String?
+    let percent: Double?
+    let memUsedMb: Double?
+    let memTotalMb: Double?
+
+    var id: String { name ?? "gpu" }
+
+    enum CodingKeys: String, CodingKey {
+        case name, percent
+        case memUsedMb = "mem_used_mb"
+        case memTotalMb = "mem_total_mb"
+    }
+}
+
+struct NetworkTelemetry: Decodable {
+    let upBps: Int64?
+    let downBps: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case upBps = "up_bps"
+        case downBps = "down_bps"
+    }
+}
+
+struct HostTelemetryData: Decodable {
+    let cpu: CpuTelemetry?
+    let memory: MemoryTelemetry?
+    let gpus: [GpuTelemetry]?
+    let gpu: GpuTelemetry?
+    let network: NetworkTelemetry?
+    let uptimeS: Int64?
+    let loadAvg: [Double]?
+
+    enum CodingKeys: String, CodingKey {
+        case cpu, memory, gpus, gpu, network
+        case uptimeS = "uptime_s"
+        case loadAvg = "load_avg"
+    }
+}
+
+struct HostTelemetryResponse: Decodable {
+    let data: HostTelemetryData?
+}
+
+struct FsEntry: Decodable, Identifiable {
+    let fileName: String
+    let isDirectory: Bool
+
+    var id: String { fileName }
+
+    enum CodingKeys: String, CodingKey {
+        case fileName = "fileName"
+        case isDirectory = "isDirectory"
+    }
+}
+
+struct FsListResponse: Decodable {
+    let path: String?
+    let entries: [FsEntry]
+}

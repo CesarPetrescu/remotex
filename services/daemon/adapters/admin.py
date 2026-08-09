@@ -145,7 +145,11 @@ class AdminCodex:
         return await self._call("fs/readDirectory", {"path": path})
 
     def _build_list_params(self, limit: int, cursor: str | None) -> dict:
-        params: dict = {"limit": limit}
+        params: dict = {
+            "limit": limit,
+            "sortKey": "recency_at",
+            "sortDirection": "desc",
+        }
         if cursor:
             params["cursor"] = cursor
         return params

@@ -59,6 +59,59 @@ async def test_detach_daemon_only_removes_matching_ws():
 
 
 @pytest.mark.asyncio
+async def test_inventory_replacement_is_safe_from_stale_detach():
+    hub = Hub()
+    old = _ws_mock()
+    new = _ws_mock()
+
+    await hub.attach_inventory_client("owner-a", "browser", old)
+    await hub.attach_inventory_client("owner-a", "browser", new)
+
+    old.close.assert_awaited_once_with(code=4000, message=b"replaced")
+    assert await hub.detach_inventory_client("owner-a", "browser", old) is False
+    assert hub.inventory_clients["owner-a"]["browser"] is new
+    assert await hub.detach_inventory_client("owner-a", "browser", new) is True
+    assert "owner-a" not in hub.inventory_clients
+
+
+@pytest.mark.asyncio
+async def test_inventory_broadcast_is_owner_scoped_and_bounded():
+    hub = Hub()
+    mine = _ws_mock()
+    other = _ws_mock()
+    await hub.attach_inventory_client("owner-a", "mine", mine)
+    await hub.attach_inventory_client("owner-b", "other", other)
+
+    assert await hub.broadcast_to_inventory(
+        "owner-a", {"type": "threads-changed", "host_id": "host-a"},
+    ) is True
+
+    mine.send_json.assert_awaited_once()
+    other.send_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_daemon_cannot_publish_inventory_changes():
+    hub = Hub()
+    old_daemon = _ws_mock()
+    current_daemon = _ws_mock()
+    inventory = _ws_mock()
+    await hub.attach_inventory_client("owner-a", "browser", inventory)
+    await hub.attach_daemon("host-a", old_daemon)
+    await hub.attach_daemon("host-a", current_daemon)
+    frame = {"type": "threads-changed", "host_id": "host-a"}
+
+    assert await hub.broadcast_to_inventory(
+        "owner-a", frame, daemon_source=("host-a", old_daemon),
+    ) is False
+    inventory.send_json.assert_not_awaited()
+    assert await hub.broadcast_to_inventory(
+        "owner-a", frame, daemon_source=("host-a", current_daemon),
+    ) is True
+    inventory.send_json.assert_awaited_once_with(frame)
+
+
+@pytest.mark.asyncio
 async def test_invalidate_host_prompts_preserves_turn_and_other_hosts():
     hub = Hub()
     await hub.attach_client("sess_a", "host_a", "web", _ws_mock())

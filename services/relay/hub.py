@@ -112,6 +112,16 @@ class Hub:
         # Key by host *and* socket identity so overlapping handshakes cannot
         # mark a newer connection ready by mistake.
         self._unready_daemons: dict[str, web.WebSocketResponse] = {}
+        # Serialize online/offline handoffs per host. Without this, a fresh
+        # daemon can become current while the old handler is awaiting cleanup,
+        # then be overwritten by the old handler's later `mark_host(False)`.
+        self._daemon_transition_locks: dict[str, asyncio.Lock] = {}
+        # Hashed owner token -> browser client id -> inventory socket. The
+        # stored owner key is the same hashed value returned by Store; raw
+        # bearer tokens never enter long-lived hub state.
+        self.inventory_clients: dict[
+            str, dict[str, web.WebSocketResponse]
+        ] = {}
         self.session_clients: dict[str, dict[str, ClientConnection]] = {}
         self.session_host: dict[str, str] = {}
         self.session_open_frames: dict[str, dict] = {}
@@ -214,6 +224,65 @@ class Hub:
     def daemon_mode_for(self, ws: web.WebSocketResponse | None) -> str:
         """Return the mode advertised by this exact daemon socket."""
         return self._daemon_modes.get(id(ws), "stdio") if ws is not None else "stdio"
+
+    def daemon_transition_lock(self, host_id: str) -> asyncio.Lock:
+        """One short-lived connect/disconnect transition at a time per host."""
+        return self._daemon_transition_locks.setdefault(host_id, asyncio.Lock())
+
+    async def attach_inventory_client(
+        self,
+        owner_token: str,
+        client_id: str,
+        ws: web.WebSocketResponse,
+    ) -> None:
+        old: web.WebSocketResponse | None = None
+        async with self._lock:
+            clients = self.inventory_clients.setdefault(owner_token, {})
+            old = clients.get(client_id)
+            clients[client_id] = ws
+        if old is not None and old is not ws and not old.closed:
+            await old.close(code=4000, message=b"replaced")
+
+    async def detach_inventory_client(
+        self,
+        owner_token: str,
+        client_id: str,
+        ws: web.WebSocketResponse,
+    ) -> bool:
+        """Remove only the exact socket, preserving a newer replacement."""
+        async with self._lock:
+            clients = self.inventory_clients.get(owner_token)
+            if clients is None or clients.get(client_id) is not ws:
+                return False
+            clients.pop(client_id, None)
+            if not clients:
+                self.inventory_clients.pop(owner_token, None)
+            return True
+
+    async def broadcast_to_inventory(
+        self,
+        owner_token: str,
+        frame: dict,
+        *,
+        daemon_source: tuple[str, web.WebSocketResponse] | None = None,
+    ) -> bool:
+        """Bounded owner-scoped fanout, optionally gated to a live daemon."""
+        async with self._lock:
+            if daemon_source is not None:
+                host_id, source_ws = daemon_source
+                if self.daemons.get(host_id) is not source_ws:
+                    return False
+            sockets = list({
+                id(ws): ws
+                for ws in self.inventory_clients.get(owner_token, {}).values()
+                if not ws.closed
+            }.values())
+        if not sockets:
+            return False
+        results = await asyncio.gather(*(
+            _bounded_send(ws, frame, role="inventory") for ws in sockets
+        ))
+        return any(results)
 
     async def attach_client(
         self,

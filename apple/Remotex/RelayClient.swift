@@ -99,6 +99,36 @@ final class RelayClient {
         return try decoder.decode(ModelsResponse.self, from: data).models
     }
 
+    func hostTelemetry(
+        baseURL: String,
+        userToken: String,
+        hostId: String
+    ) async throws -> HostTelemetryData? {
+        var request = URLRequest(
+            url: try url(baseURL: baseURL, path: "/api/hosts/\(hostId)/telemetry")
+        )
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
+        let data = try await data(for: request)
+        return try decoder.decode(HostTelemetryResponse.self, from: data).data
+    }
+
+    func readDirectory(
+        baseURL: String,
+        userToken: String,
+        hostId: String,
+        path: String
+    ) async throws -> FsListResponse {
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? path
+        var request = URLRequest(
+            url: try url(baseURL: baseURL, path: "/api/hosts/\(hostId)/fs?path=\(encoded)")
+        )
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
+        let data = try await data(for: request)
+        return try decoder.decode(FsListResponse.self, from: data)
+    }
+
     private func data(for request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {

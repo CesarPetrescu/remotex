@@ -196,6 +196,8 @@ private fun stripBullet(line: String): String {
 
 // --- inline formatting --------------------------------------------------
 
+@Composable
+@androidx.compose.runtime.ReadOnlyComposable
 private fun inlineFormat(text: String, base: Color): AnnotatedString = buildAnnotatedString {
     var i = 0
     while (i < text.length) {
@@ -206,7 +208,7 @@ private fun inlineFormat(text: String, base: Color): AnnotatedString = buildAnno
                 withStyle(
                     SpanStyle(
                         color = Amber,
-                        background = Color(0xFF1A1E26),
+                        background = app.remotex.ui.theme.LocalPalette.current.panel2,
                         fontFamily = FontFamily.Monospace,
                     )
                 ) {
@@ -300,7 +302,7 @@ private fun CodeBlockView(text: String) {
     ) {
         Box {
             Text(
-                text,
+                highlightCode(text),
                 color = Ink,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,

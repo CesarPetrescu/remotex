@@ -235,6 +235,45 @@ class DaemonClient:
                         async with send_lock:
                             await ws.send_str(payload)
 
+                    inventory_task: asyncio.Task | None = None
+                    if shared is not None:
+                        inventory_changed = asyncio.Event()
+                        pending_inventory_frame: dict = {}
+
+                        async def thread_lifecycle_changed(message: dict) -> None:
+                            params = message.get("params") or {}
+                            thread = params.get("thread") or {}
+                            thread_id = (
+                                params.get("threadId")
+                                or params.get("thread_id")
+                                or thread.get("id")
+                            )
+                            pending_inventory_frame.clear()
+                            pending_inventory_frame.update({
+                                "type": "threads-changed",
+                                "method": message.get("method"),
+                            })
+                            if isinstance(thread_id, str) and thread_id:
+                                pending_inventory_frame["thread_id"] = thread_id
+                            # Never await relay backpressure on Codex's shared
+                            # JSON-RPC reader. One worker coalesces bursts into
+                            # the newest authoritative-list invalidation.
+                            inventory_changed.set()
+
+                        async def publish_inventory_changes() -> None:
+                            while True:
+                                await inventory_changed.wait()
+                                inventory_changed.clear()
+                                await send(dict(pending_inventory_frame))
+
+                        shared.set_thread_lifecycle_handler(
+                            thread_lifecycle_changed,
+                        )
+                        inventory_task = asyncio.create_task(
+                            publish_inventory_changes(),
+                            name="daemon-thread-inventory",
+                        )
+
                     telemetry_task = asyncio.create_task(
                         telemetry_loop(self._telemetry, send),
                         name="daemon-telemetry",
@@ -274,11 +313,15 @@ class DaemonClient:
                         # it ended cleanly or by exception. Leaving them alive
                         # leaks codex app-server subprocesses because their
                         # adapter.stop() is what terminates the child.
-                        telemetry_task.cancel()
-                        try:
-                            await telemetry_task
-                        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                            pass
+                        background_tasks = [telemetry_task]
+                        if inventory_task is not None:
+                            background_tasks.append(inventory_task)
+                        for task in background_tasks:
+                            task.cancel()
+                        await asyncio.gather(
+                            *background_tasks,
+                            return_exceptions=True,
+                        )
                         await self._close_all_sessions()
 
                     if ws.close_code == _DAEMON_REPLACED_CLOSE_CODE:
@@ -307,6 +350,7 @@ class DaemonClient:
             ) from exc
         finally:
             if shared is not None:
+                shared.set_thread_lifecycle_handler(None)
                 shared.set_disconnect_handler(None)
                 self._admin.bind_shared(None)
                 if self._shared is shared:
@@ -852,6 +896,15 @@ class _SessionRunner:
         try:
             async for ev in self.adapter.events():
                 await self._send(ev.to_frame(self.session_id))
+                if ev.kind in {"session-started", "turn-completed"}:
+                    frame = {
+                        "type": "threads-changed",
+                        "reason": ev.kind,
+                    }
+                    thread_id = ev.data.get("thread_id")
+                    if isinstance(thread_id, str) and thread_id:
+                        frame["thread_id"] = thread_id
+                    await self._send(frame)
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001

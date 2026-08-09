@@ -7,6 +7,7 @@ import pytest
 from aiohttp import web
 
 from daemon import client as client_module
+from daemon.adapters.base import SessionEvent
 from daemon.client import (
     DaemonClient,
     _RelayAuthenticationError,
@@ -38,6 +39,55 @@ async def test_ping_request_answers_immediately():
     )
 
     assert sent == [{"type": "ping-response", "request_id": "req_ping"}]
+
+
+@pytest.mark.asyncio
+async def test_session_runner_invalidates_inventory_at_thread_boundaries():
+    sent: list[dict] = []
+    exited = asyncio.Event()
+
+    class FakeAdapter:
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+        async def events(self):
+            yield SessionEvent("session-started", {"thread_id": "thr_1"})
+            yield SessionEvent("item-completed", {"item_id": "item_1"})
+            yield SessionEvent("turn-completed", {"status": "completed"})
+
+    async def send(frame: dict) -> None:
+        sent.append(frame)
+
+    runner = client_module._SessionRunner(
+        "sess_1", FakeAdapter(), send, exited.set,
+    )
+    await runner.start()
+    await asyncio.wait_for(exited.wait(), timeout=1.0)
+    assert runner._task is not None
+    await runner._task
+
+    assert [frame["type"] for frame in sent] == [
+        "session-event",
+        "threads-changed",
+        "session-event",
+        "session-event",
+        "threads-changed",
+        "session-closed",
+    ]
+    invalidations = [
+        frame for frame in sent if frame["type"] == "threads-changed"
+    ]
+    assert invalidations == [
+        {
+            "type": "threads-changed",
+            "reason": "session-started",
+            "thread_id": "thr_1",
+        },
+        {"type": "threads-changed", "reason": "turn-completed"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -212,6 +262,9 @@ async def test_shared_codex_socket_death_recycles_relay_and_reconnects(monkeypat
                     await handler(RuntimeError("fake Codex socket died"))
 
                 self.failure_task = asyncio.create_task(fail_after_welcome())
+
+        def set_thread_lifecycle_handler(self, handler) -> None:
+            self.thread_lifecycle_handler = handler
 
         async def close(self) -> None:
             task = self.failure_task

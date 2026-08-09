@@ -161,6 +161,9 @@ data class UiState(
     // Bumped when a history TAIL commits, so the list jumps to the bottom
     // exactly once per replay instead of on every event change.
     val historyTailTick: Long = 0L,
+    /** Events that arrived via history replay; they sit at the front of
+     *  `events`, so this doubles as the "new messages" divider index. */
+    val historyEventCount: Int = 0,
     val pending: Boolean = false,
     val error: String? = null,
     val model: String = "",          // empty → codex default (gpt-5.5 at time of writing)
@@ -993,6 +996,7 @@ class RemotexViewModel(
                 historyHasMore = false,
                 historyOldest = 0,
                 historyLoading = false,
+                historyEventCount = 0,
                 session = null,
                 // Plan mode is a per-session toggle on the daemon side
                 // (each adapter has its own _next_collab_mode). The UI
@@ -1695,6 +1699,8 @@ class RemotexViewModel(
                         historyHasMore = hasMore,
                         historyLoading = false,
                         historyTailTick = if (prepend) s.historyTailTick else s.historyTailTick + 1,
+                        historyEventCount = s.historyEventCount
+                            .coerceAtMost(kept.size) + fresh.size,
                     )
                 }
             }

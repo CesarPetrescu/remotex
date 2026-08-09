@@ -33,6 +33,12 @@ async def register_host(request: web.Request) -> web.Response:
     if not nickname:
         raise web.HTTPBadRequest(reason="nickname required")
     hid = await request.app["store"].create_host(user["token"], nickname)
+    hub: Hub = request.app["hub"]
+    await hub.broadcast_to_inventory(user["token"], {
+        "type": "hosts-changed",
+        "host_id": hid,
+        "reason": "host-created",
+    })
     return web.json_response({"id": hid, "nickname": nickname}, status=201)
 
 

@@ -439,3 +439,55 @@ What remains for a properly phone-first layout, in value order:
 
 Non-goals: bottom tab bar (only 2 real destinations — dashboard and
 session; the header already covers it), swipe-between-sessions.
+
+---
+
+# Plan: native client parity — themes, telemetry, transcript rendering (2026-08-09)
+
+Owner: "add themes to android and apple too, and telemetry properly, and
+workspace file browser, time dividers, jump to latest, markdown +
+syntax highlighted code, collapsible reasoning, read edit diffs, and
+Claude-Code style tool rows — all where they aren't."
+
+## Corrected inventory (recon, not assumption)
+
+Android already HAS: markdown renderer with code fences (`ui/Markdown.kt`),
+collapsible `▸ REASONING` / `▸ TOOL` rows with truncation
+(`events/AgentGroup.kt`), workspace file browser with rename/delete
+(`session/files/WorkspaceFilesPanel.kt`), and telemetry **polling into
+state already** (`startTelemetryPoll` → `state.hostTelemetry`) with no UI.
+Missing: light theme, syntax highlighting, edit diffs, Claude-Code tool
+styling, time dividers, jump-to-latest, telemetry UI.
+
+iOS has: plain-text `StreamRow` only. Missing everything on the list.
+
+## Phases
+
+1. **Android theme** — `LocalPalette` CompositionLocal + light/dark
+   palettes. Trick that avoids touching 20 files: keep the existing
+   top-level names (`Ink`, `InkDim`, `Amber`, `Line`, `Ok`, `Warn`,
+   `AccentDeep`) but redefine them as `@Composable @ReadOnlyComposable get()`
+   reading the palette. Toggle in the top bar, persisted in
+   `remotex.settings` prefs alongside the relay URL.
+2. **Android transcript** — new `Highlight.kt` (small Kotlin tokenizer:
+   keywords/strings/numbers/comments → AnnotatedString spans, reused by
+   markdown code fences), `DiffView.kt` (per-file +N/−M, tinted lines),
+   Claude-Code tool rows (● dot + `name(arg)` + ⎿ output, tail-follow
+   while running), `✳ Thinking/Thought` reasoning, time dividers +
+   jump-to-latest FAB in `EventList.kt`.
+3. **Android telemetry** — `TelemetryPanel.kt` reading the state that
+   already exists: CPU/RAM/GPU/net cards + Canvas sparklines. Reachable
+   from the session top bar.
+4. **iOS theme** — dynamic `UIColor { traitCollection }` colors so light
+   mode is automatic, plus an explicit override toggle; drop the
+   hardcoded `.preferredColorScheme(.dark)`.
+5. **iOS transcript** — `Markdown.swift` (block splitter + inline via
+   `AttributedString(markdown:)` + the same highlighter port),
+   `DiffView.swift`, Claude-Code tool rows, collapsible thinking, time
+   dividers, jump-to-latest.
+6. **iOS telemetry + file browser** — `TelemetryView.swift` (Path
+   sparklines) and `WorkspaceFilesView.swift` (list + rename/delete/
+   download via the existing fs endpoints).
+
+Verification: Android compiles + unit tests locally; iOS via the macOS CI
+job (no Xcode on this box) and the owner's sideload test.

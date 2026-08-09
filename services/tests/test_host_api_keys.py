@@ -29,6 +29,10 @@ class FakeStore:
         self.revoked: list[tuple[str, str | None, str | None]] = []
         self.revoke_result = 1
 
+    async def create_host(self, owner_token: str, nickname: str) -> str:
+        self.owners["host_new"] = owner_token
+        return "host_new"
+
     async def user_for_token(self, token: str) -> dict | None:
         known = {"alice-token": ALICE, "bob-token": BOB}
         hashed = known.get(token)
@@ -54,6 +58,7 @@ async def _client(aiohttp_client, store: FakeStore, hub: Hub):
     app = web.Application()
     app["store"] = store
     app["hub"] = hub
+    app.router.add_post("/api/hosts", hosts_h.register_host)
     app.router.add_get("/api/hosts/{host_id}/ping", hosts_h.ping_host)
     app.router.add_post("/api/hosts/{host_id}/api-key", hosts_h.issue_api_key)
     app.router.add_get("/api/hosts/{host_id}/api-key", hosts_h.list_api_keys)
@@ -63,6 +68,31 @@ async def _client(aiohttp_client, store: FakeStore, hub: Hub):
 
 ALICE_AUTH = {"Authorization": "Bearer alice-token"}
 BOB_AUTH = {"Authorization": "Bearer bob-token"}
+
+
+@pytest.mark.asyncio
+async def test_register_host_invalidates_other_owner_tabs(aiohttp_client):
+    store = FakeStore({})
+    hub = Hub()
+    inventory = MagicMock()
+    inventory.closed = False
+    inventory.send_json = AsyncMock()
+    inventory.close = AsyncMock()
+    await hub.attach_inventory_client(ALICE, "other-tab", inventory)
+    client = await _client(aiohttp_client, store, hub)
+
+    response = await client.post(
+        "/api/hosts",
+        headers=ALICE_AUTH,
+        json={"nickname": "workstation"},
+    )
+
+    assert response.status == 201
+    inventory.send_json.assert_awaited_once_with({
+        "type": "hosts-changed",
+        "host_id": "host_new",
+        "reason": "host-created",
+    })
 
 
 @pytest.mark.asyncio

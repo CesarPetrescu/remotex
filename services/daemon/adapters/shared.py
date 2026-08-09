@@ -25,6 +25,16 @@ MessageHandler = Callable[[dict], Awaitable[None]]
 DisconnectHandler = Callable[[BaseException], Awaitable[None]]
 
 _RESUME_BUFFER_LIMIT = 10_000
+_THREAD_LIFECYCLE_METHODS = frozenset({
+    "thread/started",
+    "thread/status/changed",
+    "thread/name/updated",
+    "thread/archived",
+    "thread/deleted",
+    "thread/unarchived",
+    "thread/closed",
+    "thread/settings/updated",
+})
 
 
 @dataclass
@@ -58,6 +68,7 @@ class SharedCodexConnection:
         self._send_lock = asyncio.Lock()
         self._closing = False
         self._on_disconnect: DisconnectHandler | None = None
+        self._on_thread_lifecycle: MessageHandler | None = None
         self._failure: BaseException | None = None
 
     @property
@@ -73,6 +84,10 @@ class SharedCodexConnection:
         self._on_disconnect = handler
         if handler is not None and self._failure is not None:
             asyncio.create_task(handler(self._failure))
+
+    def set_thread_lifecycle_handler(self, handler: MessageHandler | None) -> None:
+        """Observe global thread inventory changes before per-thread routing."""
+        self._on_thread_lifecycle = handler
 
     async def start(self) -> None:
         if self.is_open:
@@ -349,8 +364,18 @@ class SharedCodexConnection:
                     future.set_result(result)
             return
 
+        method = message.get("method")
+        if method in _THREAD_LIFECYCLE_METHODS:
+            handler = self._on_thread_lifecycle
+            if handler is not None:
+                # Lifecycle notifications are global to the initialized Codex
+                # connection. Deliver them before listener lookup: local TUI
+                # threads are intentionally not registered as Remotex session
+                # listeners, but they still change the dashboard inventory.
+                await self._deliver(handler, message)
+
         thread_id = self._thread_id(message)
-        if message.get("method") == "thread/started" and thread_id:
+        if method == "thread/started" and thread_id:
             thread = (message.get("params") or {}).get("thread") or {}
             parent_id = thread.get("parentThreadId")
             parent = self._listeners.get(parent_id) if parent_id else None
@@ -416,7 +441,7 @@ class SharedCodexConnection:
         try:
             await handler(message)
         except Exception as exc:  # noqa: BLE001 — one session cannot kill all threads
-            log.warning("shared Codex thread handler failed: %s", exc)
+            log.warning("shared Codex message handler failed: %s", exc)
 
     def _fail_pending(self, exc: BaseException) -> None:
         for future in self._pending.values():

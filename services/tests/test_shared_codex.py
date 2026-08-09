@@ -142,6 +142,54 @@ async def test_thread_notifications_are_isolated_between_sessions():
     assert seen_b == [request_b]
 
 
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        ("thread/started", {"thread": {"id": "local-tui"}}),
+        (
+            "thread/status/changed",
+            {"threadId": "local-tui", "status": {"type": "active"}},
+        ),
+        (
+            "thread/name/updated",
+            {"threadId": "local-tui", "threadName": "Renamed"},
+        ),
+        ("thread/archived", {"threadId": "local-tui"}),
+        ("thread/deleted", {"threadId": "local-tui"}),
+        ("thread/unarchived", {"threadId": "local-tui"}),
+        ("thread/closed", {"threadId": "local-tui"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_global_thread_lifecycle_reaches_inventory_without_listener(
+    method,
+    params,
+):
+    connection, _ = _connection()
+    seen: list[dict] = []
+    unsubscribed: list[str] = []
+    orphan_unsubscribed = asyncio.Event()
+
+    async def handle(message: dict) -> None:
+        seen.append(message)
+
+    async def unsubscribe(thread_id: str) -> None:
+        unsubscribed.append(thread_id)
+        orphan_unsubscribed.set()
+
+    connection._unsubscribe = unsubscribe  # type: ignore[method-assign]
+    connection.set_thread_lifecycle_handler(handle)
+    message = {"method": method, "params": params}
+
+    await connection._route(message)
+    if method == "thread/started":
+        await asyncio.wait_for(orphan_unsubscribed.wait(), timeout=1.0)
+
+    assert seen == [message]
+    assert connection._listeners == {}
+    assert unsubscribed == (["local-tui"] if method == "thread/started" else [])
+
+
 @pytest.mark.asyncio
 async def test_thread_start_claims_listener_before_started_notification():
     connection, socket = _connection()

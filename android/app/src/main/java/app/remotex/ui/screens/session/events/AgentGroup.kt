@@ -16,12 +16,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.style.TextOverflow
+import app.remotex.ui.theme.LocalPalette
 import app.remotex.model.UiEvent
 import app.remotex.ui.MarkdownText
 import app.remotex.ui.theme.AccentDeep
@@ -60,14 +67,33 @@ internal fun AgentGroup(events: List<UiEvent>, pending: Boolean) {
 private fun AgentSubEvent(event: UiEvent, pending: Boolean) {
     when (event) {
         is UiEvent.Reasoning -> {
-            var expanded by rememberSaveable(event.id) { mutableStateOf(!event.replayed) }
-            Text(
-                text = (if (expanded) "▾ " else "▸ ") + "REASONING",
-                color = InkDim,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 9.sp,
-                modifier = Modifier.clickable { expanded = !expanded },
-            )
+            // Streaming shows the live text; a finished thought folds to
+            // one dim headline, like Claude Code.
+            val streaming = pending && !event.completed
+            var open by rememberSaveable(event.id) { mutableStateOf(false) }
+            val expanded = streaming || open
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable(enabled = !streaming) { open = !open },
+            ) {
+                Text("✳", color = LocalPalette.current.accentDeep, fontSize = 11.sp)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = if (streaming) "Thinking…" else buildString {
+                        append("Thought")
+                        if (!open) {
+                            val head = headline(event.text)
+                            if (head.isNotEmpty()) append(" · ").also { append(head) }
+                        }
+                    },
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    fontStyle = if (open || streaming) FontStyle.Normal else FontStyle.Italic,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (expanded) {
                 Spacer(Modifier.height(3.dp))
                 MarkdownText(
@@ -78,39 +104,84 @@ private fun AgentSubEvent(event: UiEvent, pending: Boolean) {
         }
         is UiEvent.Tool -> {
             var expanded by rememberSaveable(event.id) { mutableStateOf(false) }
-            Text(
-                text = (if (expanded) "▾ " else "▸ ") + "TOOL · ${event.tool}${toolMeta(event)}",
-                color = AccentDeep,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 9.sp,
-                modifier = Modifier.clickable { expanded = !expanded },
-            )
-            if (event.command.isNotEmpty()) {
-                Spacer(Modifier.height(3.dp))
-                CodeBlock(event.command)
+            val streaming = pending && !event.completed
+            val failed = event.error.isNotBlank() ||
+                (event.status.isNotBlank() && event.status == "failed")
+            val isEdit = event.tool == "edit"
+            // ● name(arg) · meta — the dot carries state.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+            ) {
+                Box(
+                    Modifier
+                        .size(8.dp)
+                        .background(
+                            when {
+                                streaming -> LocalPalette.current.accent
+                                failed -> LocalPalette.current.warn
+                                else -> LocalPalette.current.ok
+                            },
+                            androidx.compose.foundation.shape.CircleShape,
+                        ),
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    event.tool,
+                    color = Ink,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (!isEdit && event.command.isNotEmpty()) {
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        "(${headline(event.command)})",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                val meta = toolMeta(event).removePrefix(" · ")
+                if (meta.isNotBlank()) {
+                    Text(meta, color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                }
             }
-            if (event.output.isNotEmpty()) {
+            if (isEdit && event.output.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                DiffView(summary = event.command, diff = event.output, streaming = streaming)
+            } else if (event.output.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 val lines = event.output.split('\n')
-                val needsTruncation = lines.size > 5
-                val shown = if (expanded || !needsTruncation) {
-                    event.output
-                } else {
-                    val head = lines.take(2)
-                    val tail = lines.takeLast(2)
-                    (head + "…" + tail).joinToString("\n")
+                val limit = if (streaming) 4 else 5
+                val needsTruncation = lines.size > limit
+                val shown = when {
+                    expanded || !needsTruncation -> event.output
+                    // Running: follow the tail like a terminal.
+                    streaming -> lines.takeLast(limit).joinToString("\n")
+                    else -> lines.take(limit - 1).joinToString("\n")
                 }
-                CodeBlock(shown, dim = true)
-                if (needsTruncation && !expanded) {
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        text = "… ${lines.size - 4} more lines — tap to expand",
-                        color = AccentDeep,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        fontStyle = FontStyle.Italic,
-                        modifier = Modifier.clickable { expanded = true },
-                    )
+                Row {
+                    Text("⎿", color = InkDim, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Column(Modifier.weight(1f)) {
+                        CodeBlock(shown, dim = true)
+                        if (needsTruncation && !expanded) {
+                            Text(
+                                text = "… ${lines.size - limit + 1} more lines",
+                                color = LocalPalette.current.accent,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                modifier = Modifier.clickable { expanded = true },
+                            )
+                        }
+                    }
                 }
             }
             if (expanded) {
@@ -162,4 +233,11 @@ private fun toolMeta(event: UiEvent.Tool): String {
     event.durationMs?.let { parts += "${it}ms" }
     if (event.error.isNotBlank()) parts += "error"
     return if (parts.isEmpty()) "" else " · " + parts.joinToString(" · ")
+}
+
+
+/** First line, markdown emphasis stripped, clipped for a header row. */
+private fun headline(text: String): String {
+    val line = text.lineSequence().firstOrNull()?.trim()?.replace(Regex("\\*\\*?|__"), "") ?: ""
+    return if (line.length > 80) line.take(77) + "…" else line
 }

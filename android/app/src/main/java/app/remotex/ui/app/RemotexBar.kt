@@ -22,6 +22,9 @@ import androidx.compose.ui.unit.sp
 import app.remotex.ui.Screen
 import app.remotex.ui.UiState
 import app.remotex.ui.screens.session.composer.CompactEffortPicker
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Speed
 import app.remotex.ui.screens.session.composer.CompactModelPicker
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
@@ -33,6 +36,9 @@ fun RemotexBar(
     onBack: () -> Unit,
     onModelChange: (String) -> Unit,
     onEffortChange: (String) -> Unit,
+    darkTheme: Boolean = true,
+    onToggleTheme: () -> Unit = {},
+    onOpenTelemetry: () -> Unit = {},
 ) {
     TopAppBar(
         title = {
@@ -71,6 +77,22 @@ fun RemotexBar(
                         tint = Ink,
                     )
                 }
+            }
+        },
+        actions = {
+            IconButton(onClick = onOpenTelemetry) {
+                Icon(
+                    Icons.Filled.Speed,
+                    contentDescription = "Host telemetry",
+                    tint = Ink,
+                )
+            }
+            IconButton(onClick = onToggleTheme) {
+                Icon(
+                    if (darkTheme) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                    contentDescription = if (darkTheme) "Switch to light theme" else "Switch to dark theme",
+                    tint = Ink,
+                )
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(

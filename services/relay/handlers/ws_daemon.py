@@ -3,6 +3,7 @@
 Frames the daemon sends:
 - ``session-event`` / ``session-closed`` → broadcast to attached clients.
 - ``threads-list-response`` / ``fs-*-response`` → resolves a pending REST future.
+- ``threads-changed`` → owner-scoped inventory invalidation.
 - ``host-telemetry`` → cached + fanned out to attached clients.
 - ``ping`` → ``pong``.
 """
@@ -97,6 +98,96 @@ async def _owns_session(hub: Hub, store: Store, host_id: str, session_id: str) -
     return session is not None and session["host_id"] == host_id
 
 
+async def _bring_daemon_online(
+    store: Store,
+    hub: Hub,
+    ws: web.WebSocketResponse,
+    host_id: str,
+    owner_token: str | None,
+    daemon_mode: str,
+    hello: dict,
+) -> bool:
+    """Publish one daemon handshake without racing an older cleanup."""
+    async with hub.daemon_transition_lock(host_id):
+        await store.update_host_identity(
+            host_id,
+            hello.get("hostname", "") or "",
+            hello.get("platform", "") or "",
+            hello.get("os_user", "") or "",
+            hello.get("home_dir", "") or "",
+            hello.get("default_cwd", "") or "",
+        )
+        # Install this socket as current but keep it unavailable to REST and
+        # client forwarding until welcome + cached session-open frames land.
+        old_ws = await hub.attach_daemon(
+            host_id, ws, ready=False, mode=daemon_mode,
+        )
+        old_mode = hub.daemon_mode_for(old_ws)
+        if old_ws is not None and not old_ws.closed:
+            await old_ws.close(code=4000, message=b"daemon-replaced")
+        preserve_turns = daemon_mode == "shared" and (
+            old_ws is None or old_mode == "shared"
+        )
+        interrupted = [] if preserve_turns else await hub.abort_host_turns(host_id)
+        if preserve_turns:
+            await _invalidate_shared_prompts(hub, host_id)
+        await ws.send_json({"type": "welcome", "host_id": host_id})
+        for open_frame in await hub.session_open_frames_for_host(host_id):
+            await ws.send_json(open_frame)
+        # Keep the new socket gated until clients observe any destroyed turn.
+        await _broadcast_interrupted_turns(hub, host_id, interrupted)
+        if not await hub.mark_daemon_ready(host_id, ws):
+            await ws.close(code=4000, message=b"daemon-replaced")
+            return False
+        await store.mark_host(host_id, True)
+        if owner_token is not None:
+            await hub.broadcast_to_inventory(owner_token, {
+                "type": "hosts-changed",
+                "host_id": host_id,
+                "reason": "daemon-online",
+            }, daemon_source=(host_id, ws))
+            # A reconnect may have missed any number of Codex lifecycle
+            # notifications. Fetch the authoritative list on every handoff.
+            await hub.broadcast_to_inventory(owner_token, {
+                "type": "threads-changed",
+                "host_id": host_id,
+                "reason": "daemon-connected",
+            }, daemon_source=(host_id, ws))
+        return True
+
+
+async def _take_daemon_offline(
+    store: Store,
+    hub: Hub,
+    ws: web.WebSocketResponse,
+    host_id: str,
+    owner_token: str | None,
+    daemon_mode: str,
+) -> bool:
+    """Finish an exact socket's cleanup before a replacement goes online."""
+    async with hub.daemon_transition_lock(host_id):
+        if not await hub.detach_daemon(host_id, ws):
+            return False
+        interrupted = (
+            []
+            if daemon_mode == "shared"
+            else await hub.abort_host_turns(host_id)
+        )
+        if daemon_mode == "shared":
+            await _invalidate_shared_prompts(hub, host_id)
+        await _broadcast_interrupted_turns(hub, host_id, interrupted)
+        await store.mark_host(host_id, False)
+        if owner_token is not None:
+            await hub.broadcast_to_inventory(owner_token, {
+                "type": "hosts-changed",
+                "host_id": host_id,
+                "reason": "daemon-offline",
+            })
+        hub.host_telemetry.pop(host_id, None)
+        hub.host_telemetry_log.pop(host_id, None)
+        return True
+
+
 async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
     remote = client_remote(request)
     allowed, retry_after = allow_ws_connection(remote)
@@ -111,6 +202,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
     hub: Hub = request.app["hub"]
 
     host_id: str | None = None
+    owner_token: str | None = None
     daemon_mode = "stdio"
     try:
         first = await asyncio.wait_for(ws.receive(), timeout=10)
@@ -128,6 +220,7 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             await ws.close(code=4401, message=b"invalid token")
             audit("auth.bridge.invalid", remote=remote)
             return ws
+        owner_token = await store.host_owner(host_id)
 
         # Older daemons did not send a mode and behaved like stdio: their
         # Codex child turns die with the relay socket.  Only an explicit shared
@@ -138,44 +231,16 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
             else "stdio"
         )
 
-        await store.update_host_identity(
+        if not await _bring_daemon_online(
+            store,
+            hub,
+            ws,
             host_id,
-            hello.get("hostname", "") or "",
-            hello.get("platform", "") or "",
-            hello.get("os_user", "") or "",
-            hello.get("home_dir", "") or "",
-            hello.get("default_cwd", "") or "",
-        )
-        # Install this socket as current but keep it unavailable to REST and
-        # client forwarding until its welcome and cached session-open frames
-        # are queued in order.
-        old_ws = await hub.attach_daemon(
-            host_id, ws, ready=False, mode=daemon_mode,
-        )
-        old_mode = hub.daemon_mode_for(old_ws)
-        if old_ws is not None and not old_ws.closed:
-            await old_ws.close(code=4000, message=b"daemon-replaced")
-        # A shared Codex app-server owns its turns independently of the
-        # Remotex->relay socket.  Preserve them only across shared->shared
-        # handoffs; stdio/mock and mode switches retain the old fail-fast
-        # behavior because their adapter teardown destroys the turn.
-        preserve_turns = daemon_mode == "shared" and (
-            old_ws is None or old_mode == "shared"
-        )
-        interrupted = [] if preserve_turns else await hub.abort_host_turns(host_id)
-        if preserve_turns:
-            await _invalidate_shared_prompts(hub, host_id)
-        await ws.send_json({"type": "welcome", "host_id": host_id})
-        for open_frame in await hub.session_open_frames_for_host(host_id):
-            await ws.send_json(open_frame)
-        # Keep the new socket gated until clients have observed the old turn
-        # ending. Across sessions these sends run concurrently, so slow peers
-        # consume one timeout window rather than one window per session.
-        await _broadcast_interrupted_turns(hub, host_id, interrupted)
-        if not await hub.mark_daemon_ready(host_id, ws):
-            await ws.close(code=4000, message=b"daemon-replaced")
+            owner_token,
+            daemon_mode,
+            hello,
+        ):
             return ws
-        await store.mark_host(host_id, True)
         log.info("daemon online", extra={
             "host_id": host_id,
             "hostname": hello.get("hostname"),
@@ -336,6 +401,20 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
                 # that were addressed to it.
                 if req_id:
                     hub.resolve_admin_request(host_id, req_id, frame)
+            elif ftype == "threads-changed" and owner_token is not None:
+                forward = {
+                    "type": "threads-changed",
+                    "host_id": host_id,
+                }
+                for key in ("method", "thread_id", "reason"):
+                    value = frame.get(key)
+                    if isinstance(value, str) and value:
+                        forward[key] = value
+                await hub.broadcast_to_inventory(
+                    owner_token,
+                    forward,
+                    daemon_source=(host_id, ws),
+                )
             elif ftype == "host-telemetry":
                 data = frame.get("data") or {}
                 snapshot = {
@@ -365,24 +444,15 @@ async def ws_daemon(request: web.Request) -> web.WebSocketResponse:
         log.exception("daemon ws error", extra={"error": str(exc)})
     finally:
         if host_id:
-            detached = await hub.detach_daemon(host_id, ws)
+            detached = await _take_daemon_offline(
+                store,
+                hub,
+                ws,
+                host_id,
+                owner_token,
+                daemon_mode,
+            )
             if detached:
-                # Isolated adapters own their Codex child, so their active turn
-                # dies here. Shared adapters only unsubscribe from a managed
-                # app-server; preserve the turn until its atomic resume
-                # snapshot reconciles it. Prompt ids belong to this adapter,
-                # though, so clear them and let Codex replay fresh requests.
-                interrupted = (
-                    []
-                    if daemon_mode == "shared"
-                    else await hub.abort_host_turns(host_id)
-                )
-                if daemon_mode == "shared":
-                    await _invalidate_shared_prompts(hub, host_id)
-                await _broadcast_interrupted_turns(hub, host_id, interrupted)
-                await store.mark_host(host_id, False)
-                hub.host_telemetry.pop(host_id, None)
-                hub.host_telemetry_log.pop(host_id, None)
                 log.info("daemon offline", extra={"host_id": host_id})
                 audit("daemon.disconnected", host_id=host_id)
     return ws

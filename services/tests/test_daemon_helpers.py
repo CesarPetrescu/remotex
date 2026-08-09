@@ -34,6 +34,17 @@ def test_snake_item_type_translates_known_codex_names():
     assert _snake_item_type("widgetThing") == "widgetThing"
 
 
+def test_admin_thread_list_requests_recency_descending():
+    admin = AdminCodex()
+
+    assert admin._build_list_params(25, "cursor-1") == {
+        "limit": 25,
+        "sortKey": "recency_at",
+        "sortDirection": "desc",
+        "cursor": "cursor-1",
+    }
+
+
 def test_thread_start_enables_codex_goals_feature():
     adapter = StdioCodexAdapter(default_cwd="/tmp")
 

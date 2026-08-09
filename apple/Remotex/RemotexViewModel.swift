@@ -40,6 +40,15 @@ final class RemotexViewModel: ObservableObject {
     // was at the top before the prepend, so the view can restore it.
     @Published private(set) var historyChunkTick: Int = 0
     @Published private(set) var historyAnchorId: String?
+    // Host telemetry: latest snapshot + a small client-side ring for the
+    // sparklines (the relay serves point-in-time samples).
+    @Published private(set) var telemetry: HostTelemetryData?
+    @Published private(set) var telemetryCpu: [Double] = []
+    @Published private(set) var telemetryMem: [Double] = []
+    @Published private(set) var telemetryGpu: [Double] = []
+    @Published private(set) var workspaceEntries: [FsEntry] = []
+    @Published private(set) var workspacePath: String = ""
+    @Published private(set) var workspaceLoading = false
 
     var hasPendingPrompts: Bool {
         !pendingApprovals.isEmpty || !pendingUserInputs.isEmpty
@@ -59,6 +68,7 @@ final class RemotexViewModel: ObservableObject {
     // here and land as one stream mutation on history-end / chunk-end.
     private var historyBuffer: [StreamItem]?
     private var historyBufferPrepend = false
+    private var telemetryTask: Task<Void, Never>?
     // Kept until the relay echoes our user message back, so a rejected
     // turn-start can hand the text back to the composer.
     private var unsentInput: String?
@@ -266,7 +276,64 @@ final class RemotexViewModel: ObservableObject {
         resolveUserInput([:])
     }
 
+    /// Poll /api/hosts/{id}/telemetry every 3s, same cadence as the web
+    /// sidebar. Cancelled when the session closes.
+    func startTelemetry() {
+        guard let hostId = session?.hostId else { return }
+        telemetryTask?.cancel()
+        let baseURL = relayURL
+        let token = userToken
+        telemetryTask = Task { [weak self, client] in
+            while !Task.isCancelled {
+                if let data = try? await client.hostTelemetry(
+                    baseURL: baseURL, userToken: token, hostId: hostId
+                ) {
+                    await MainActor.run { self?.applyTelemetry(data) }
+                }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+    }
+
+    func stopTelemetry() {
+        telemetryTask?.cancel()
+        telemetryTask = nil
+    }
+
+    private func applyTelemetry(_ data: HostTelemetryData) {
+        telemetry = data
+        func push(_ series: [Double], _ value: Double?) -> [Double] {
+            let next = series + [value ?? 0]
+            return next.count > 40 ? Array(next.suffix(40)) : next
+        }
+        telemetryCpu = push(telemetryCpu, data.cpu?.percent)
+        telemetryMem = push(telemetryMem, data.memory?.percent)
+        telemetryGpu = push(telemetryGpu, (data.gpus?.first ?? data.gpu)?.percent)
+    }
+
+    /// Workspace file listing for the session's cwd.
+    func loadWorkspace(_ path: String? = nil) {
+        guard let hostId = session?.hostId else { return }
+        let target = path ?? workspacePath.ifEmpty(session?.cwd ?? "/")
+        workspaceLoading = true
+        Task {
+            defer { workspaceLoading = false }
+            guard let listing = try? await client.readDirectory(
+                baseURL: relayURL, userToken: userToken, hostId: hostId, path: target
+            ) else { return }
+            workspacePath = listing.path ?? target
+            workspaceEntries = listing.entries.sorted { a, b in
+                if a.isDirectory != b.isDirectory { return a.isDirectory }
+                let aDot = a.fileName.hasPrefix(".")
+                let bDot = b.fileName.hasPrefix(".")
+                if aDot != bDot { return !aDot }
+                return a.fileName.lowercased() < b.fileName.lowercased()
+            }
+        }
+    }
+
     func closeSession(clearSelectedHost: Bool = true) {
+        stopTelemetry()
         socket?.close()
         socket = nil
         session = nil

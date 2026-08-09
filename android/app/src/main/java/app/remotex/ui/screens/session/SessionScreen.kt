@@ -97,6 +97,7 @@ fun SessionScreen(
             historyHasMore = state.historyHasMore,
             historyLoading = state.historyLoading,
             historyTailTick = state.historyTailTick,
+            historyCount = state.historyEventCount,
             onLoadOlder = onLoadOlder,
             modifier = Modifier.weight(1f, fill = true),
         )

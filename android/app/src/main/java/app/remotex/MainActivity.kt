@@ -42,13 +42,27 @@ class MainActivity : ComponentActivity() {
                         ?: BuildConfig.RELAY_URL,
                 )
             }
-            RemotexTheme {
+            // null = follow the system; true/false = explicit override.
+            var darkOverride by remember {
+                mutableStateOf(
+                    if (prefs.contains(PREF_DARK)) prefs.getBoolean(PREF_DARK, true) else null,
+                )
+            }
+            val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val dark = darkOverride ?: systemDark
+            RemotexTheme(darkTheme = dark) {
                 RemotexApp(
                     relayUrl = relayUrl,
                     onRelayUrlChange = { raw ->
                         val next = raw.trim().trimEnd('/')
                         prefs.edit { putString(PREF_RELAY_URL, next) }
                         if (next.isNotBlank()) relayUrl = next
+                    },
+                    darkTheme = dark,
+                    onToggleTheme = {
+                        val next = !dark
+                        prefs.edit { putBoolean(PREF_DARK, next) }
+                        darkOverride = next
                     },
                 )
             }
@@ -92,5 +106,6 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_HOST_ID = "host_id"
         const val EXTRA_THREAD_ID = "thread_id"
         private const val PREF_RELAY_URL = "relay_url"
+        private const val PREF_DARK = "dark_theme"
     }
 }

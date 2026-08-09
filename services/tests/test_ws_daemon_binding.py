@@ -11,7 +11,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from aiohttp import web
 
-from relay.handlers.ws_daemon import ws_daemon
+from relay.handlers.ws_daemon import (
+    _bring_daemon_online,
+    _take_daemon_offline,
+    ws_daemon,
+)
 from relay.hub import Hub
 
 
@@ -22,15 +26,19 @@ class FakeStore:
         self.sessions = sessions
         self.closed: list[str] = []
         self.resumed: list[tuple[str, str | None, str | None]] = []
+        self.host_marks: list[tuple[str, bool]] = []
 
     async def resolve_bridge_key(self, token: str) -> str | None:
         return {"key-a": "host_a", "key-b": "host_b"}.get(token)
+
+    async def host_owner(self, host_id: str) -> str | None:
+        return {"host_a": "owner-a", "host_b": "owner-b"}.get(host_id)
 
     async def update_host_identity(self, *args, **kwargs) -> None:
         return None
 
     async def mark_host(self, host_id: str, online: bool) -> None:
-        return None
+        self.host_marks.append((host_id, online))
 
     async def session_info(self, session_id: str) -> dict | None:
         return self.sessions.get(session_id)
@@ -93,6 +101,102 @@ async def test_session_event_for_foreign_session_is_dropped(aiohttp_client):
 
     victim_client.send_json.assert_not_awaited()
     assert await hub.replay_since("sess_victim", 0) == []
+
+
+@pytest.mark.asyncio
+async def test_thread_and_host_changes_reach_owner_inventory(aiohttp_client):
+    store = FakeStore({})
+    hub = Hub()
+    inventory = _client_ws_mock()
+    await hub.attach_inventory_client("owner-a", "browser", inventory)
+    client = await _client_for(aiohttp_client, store, hub)
+
+    ws = await client.ws_connect("/ws/daemon")
+    await ws.send_json({"type": "hello", "token": "key-a"})
+    assert (await ws.receive_json())["type"] == "welcome"
+    await _wait_until(lambda: inventory.send_json.await_count == 2)
+    initial = [call.args[0] for call in inventory.send_json.await_args_list]
+    assert initial == [
+        {
+            "type": "hosts-changed",
+            "host_id": "host_a",
+            "reason": "daemon-online",
+        },
+        {
+            "type": "threads-changed",
+            "host_id": "host_a",
+            "reason": "daemon-connected",
+        },
+    ]
+
+    inventory.send_json.reset_mock()
+    await ws.send_json({
+        "type": "threads-changed",
+        "method": "thread/name/updated",
+        "thread_id": "thr_1",
+    })
+    await ws.send_json({"type": "ping"})
+    assert (await ws.receive_json())["type"] == "pong"
+    inventory.send_json.assert_awaited_once_with({
+        "type": "threads-changed",
+        "host_id": "host_a",
+        "method": "thread/name/updated",
+        "thread_id": "thr_1",
+    })
+
+    inventory.send_json.reset_mock()
+    connection = ws._response.connection  # type: ignore[attr-defined]
+    assert connection is not None and connection.transport is not None
+    connection.transport.abort()
+    await _wait_until(lambda: inventory.send_json.await_count == 1)
+    inventory.send_json.assert_awaited_once_with({
+        "type": "hosts-changed",
+        "host_id": "host_a",
+        "reason": "daemon-offline",
+    })
+
+
+@pytest.mark.asyncio
+async def test_offline_cleanup_finishes_before_fresh_daemon_goes_online():
+    store = FakeStore({})
+    hub = Hub()
+    old = _client_ws_mock()
+    fresh = _client_ws_mock()
+    await hub.attach_daemon("host_a", old, mode="shared")
+
+    offline_mark_started = asyncio.Event()
+    allow_offline_mark = asyncio.Event()
+    original_mark_host = store.mark_host
+
+    async def blocked_mark_host(host_id: str, online: bool) -> None:
+        if not online:
+            offline_mark_started.set()
+            await allow_offline_mark.wait()
+        await original_mark_host(host_id, online)
+
+    store.mark_host = blocked_mark_host  # type: ignore[method-assign]
+    taking_offline = asyncio.create_task(_take_daemon_offline(
+        store, hub, old, "host_a", "owner-a", "shared",
+    ))
+    await asyncio.wait_for(offline_mark_started.wait(), timeout=1.0)
+
+    bringing_online = asyncio.create_task(_bring_daemon_online(
+        store,
+        hub,
+        fresh,
+        "host_a",
+        "owner-a",
+        "shared",
+        {"hostname": "new-host", "platform": "linux"},
+    ))
+    await asyncio.sleep(0)
+    assert bringing_online.done() is False
+
+    allow_offline_mark.set()
+    assert await taking_offline is True
+    assert await bringing_online is True
+    assert store.host_marks[-2:] == [("host_a", False), ("host_a", True)]
+    assert hub.daemon_for("host_a") is fresh
 
 
 @pytest.mark.asyncio

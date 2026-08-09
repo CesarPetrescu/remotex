@@ -11,11 +11,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +42,7 @@ import app.remotex.ui.screens.session.ApprovalDialog
 import app.remotex.ui.screens.session.SessionScreen
 import app.remotex.ui.screens.session.UserInputDialog
 import app.remotex.ui.screens.threads.ThreadsScreen
+import app.remotex.ui.screens.telemetry.TelemetryPanel
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Line
 import app.remotex.ui.theme.Warn
@@ -45,6 +52,8 @@ import app.remotex.ui.theme.Warn
 fun RemotexApp(
     relayUrl: String,
     onRelayUrlChange: (String) -> Unit = {},
+    darkTheme: Boolean = true,
+    onToggleTheme: () -> Unit = {},
 ) {
     val context = LocalContext.current
     // Keyed on the URL: changing it in settings builds a fresh ViewModel
@@ -55,6 +64,7 @@ fun RemotexApp(
         factory = RemotexViewModel.factory(context.applicationContext as android.app.Application, relayUrl)
     )
     val state by vm.state.collectAsState()
+    var telemetryOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.refresh() }
 
@@ -95,6 +105,9 @@ fun RemotexApp(
                     },
                     onModelChange = vm::setModel,
                     onEffortChange = vm::setEffort,
+                    darkTheme = darkTheme,
+                    onToggleTheme = onToggleTheme,
+                    onOpenTelemetry = { telemetryOpen = true },
                 )
             },
             containerColor = Color.Transparent,
@@ -201,6 +214,21 @@ fun RemotexApp(
                         )
                     }
                 }
+            }
+        }
+
+        // Telemetry rides a bottom sheet, matching the web phone layout.
+        if (telemetryOpen) {
+            val host = state.hosts.find { it.id == state.selectedHostId }
+            ModalBottomSheet(
+                onDismissRequest = { telemetryOpen = false },
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                TelemetryPanel(
+                    hostLabel = host?.nickname ?: "no host selected",
+                    snapshot = state.selectedHostId?.let { state.hostTelemetry[it] },
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
+                )
             }
         }
     }

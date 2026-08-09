@@ -32,6 +32,69 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — native parity batch: themes, telemetry, transcript rendering on Android + iOS
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done; iOS compile-verified via CI only
+
+- **Why:** owner asked for themes, telemetry, workspace browser, time
+  dividers, jump-to-latest, markdown + syntax highlighting, collapsible
+  reasoning, edit diffs and Claude-Code tool rows "all where they aren't".
+  Plan in `ToDo.md` ("native client parity"). Recon corrected two wrong
+  assumptions: Android ALREADY had a markdown renderer, collapsible
+  reasoning/tool rows, a workspace file browser, and telemetry **polling
+  into state with no UI**; iOS had none of it.
+- **Android:**
+  - `theme/Theme.kt` — light + dark `RemotexPalette` behind
+    `LocalPalette`. **The trick worth remembering:** the existing token
+    names (`Ink`, `InkDim`, `Amber`, …) were redefined as
+    `@Composable @ReadOnlyComposable get()` over the CompositionLocal, so
+    ~20 files became theme-aware with zero import changes. Only two
+    non-composable helpers needed `@Composable` added (`inlineFormat`,
+    `labelFor`).
+  - `MainActivity` — theme preference (system/light/dark) in prefs; top bar
+    gains theme + telemetry buttons (`RemotexBar`).
+  - `ui/Highlight.kt` — NEW small tokenizer (comments/strings/numbers/
+    shared keyword set) feeding markdown code fences. No grammar engine;
+    unknown text stays body-coloured.
+  - `events/DiffView.kt` — NEW per-file diff cards (+N/−M, tinted lines,
+    collapse >14, tail-follow while streaming).
+  - `events/AgentGroup.kt` — tools now `● name(arg) · meta` with a state
+    dot and a `⎿` output block (edits route to DiffView); reasoning is
+    `✳ Thinking…` → folded `✳ Thought · headline`.
+  - `events/EventList.kt` — jump-to-latest FAB (live dot while pending) +
+    a "── new messages ──" divider. **Divider note:** Kotlin `UiEvent`
+    only carries `replayed` on `Reasoning`, so sniffing it was unreliable;
+    the ViewModel now tracks `historyEventCount` (history rows sit at the
+    front) and the boundary is derived from that — precise, no model churn.
+  - `screens/telemetry/TelemetryPanel.kt` — NEW bottom sheet over the
+    telemetry state that was already being polled: CPU/RAM/GPU(s)/network
+    cards, Canvas sparklines with the same 1.3×-peak autoscale as web.
+- **iOS:**
+  - `Theme.swift` — dynamic `UIColor { traits }` tokens, so light mode is
+    automatic; `ThemeSetting` cycles system→dark→light, persisted;
+    dropped the hardcoded `.preferredColorScheme(.dark)`.
+  - `Markdown.swift` — NEW block splitter + inline via
+    `AttributedString(markdown:)` + the highlighter ported from Android.
+  - `DiffView.swift` — NEW, same contract as web/Android.
+  - `ContentView.swift` — `StreamRow` rewritten into UserBubble /
+    ThinkingRow / ToolRow (● dot, ⎿ output, diff for edits) / markdown
+    agent rows; jump-to-latest overlay; theme + Files + Telemetry toolbar
+    buttons.
+  - `TelemetryView.swift` + `WorkspaceFilesView.swift` — NEW; VM gained a
+    3s telemetry poll with a 40-sample ring and `loadWorkspace` (dirs
+    first, dotfiles last). Files view is **read-only** — rename/delete
+    need the fs mutation endpoints and I won't ship destructive actions
+    untested on a client nobody has run.
+  - Four new files registered in `project.pbxproj` by hand (validated: no
+    dangling refs, all three sections wired per file).
+- **Verified:** Android `compileDebugKotlin` clean + 25 unit tests. iOS:
+  brace/paren balance per file only — **no Xcode here**; the push runs the
+  macOS job. Web untouched.
+- **Left open:** iOS file rename/delete/download; Android image attach;
+  per-event timestamps for true "2h ago" dividers on native (web has them
+  because the daemon sends `ts` and the web model keeps it).
+- **Restart needed:** none server-side. `cd android && ./build.sh install`
+  and a fresh IPA sideload to actually see any of this.
+
 ## 2026-08-09 — phone-IA batch (web) + native parity: previews everywhere, iOS thread list & pickers
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed; iOS compile-verified via CI
 

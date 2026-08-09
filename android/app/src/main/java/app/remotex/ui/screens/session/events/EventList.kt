@@ -6,7 +6,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import app.remotex.ui.theme.Ink
+import app.remotex.ui.theme.Line
+import app.remotex.ui.theme.LocalPalette
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,6 +70,7 @@ internal fun EventList(
     historyHasMore: Boolean = false,
     historyLoading: Boolean = false,
     historyTailTick: Long = 0L,
+    historyCount: Int = 0,
     onLoadOlder: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -94,6 +109,19 @@ internal fun EventList(
         return
     }
     val groups = remember(events) { groupUiEvents(events) }
+    // "new messages" divider: history events sit at the front of the list,
+    // so the group that crosses historyCount is the boundary.
+    val liveBoundary = remember(groups, historyCount) {
+        if (historyCount <= 0) return@remember -1
+        var seen = 0
+        var boundary = -1
+        for ((index, group) in groups.withIndex()) {
+            if (seen >= historyCount) { boundary = index; break }
+            seen += group.events.size
+        }
+        boundary
+    }
+    Box(modifier) {
     LazyColumn(
         state = listState,
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -113,7 +141,20 @@ internal fun EventList(
                 }
             }
         }
-        items(groups, key = { it.events.first().id }) { group ->
+        itemsIndexed(groups, key = { _, g -> g.events.first().id }) { index, group ->
+            if (index == liveBoundary) {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        "── new messages ──",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    )
+                }
+            }
             when (group.kind) {
                 EventGroup.Kind.USER -> UserBubble(group.events.first() as UiEvent.User)
                 EventGroup.Kind.GAP -> GapMarker(group.events.first() as UiEvent.Gap)
@@ -121,4 +162,44 @@ internal fun EventList(
             }
         }
     }
+
+    // Jump-to-latest: only while scrolled away from the tail.
+    val atTail by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            last >= info.totalItemsCount - 2
+        }
+    }
+    if (!atTail && events.isNotEmpty()) {
+        val scope = rememberCoroutineScope()
+        Surface(
+            color = LocalPalette.current.panel,
+            shape = androidx.compose.foundation.shape.CircleShape,
+            border = BorderStroke(1.dp, Line),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(14.dp)
+                .size(44.dp)
+                .clickable {
+                    scope.launch { listState.animateScrollToItem(Int.MAX_VALUE / 2) }
+                },
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text("↓", color = Ink, fontFamily = FontFamily.Monospace, fontSize = 16.sp)
+                if (pending) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(7.dp)
+                            .background(LocalPalette.current.ok, androidx.compose.foundation.shape.CircleShape),
+                    )
+                }
+            }
+        }
+    }
+    }
 }
+
+

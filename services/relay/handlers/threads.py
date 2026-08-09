@@ -18,18 +18,26 @@ async def list_host_threads(request: web.Request) -> web.Response:
     )
     threads = payload.get("threads") or []
     # Reshape to a compact payload for clients (keep only what the UI needs).
-    summarized = [
-        {
-            "id": t.get("id"),
-            "preview": t.get("preview") or "",
-            "created_at": t.get("createdAt"),
-            "updated_at": t.get("updatedAt"),
-            "cwd": t.get("cwd"),
-            "ephemeral": bool(t.get("ephemeral")),
-        }
-        for t in threads
-        if t.get("id") and not t.get("ephemeral")
-    ]
+    summarized = []
+    for thread in threads:
+        if not thread.get("id") or thread.get("ephemeral"):
+            continue
+        preview = thread.get("preview") or ""
+        raw_name = thread.get("name")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        summarized.append({
+            "id": thread["id"],
+            "name": name or None,
+            "title": name or preview,
+            "title_is_generic": not bool(name),
+            "preview": preview,
+            "status": thread.get("status"),
+            "created_at": thread.get("createdAt"),
+            "updated_at": thread.get("updatedAt"),
+            "recency_at": thread.get("recencyAt"),
+            "cwd": thread.get("cwd"),
+            "ephemeral": False,
+        })
     return web.json_response({
         "host_id": host_id,
         "threads": summarized,

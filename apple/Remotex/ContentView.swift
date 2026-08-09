@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = RemotexViewModel()
+    @StateObject private var theme = ThemeSetting()
+    @State private var telemetryOpen = false
+    @State private var filesOpen = false
 
     var body: some View {
         NavigationStack {
@@ -14,13 +17,37 @@ struct ContentView: View {
             }
             .navigationTitle("Remotex")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        theme.advance()
+                    } label: {
+                        Image(systemName: theme.iconName)
+                    }
+                    .accessibilityLabel("Theme: \(theme.choice.rawValue)")
+                }
                 if viewModel.session != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Files", systemImage: "folder") {
+                            filesOpen = true
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Telemetry", systemImage: "speedometer") {
+                            telemetryOpen = true
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Close") {
                             viewModel.closeSession()
                         }
                     }
                 }
+            }
+            .sheet(isPresented: $telemetryOpen) {
+                TelemetryView(viewModel: viewModel)
+            }
+            .sheet(isPresented: $filesOpen) {
+                WorkspaceFilesView(viewModel: viewModel)
             }
             .alert(
                 "Remotex",
@@ -35,7 +62,7 @@ struct ContentView: View {
             }
         }
         .tint(.remotexAccent)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(theme.choice.colorScheme)
     }
 }
 
@@ -159,7 +186,10 @@ private struct SessionView: View {
                             .id("history-loader")
                         }
                         ForEach(viewModel.stream) { item in
-                            StreamRow(item: item)
+                            StreamRow(
+                                item: item,
+                                streaming: viewModel.pending && !item.completed
+                            )
                                 .id(item.id)
                         }
                         if viewModel.stream.isEmpty {
@@ -188,6 +218,36 @@ private struct SessionView: View {
                 .onChange(of: viewModel.historyChunkTick) { _, _ in
                     guard let anchor = viewModel.historyAnchorId else { return }
                     proxy.scrollTo(anchor, anchor: .top)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    // Jump-to-latest, mirroring the web pill. Shown whenever
+                    // there's a transcript to jump within; a live dot marks a
+                    // running turn.
+                    if viewModel.stream.count > 3 {
+                        Button {
+                            guard let last = viewModel.stream.last else { return }
+                            withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                        } label: {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Color.remotexText)
+                                .frame(width: 40, height: 40)
+                                .background(Color.remotexSurface)
+                                .clipShape(Circle())
+                                .overlay(Circle().stroke(Color.remotexLine, lineWidth: 1))
+                                .overlay(alignment: .topTrailing) {
+                                    if viewModel.pending {
+                                        Circle()
+                                            .fill(Color.remotexGreen)
+                                            .frame(width: 7, height: 7)
+                                            .offset(x: -4, y: 4)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(14)
+                        .accessibilityLabel("Jump to latest")
+                    }
                 }
             }
             PendingPromptsPanel(viewModel: viewModel)
@@ -249,77 +309,183 @@ private struct StatusBadge: View {
     }
 }
 
+// Transcript rows the way Claude Code / Codex present them:
+//   user       → right-aligned bubble
+//   reasoning  → "✳ Thinking" live, folding to one dim headline when done
+//   tool       → "● name(arg)" header + ⎿ output block (diff card for edits)
+//   agent      → markdown prose
 private struct StreamRow: View {
+    let item: StreamItem
+    let streaming: Bool
+
+    var body: some View {
+        switch item.role {
+        case .user:
+            UserBubble(item: item)
+        case .reasoning:
+            ThinkingRow(item: item, streaming: streaming)
+        case .tool:
+            ToolRow(item: item, streaming: streaming)
+        case .agent:
+            VStack(alignment: .leading, spacing: 4) {
+                Text("CODEX")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.remotexAccent)
+                MarkdownText(text: item.text)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.remotexSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        case .gap:
+            HStack {
+                Spacer()
+                Text(item.text.isEmpty ? item.title : item.text)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.remotexWarn)
+                Spacer()
+            }
+        case .system:
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title.uppercased())
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.remotexMuted)
+                if !item.text.isEmpty {
+                    Text(item.text)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.remotexMuted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct UserBubble: View {
     let item: StreamItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label(item.title, systemImage: icon)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(color)
-                Spacer()
-                if !item.completed && item.role != .user {
-                    ProgressView()
-                        .controlSize(.mini)
-                }
-            }
-            if !item.detail.isEmpty {
-                Text(item.detail)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(Color.remotexMuted)
-                    .textSelection(.enabled)
-            }
-            if !item.text.isEmpty {
+        HStack {
+            Spacer(minLength: 24)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("YOU")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.remotexBlue)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 Text(item.text)
-                    .font(.system(.body, design: item.role == .tool ? .monospaced : .default))
+                    .font(.system(size: 14))
                     .foregroundStyle(Color.remotexText)
                     .textSelection(.enabled)
             }
+            .padding(10)
+            .background(Color.remotexAccent.opacity(0.10))
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(Color.remotexBlue).frame(width: 2)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
-        .padding(12)
+    }
+}
+
+private struct ThinkingRow: View {
+    let item: StreamItem
+    let streaming: Bool
+    @State private var open = false
+
+    private var expanded: Bool { streaming || open }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Button {
+                if !streaming { open.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("✳").foregroundStyle(Color.remotexAccentDeep)
+                    Text(streaming ? "Thinking…" : (open ? "Thought" : "Thought · \(headline(item.text))"))
+                        .foregroundStyle(Color.remotexMuted)
+                        .lineLimit(1)
+                }
+                .font(.system(size: 11, design: .monospaced))
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                MarkdownText(text: item.text.isEmpty ? "…" : item.text, color: .remotexMuted, fontSize: 12)
+            }
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.remotexSurface)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.remotexLine, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct ToolRow: View {
+    let item: StreamItem
+    let streaming: Bool
+    @State private var expanded = false
+
+    private var isEdit: Bool { item.title == "edit" }
+    private var lines: [String] { item.text.components(separatedBy: "\n") }
+    private var limit: Int { streaming ? 4 : 5 }
+    private var overflow: Bool { lines.count > limit }
+    private var shown: String {
+        if expanded || !overflow { return item.text }
+        // Running: follow the tail like a terminal.
+        return streaming
+            ? lines.suffix(limit).joined(separator: "\n")
+            : lines.prefix(limit - 1).joined(separator: "\n")
     }
 
-    private var icon: String {
-        switch item.role {
-        case .user:
-            return "person.crop.circle"
-        case .reasoning:
-            return "brain.head.profile"
-        case .tool:
-            return "terminal"
-        case .agent:
-            return "sparkles"
-        case .system:
-            return "info.circle"
-        case .gap:
-            return "exclamationmark.triangle"
-        }
-    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button { expanded.toggle() } label: {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(streaming ? Color.remotexAccent : Color.remotexGreen)
+                        .frame(width: 8, height: 8)
+                    Text(item.title)
+                        .font(.system(size: 12, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(Color.remotexText)
+                    if !isEdit, !item.detail.isEmpty {
+                        Text("(\(headline(item.detail)))")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Color.remotexMuted)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .buttonStyle(.plain)
 
-    private var color: Color {
-        switch item.role {
-        case .user:
-            return .remotexAccent
-        case .reasoning:
-            return .remotexBlue
-        case .tool:
-            return .remotexGreen
-        case .agent:
-            return .remotexText
-        case .system:
-            return .remotexMuted
-        case .gap:
-            return .remotexWarn
+            if isEdit, !item.text.isEmpty {
+                DiffView(summary: item.detail, diff: item.text, streaming: streaming)
+            } else if !item.text.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Text("⎿")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Color.remotexMuted)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(shown)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Color.remotexMuted)
+                            .textSelection(.enabled)
+                        if overflow, !expanded {
+                            Button("… \(lines.count - limit + 1) more lines") { expanded = true }
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(Color.remotexAccent)
+                        }
+                    }
+                }
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+/// First line, markdown emphasis stripped, clipped for a header row.
+private func headline(_ text: String) -> String {
+    let raw = text.components(separatedBy: "\n").first?
+        .trimmingCharacters(in: .whitespaces)
+        .replacingOccurrences(of: "**", with: "")
+        .replacingOccurrences(of: "__", with: "") ?? ""
+    return raw.count > 80 ? String(raw.prefix(77)) + "…" : raw
 }
 
 private struct Composer: View {

@@ -5,6 +5,7 @@
 // Kotlin ViewModel one-state-object shape.
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { InventorySocket } from '../api/inventorySocket';
 import { RelayClient } from '../api/relayClient';
 import { SessionSocket } from '../api/sessionSocket';
 import {
@@ -22,6 +23,22 @@ import { buildUrl, parseUrl } from '../util/url';
 import { getCachedPreview, prefetchPreview } from '../util/threadPreview';
 
 const PROMPT_BACKUP_PREFIX = 'remotex.pendingPrompts.';
+const INVENTORY_RETRY_MAX_MS = 30000;
+
+export function inventoryRetryDelay(
+  attempt,
+  { offline = false, random = Math.random } = {},
+) {
+  const base = offline
+    ? 5000
+    : Math.min(INVENTORY_RETRY_MAX_MS, 1000 * 2 ** Math.min(attempt, 5));
+  return base + Math.floor(random() * Math.min(1000, base * 0.25));
+}
+
+export function shouldRetryInventoryRequest(error) {
+  const status = Number(error?.status || 0);
+  return status === 0 || status === 408 || status === 425 || status === 429 || status >= 500;
+}
 
 function promptBackupKey(sessionId) {
   return `${PROMPT_BACKUP_PREFIX}${sessionId}`;
@@ -663,6 +680,16 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
   // I/O handles that outlive renders.
   const apiRef = useRef(new RelayClient(state.userToken));
   const socketRef = useRef(null);
+  const inventorySocketRef = useRef(null);
+  const hostRefreshRef = useRef({ generation: 0, retryAttempt: 0, retryTimer: null });
+  const threadRefreshRef = useRef({
+    generation: 0,
+    running: false,
+    dirty: false,
+    target: null,
+    retryAttempt: 0,
+  });
+  const threadRefreshTimerRef = useRef(null);
   // Non-null while a history batch is streaming in: replayed items collect
   // here and commit as ONE dispatch on history-end / history-chunk-end.
   const historyBufRef = useRef(null);
@@ -846,7 +873,14 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
               ? STATUS.Connecting
               : STATUS.Connected,
         });
-        dispatch({ type: 'SESSION_INFO', info: { model: data.model, cwd: data.cwd } });
+        dispatch({
+          type: 'SESSION_INFO',
+          info: {
+            model: data.model,
+            cwd: data.cwd,
+            ...(data.thread_id ? { threadId: data.thread_id } : {}),
+          },
+        });
         dispatch({
           type: 'SET_ERROR',
           error: readOnlyHistory
@@ -987,7 +1021,11 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
           dispatch({ type: 'SESSION_STATUS', status: STATUS.Connected });
           dispatch({
             type: 'SESSION_INFO',
-            info: { model: data.model, cwd: data.cwd },
+            info: {
+              model: data.model,
+              cwd: data.cwd,
+              ...(data.thread_id ? { threadId: data.thread_id } : {}),
+            },
           });
           dispatch({ type: 'SET_ERROR', error: null });
           if (typeof data.shared_turn_in_flight === 'boolean') {
@@ -1248,27 +1286,196 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     };
   }, [state.selectedHostId, state.hosts]);
 
-  const refreshThreads = useCallback(
-    async (hostOverride) => {
-      const target = hostOverride || latestInputsRef.current.selectedHostId;
-      if (!target) return;
-      dispatch({ type: 'THREADS_LOADING', hostId: target, loading: true });
-      try {
-        const threads = await apiRef.current.listThreads(target, 25);
-        dispatch({
-          type: 'THREADS',
-          hostId: target,
-          threads: threads.map((thread) => ({ ...thread, host_id: target })),
-        });
-      } catch (t) {
-        if (latestInputsRef.current.selectedHostId === target) {
-          dispatch({ type: 'THREADS_LOADING', hostId: target, loading: false });
-          dispatch({ type: 'SET_ERROR', error: t.message });
+  // Inventory notifications are invalidations, not patches. A generation +
+  // dirty loop guarantees that an older REST response cannot overwrite a
+  // newer notification, while bursts collapse into one follow-up snapshot.
+  const drainThreadRefresh = useCallback(async () => {
+    const control = threadRefreshRef.current;
+    if (control.running) return;
+    control.running = true;
+    try {
+      while (control.dirty) {
+        control.dirty = false;
+        const generation = control.generation;
+        const target = control.target;
+        if (!target) continue;
+        try {
+          const threads = await apiRef.current.listThreads(target, 25);
+          if (generation !== control.generation || target !== control.target) continue;
+          dispatch({
+            type: 'THREADS',
+            hostId: target,
+            threads: threads.map((thread) => ({
+              ...thread,
+              host_id: target,
+              updated_at: thread.recency_at ?? thread.updated_at,
+            })),
+          });
+        } catch (error) {
+          if (generation !== control.generation || target !== control.target) continue;
+          if (latestInputsRef.current.selectedHostId === target) {
+            dispatch({ type: 'THREADS_LOADING', hostId: target, loading: false });
+            dispatch({ type: 'SET_ERROR', error: error.message });
+          }
         }
       }
-    },
-    [],
-  );
+    } finally {
+      control.running = false;
+    }
+  }, []);
+
+  const queueThreadRefresh = useCallback((target, { debounce = false } = {}) => {
+    if (!target) return;
+    const control = threadRefreshRef.current;
+    control.generation += 1;
+    control.target = target;
+    control.dirty = true;
+    dispatch({ type: 'THREADS_LOADING', hostId: target, loading: true });
+
+    if (threadRefreshTimerRef.current) {
+      clearTimeout(threadRefreshTimerRef.current);
+      threadRefreshTimerRef.current = null;
+    }
+    if (control.running) return;
+
+    const start = () => {
+      threadRefreshTimerRef.current = null;
+      void drainThreadRefresh();
+    };
+    if (debounce) {
+      threadRefreshTimerRef.current = setTimeout(start, 150);
+    } else {
+      start();
+    }
+  }, [drainThreadRefresh]);
+
+  const refreshThreads = useCallback((hostOverride) => {
+    queueThreadRefresh(hostOverride || latestInputsRef.current.selectedHostId);
+  }, [queueThreadRefresh]);
+
+  useEffect(() => () => {
+    if (threadRefreshTimerRef.current) clearTimeout(threadRefreshTimerRef.current);
+    const control = threadRefreshRef.current;
+    control.generation += 1;
+    control.dirty = false;
+    control.target = null;
+  }, []);
+
+  // Keep host/thread inventory live even when no chat session is attached.
+  // The server only sends invalidations; REST remains the authoritative view.
+  useEffect(() => {
+    if (!state.userToken) return undefined;
+
+    let disposed = false;
+    let fatal = false;
+    let reconnectTimer = null;
+    let reconnectAttempt = 0;
+    let activeSocket = null;
+
+    const clearReconnect = () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || fatal || reconnectTimer) return;
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const base = offline
+        ? 5000
+        : Math.min(30000, 1000 * 2 ** Math.min(reconnectAttempt, 5));
+      const jitter = Math.floor(Math.random() * Math.min(1000, base * 0.25));
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (disposed || fatal) return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          scheduleReconnect();
+          return;
+        }
+        connect();
+      }, base + jitter);
+    };
+
+    const handleInventoryFrame = (frame) => {
+      if (frame.type === 'inventory-ready') {
+        reconnectAttempt = 0;
+        void refreshHosts();
+        queueThreadRefresh(latestInputsRef.current.selectedHostId);
+        return;
+      }
+      if (frame.type === 'threads-changed') {
+        const selectedHostId = latestInputsRef.current.selectedHostId;
+        if (selectedHostId && (!frame.host_id || frame.host_id === selectedHostId)) {
+          queueThreadRefresh(selectedHostId, { debounce: true });
+        }
+        return;
+      }
+      if (frame.type === 'hosts-changed') {
+        void refreshHosts();
+        const selectedHostId = latestInputsRef.current.selectedHostId;
+        if (frame.reason === 'daemon-online' && frame.host_id === selectedHostId) {
+          queueThreadRefresh(selectedHostId, { debounce: true });
+        }
+        return;
+      }
+      if (frame.type === 'error') {
+        dispatch({ type: 'SET_ERROR', error: frame.error || 'inventory connection failed' });
+      }
+    };
+
+    function connect() {
+      if (disposed || fatal || activeSocket?.isActive()) return;
+      const previous = activeSocket;
+      activeSocket = null;
+      if (inventorySocketRef.current === previous) inventorySocketRef.current = null;
+      previous?.close();
+
+      const socket = new InventorySocket({
+        userToken: state.userToken,
+        onFrame: (frame) => {
+          if (disposed || activeSocket !== socket) return;
+          handleInventoryFrame(frame);
+        },
+        onStatus: (status) => {
+          if (disposed || activeSocket !== socket) return;
+          if (status === 'connected') {
+            reconnectAttempt = 0;
+          } else if (status === 'fatal') {
+            fatal = true;
+            clearReconnect();
+          } else if (status === 'disconnected' || status === 'error') {
+            scheduleReconnect();
+          }
+        },
+      });
+      activeSocket = socket;
+      inventorySocketRef.current = socket;
+    }
+
+    const wake = () => {
+      if (disposed || fatal || activeSocket?.isActive()) return;
+      clearReconnect();
+      reconnectAttempt = 0;
+      connect();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') wake();
+    };
+
+    window.addEventListener('online', wake);
+    document.addEventListener('visibilitychange', onVisible);
+    connect();
+
+    return () => {
+      disposed = true;
+      clearReconnect();
+      window.removeEventListener('online', wake);
+      document.removeEventListener('visibilitychange', onVisible);
+      if (inventorySocketRef.current === activeSocket) inventorySocketRef.current = null;
+      activeSocket?.close();
+      activeSocket = null;
+    };
+  }, [state.userToken, queueThreadRefresh, refreshHosts]);
 
   const openHost = useCallback(
     (host) => {
