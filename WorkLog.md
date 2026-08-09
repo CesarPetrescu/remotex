@@ -32,6 +32,42 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — native parity: CI compile fixes + verification results
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, both workflows green
+
+Follow-up to the native-parity entry below. That one said iOS was checked
+only for brace balance; here is what actually happened when a real compiler
+saw it.
+
+- **iOS did not compile on the first push.** Three errors, two distinct
+  causes, both invisible to any local check I have (no Xcode on this box):
+  - `Sparkline` had a local `func point(_:)` inside the `GeometryReader`
+    ViewBuilder closure. `return` is illegal in a result-builder body —
+    hoisted it to `points(in: CGSize) -> [CGPoint]` on the struct.
+  - `Text("•").foregroundStyle(.remotexMuted)` — `foregroundStyle` is
+    generic over `ShapeStyle`, and implicit member lookup will not find
+    custom statics declared on `Color` (the built-ins like `.red` work only
+    because they are declared as `extension ShapeStyle where Self == Color`).
+    Named the type. **`tint` takes `Color?`, so `.remotexAccent` is legal
+    there** — that asymmetry is why `ContentView`/`PendingPromptsView`
+    compiled and `Markdown.swift` did not.
+- **The pbxproj registration worked** — the CI compile line lists all four
+  new files, so the hand-written PBXBuildFile/PBXFileReference/Sources
+  entries are correct.
+- **Verified, not assumed:**
+  - Release workflow green; nightly IPA 396 KB → 595 KB, APK republished.
+  - CI workflow green (backend pytest, web Vite build).
+  - Android `compileDebugKotlin` + `testDebugUnitTest` clean locally.
+  - `apps/web`: 77/77 vitest.
+- **No relay redeploy** — this batch touched only `android/` and `apple/`.
+  Caveat: see I-018; someone else's web change did land on `main` in my
+  commit and is *not* in the built image, so `main` and prod now differ on
+  the web bundle. Their call when to ship it.
+- **Filed I-018:** I staged with `git add -A` in a tree several agents
+  share, and swept another agent's in-flight inventory-retry work into
+  `b283b92`. Nothing lost, `main` is healthy, and I did not rewrite pushed
+  history to unpick it. Stage explicit paths in this repo.
+
 ## 2026-08-09 — native parity batch: themes, telemetry, transcript rendering on Android + iOS
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done; iOS compile-verified via CI only
 

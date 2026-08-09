@@ -442,7 +442,7 @@ session; the header already covers it), swipe-between-sessions.
 
 ---
 
-# Plan: native client parity — themes, telemetry, transcript rendering (2026-08-09)
+# ~~Plan: native client parity — themes, telemetry, transcript rendering~~ — DONE 2026-08-09
 
 Owner: "add themes to android and apple too, and telemetry properly, and
 workspace file browser, time dividers, jump to latest, markdown +
@@ -491,3 +491,34 @@ iOS has: plain-text `StreamRow` only. Missing everything on the list.
 
 Verification: Android compiles + unit tests locally; iOS via the macOS CI
 job (no Xcode on this box) and the owner's sideload test.
+
+## Outcome (2026-08-09)
+
+All six phases shipped — see the `WorkLog.md` entry of the same date.
+Android: `compileDebugKotlin` + 25 unit tests green locally. iOS: green in
+the macOS Release job; the nightly IPA grew 396 KB → 595 KB.
+
+**Two Swift traps the local brace-balance check could not catch**, both
+found only by the CI compile — worth knowing before writing more SwiftUI
+here:
+
+- A local `func` whose body uses `return` cannot live inside a result
+  builder closure (`GeometryReader { … }`). Hoist it to a method on the
+  struct and call it for a precomputed value.
+- `foregroundStyle` is generic over `ShapeStyle`, so implicit member
+  lookup (`.remotexMuted`) does **not** see custom statics declared on
+  `Color` — write `Color.remotexMuted`. `tint` takes `Color?`, so
+  `.remotexAccent` is fine there. That asymmetry is why some call sites
+  compiled and one did not.
+
+Deferred, deliberately:
+
+- iOS file rename / delete / download — the view is read-only. Shipping
+  destructive fs actions on a client nobody has run yet is not a trade
+  worth making; wire them after the owner's first sideload.
+- Android image attachment (web-only today).
+- True "2h ago" dividers on native. The daemon does send `ts`, but
+  neither native model keeps it, so both clients use a
+  history-vs-live boundary instead. Add `ts` to `UiEvent` /
+  `StreamEvent` when someone wants real timestamps.
+

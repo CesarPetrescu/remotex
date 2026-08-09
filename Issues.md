@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-018**.
+  never reuse. Next free ID: **I-019**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -43,6 +43,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-015 | wontfix | info | daemon/upstream | Codex external-clock mode rejects multi-subscriber shared threads |
 | I-016 | fixed | low | web | Dead `closeRightView` kept ESLint noisy |
 | I-017 | open | info | daemon | GPU telemetry is NVIDIA-only; Intel/AMD accelerators are not sampled |
+| I-018 | open | medium | process | `git add -A` in this shared tree commits other agents' in-flight work |
 
 ---
 
@@ -447,3 +448,29 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 - **Evidence:** `nvidia-smi --query-gpu=index,name` returns two devices and the
   live relay payload contains both; `lspci` also lists an Intel display
   controller that `nvidia-smi` cannot sample.
+
+### I-018 — `git add -A` in this shared tree commits other agents' in-flight work
+
+- **Status:** open · **Severity:** medium · **Area:** process
+- **What happened:** commit `b283b92` was meant to carry two Swift compile
+  fixes. Because it staged with `git add -A`, it also swept in another
+  agent's unfinished inventory-retry work (`apps/web/src/hooks/useRemotex.js`
+  +64/−13, its test file, and `services/tests/test_shared_codex.py`) and
+  pushed it to `main` under a commit message that says nothing about it.
+- **Evidence:** `git show b283b92 --stat -- apps/web services/tests` lists
+  three files the commit message does not mention. The window between
+  `bf38a13` (17:05) and `b283b92` (17:08) is when they appeared.
+- **Impact:** nothing was lost, and `main` is not broken — all three
+  helpers (`shouldRetryInventoryRequest`, `inventoryRetryDelay`,
+  `hostRefreshRef`) are defined and 77/77 web tests plus the pytest suite
+  pass. But the author's work is now on `main` attributed to someone
+  else's message, ahead of whatever they intended to ship, and the built
+  relay image does **not** contain it (no redeploy was run), so live prod
+  and `main` disagree on the web bundle.
+- **Not fixed by rewriting history:** the commits are pushed to `main`, and
+  a force-push there needs the owner's say-so. Left in place on purpose.
+- **How to avoid:** stage explicit paths — `git add apple/ android/` — or
+  `git commit -- <paths>`. Never `git add -A` in this repo; several agents
+  share one checkout and one index.
+- **For whoever wrote the retry code:** your change is already on `main` at
+  `b283b92`. Nothing to re-apply; just deploy it when you are ready.
