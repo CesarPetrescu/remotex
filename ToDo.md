@@ -4,10 +4,10 @@ Findings from auditing `services/daemon/adapters/stdio.py` against **codex
 0.147.0** (the version installed on this box). Ranked: bugs first, then
 features. Each item lists the exact files to touch.
 
-**Status:** all five are **done** (2026-08-09, see `WorkLog.md`), along with
-every issue that was open in `Issues.md` except `I-011` (relay port
-collision — needs a human decision) and `I-012` (iOS composer UI). What
-remains here is the backlog at the bottom.
+**Status:** all five are **done** (2026-08-09, see `WorkLog.md`). Current
+product, deployment, upstream, and tooling issues are tracked separately in
+`Issues.md`; what remains in this file is the optional protocol backlog at the
+bottom.
 
 ## How this was verified (do this again next codex bump)
 
@@ -521,4 +521,3 @@ Deferred, deliberately:
   neither native model keeps it, so both clients use a
   history-vs-live boundary instead. Add `ts` to `UiEvent` /
   `StreamEvent` when someone wants real timestamps.
-

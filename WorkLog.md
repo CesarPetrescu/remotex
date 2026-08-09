@@ -32,6 +32,23 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — repair stale issue-ledger bookkeeping found by docs audit
+**Agent:** Codex · **Branch:** main · **Status:** done
+
+- **Why:** the final README audit found two entries using `I-019` and a stale
+  `ToDo.md` summary that claimed only two issues remained.
+- **Changed:** `Issues.md` — assigned the later same-machine public-relay
+  hairpin entry its intended next ID, `I-021`, and advanced the next free ID to
+  `I-022`; no issue content or status changed.
+- **Changed:** `ToDo.md` — points to `Issues.md` for the current open set rather
+  than duplicating an obsolete list.
+- **Verified:** every issue table ID and detail heading is unique; full
+  `npm audit` still reports five build/dev-tool package groups, while
+  `npm audit --omit=dev` reports zero production dependency vulnerabilities.
+- **Left open:** `I-020` remains the focused Vite/toolchain upgrade; it is not
+  a deployed-runtime exposure.
+- **Restart needed:** none (documentation only).
+
 ## 2026-08-09 — synchronize non-native READMEs with current relay/daemon/web code
 **Agent:** Codex · **Branch:** main · **Status:** done
 

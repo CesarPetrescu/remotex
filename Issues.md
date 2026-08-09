@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-021**.
+  never reuse. Next free ID: **I-022**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -46,7 +46,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-018 | open | medium | process | `git add -A` in this shared tree commits other agents' in-flight work |
 | I-019 | open | medium | codex/upstream | Codex 0.147 `thread/delete` fails against its migrated state database |
 | I-020 | open | medium | web/tooling | Dependabot reports high-severity vulnerabilities in web build/dev dependencies |
-| I-019 | open | low | daemon/deploy | Daemon reaches its own machine's relay via the public tunnel (the reconnect storm was relay restarts) |
+| I-021 | open | low | daemon/deploy | Daemon reaches its own machine's relay via the public tunnel (the reconnect storm was relay restarts) |
 
 ---
 
@@ -527,7 +527,7 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
   three high, one moderate, one low package groups, while the production-only
   audit reports zero.
 
-### I-019 — daemon reaches its own machine's relay via the public internet
+### I-021 — daemon reaches its own machine's relay via the public internet
 
 - **Status:** open · **Severity:** low · **Area:** daemon/deploy
 - **Read the correction below before acting on this.** Filed at first as
