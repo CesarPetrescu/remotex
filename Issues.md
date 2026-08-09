@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-019**.
+  never reuse. Next free ID: **I-020**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -44,6 +44,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-016 | fixed | low | web | Dead `closeRightView` kept ESLint noisy |
 | I-017 | open | info | daemon | GPU telemetry is NVIDIA-only; Intel/AMD accelerators are not sampled |
 | I-018 | open | medium | process | `git add -A` in this shared tree commits other agents' in-flight work |
+| I-019 | open | medium | codex/upstream | Codex 0.147 `thread/delete` fails against its migrated state database |
 
 ---
 
@@ -474,3 +475,30 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
   share one checkout and one index.
 - **For whoever wrote the retry code:** your change is already on `main` at
   `b283b92`. Nothing to re-apply; just deploy it when you are ready.
+
+### I-019 — Codex 0.147 `thread/delete` fails against its migrated state database
+
+- **Status:** open · **Severity:** medium · **Area:** codex/upstream
+- **Symptom:** the managed Codex 0.147 app-server removes the rollout, then
+  answers `thread/delete` with JSON-RPC `-32603` and `no such table:
+  agent_jobs`. Because the request failed, it does not emit
+  `thread/deleted`; a Remotex sidebar that is already open has no deletion
+  invalidation until another lifecycle event triggers an authoritative list.
+- **Cause evidence:** `/root/.codex/state_5.sqlite` has successful migrations
+  through 46; migration 42 intentionally drops `agent_jobs`. The installed
+  release still tries to clean that removed table on the delete path. Current
+  Codex main no longer contains that runtime query, so this appears confined
+  to the released 0.147 binary/state-migration combination rather than
+  Remotex's adapter.
+- **Remotex status:** the `thread/deleted` notification is subscribed,
+  owner-scoped, forwarded, and covered by relay/daemon/web tests. A separate
+  disposable app-server probe emitted the expected notification. The live
+  deployment verified create, rename, archive, unarchive, authoritative REST
+  convergence, and inventory reconnect; only Codex's failed delete could not
+  produce a live notification.
+- **Cleanup:** both disposable probe rollouts were already removed by Codex's
+  partial delete. Their exact, relation-free metadata rows were removed after
+  checking all Codex SQLite databases; no user thread was touched.
+- **Next:** retest after the next Codex CLI release and close this issue when
+  `thread/delete` returns `{}` and emits `thread/deleted` on the managed
+  app-server daemon.

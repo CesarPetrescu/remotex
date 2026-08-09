@@ -32,6 +32,46 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — live sidebar inventory WebSocket and resilient resync
+**Agent:** Codex · **Branch:** main · **Status:** done, deployed
+
+- **Why:** make host/session rows update immediately when Codex creates,
+  renames, archives, restores, or deletes a thread, and make the sidebar heal
+  cleanly after browser, relay, daemon, or network reconnects.
+- **Changed:** `services/relay/handlers/ws_inventory.py`, `hub.py`,
+  `ws_daemon.py`, `hosts.py`, and `app.py` add an authenticated,
+  owner-scoped inventory WebSocket, bounded fan-out, host/thread
+  invalidations, and serialized daemon online/offline handoffs so stale socket
+  cleanup cannot mark a replacement offline.
+- **Changed:** `services/daemon/adapters/shared.py`, `admin.py`, and
+  `client.py` observe the real Codex lifecycle methods globally (including
+  local shell/desktop clients), coalesce notifications without blocking the
+  JSON-RPC reader, and request authoritative thread lists in recency order.
+- **Changed:** `apps/web/src/api/inventorySocket.js` and
+  `hooks/useRemotex.js` keep one per-tab notification socket alive with
+  hello-frame authentication, ready/heartbeat deadlines, exponential jittered
+  reconnect, visibility/online wakeups, debounced dirty resync, retryable REST
+  snapshots, and generation checks that discard out-of-order responses.
+- **Protocol evidence:** refreshed `/tmp/codex`, inspected the current v2 wire
+  definitions, and drove a real Codex 0.147 app-server. Observed
+  `thread/started`, `thread/name/updated`, `thread/status/changed`,
+  `thread/settings/updated`, `thread/archived`, `thread/unarchived`,
+  `thread/closed`, and `thread/deleted` shapes before encoding fixtures.
+- **Verified:** 196 service tests, Ruff, Python compilation, 77 web tests,
+  ESLint, production Vite build, and `git diff --check` pass. Public HTTPS has
+  the expected security headers; public `/ws/inventory` completes hello,
+  ready, ping/pong, and reconnect. A materialized live Codex probe appeared in
+  REST after its WebSocket invalidation, renamed in place, disappeared on
+  archive, and reappeared on unarchive. Exact disposable probe data was
+  removed afterward.
+- **Left open:** I-019 — the installed Codex 0.147 release partially deletes
+  a thread, then fails its own state cleanup because migration 42 removed
+  `agent_jobs`; failed upstream requests emit no `thread/deleted` event.
+- **Restart needed:** none. `remotex-relay-1` was rebuilt/recreated and is
+  healthy; `remotex-daemon` was restarted, reattached to the shared Codex
+  socket and relay, and SparkTunnel remained online. Android and Apple were
+  not touched by this work.
+
 ## 2026-08-09 — native parity: CI compile fixes + verification results
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, both workflows green
 
