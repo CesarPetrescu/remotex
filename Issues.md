@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-014**.
+  never reuse. Next free ID: **I-015**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -36,9 +36,10 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-008 | fixed | medium | env | `remotex-daemon` systemd unit not installed on this dev box |
 | I-009 | fixed | low | daemon | `thread/compacted` ignored after we send `thread/compact/start` |
 | I-010 | fixed | low | daemon | Elicitation multi-select / nested object fields not mapped |
-| I-011 | open | high | env | Relay port 18080 is held by an unrelated project; no remotex relay is running |
+| I-011 | fixed | high | env | Relay port 18080 is held by an unrelated project; no remotex relay is running |
 | I-012 | open | low | apple | iOS client has approval UI, but still lacks steer / interrupt and progressive item-patch handling |
 | I-013 | fixed | high | process | Local `main` was 3 commits / +7830 lines behind `origin/main`; a whole session was built on a stale base |
+| I-014 | blocked | medium | deploy/security | SparkTunnel 0.2.0 supplies no trustworthy visitor IP for per-address limits |
 
 ---
 
@@ -271,7 +272,15 @@ both clients already render.
 
 ## I-011 — relay port 18080 is taken by an unrelated project
 
-**Status:** open · **Sev:** high · **Area:** env · **Opened:** 2026-08-09
+**Status:** fixed · **Sev:** high · **Area:** env · **Opened:** 2026-08-09
+**Resolution:** 2026-08-09 — solved by *removing* the host port rather than
+moving it. The SparkTunnel overlay (`deploy/docker-compose.sparktunnel.yml`,
+`ports: !reset []`) publishes nothing on the host and reaches `relay:8080`
+over the private Compose network, so the `gospod-nginx-1` listener on 18080
+is irrelevant. `deploy/.env` chains that overlay via `COMPOSE_FILE` and no
+longer sets `RELAY_HOST_PORT`. This applies the same dial-out inversion the
+daemon already used. See the WorkLog entry "deploy the private relay and
+verify its public boundary".
 
 - **Symptom:** the daemon starts, then loops on
   `WSServerHandshakeError: 421, message='Invalid response status',
@@ -297,9 +306,21 @@ both clients already render.
   `ss -ltnp | grep 18080`, `docker ps`.
 - **Deployment update:** the chosen SparkTunnel Compose override publishes no
   relay host port, so the unrelated 18080 listener no longer blocks that
-  deployment path. The issue remains open until `~/.remotex/config.toml` is
+  deployment path. The issue remained open until `~/.remotex/config.toml` was
   changed from the stale local URL to the public WSS relay and the installed
-  daemon reconnects with a newly issued bridge key.
+  daemon reconnected with a newly issued bridge key.
+- **Both closing conditions are now met (verified 2026-08-09 ~15:00):**
+  `~/.remotex/config.toml` uses the configured public WSS hostname (kept
+  outside Git), and the daemon journal shows it attached after
+  the restart that followed the last 18080 failure. `docker ps` lists
+  `remotex-relay-1` (healthy), `remotex-sparktunnel-1` and
+  `remotex-postgres-1` (healthy), with the relay exposing only `8080/tcp`
+  internally — no host publish.
+- **Unblocks:** end-to-end verification on this box, which every relay and
+  client change this session lacked. Those changes are still only
+  compile-and-unit verified; someone should now drive a real turn through a
+  client and confirm streaming output, steering, and the model picker
+  against a live host.
 
 ## I-012 — iOS client still lacks steer / interrupt and progressive item patches
 
@@ -359,3 +380,23 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
   a `CONFLICTING` PR as "CI cannot run", not "CI is slow".
 - **Evidence:** `git log --oneline origin/main`,
   `git diff --stat main origin/main`, `gh pr view 16 --json mergeable`.
+
+## I-014 — SparkTunnel has no trustworthy visitor IP
+
+**Status:** blocked · **Sev:** medium · **Area:** deploy/security · **Opened:** 2026-08-09
+
+- **Symptom:** the safe SparkTunnel deployment keys REST and WebSocket
+  connection limits on the connector's TCP peer, so every public visitor
+  shares one quota and one noisy caller can throttle the others.
+- **Cause:** SparkTunnel 0.2.0 supplies no sanitized visitor-IP header and
+  preserves caller-supplied `X-Forwarded-For` and `X-Real-IP`; trusting those
+  values would let an attacker rotate identities and evade per-address limits.
+- **Current mitigation:** `deploy/docker-compose.sparktunnel.yml` forces
+  `RELAY_TRUST_PROXY=0`, even if `.env` requests `1`. Bearer authentication
+  remains mandatory, and spoofed forwarded-IP rotation stays in the shared
+  connector-peer bucket.
+- **How to unblock:** PhotonSpark must document and supply a sanitized header
+  after stripping caller input, or enforce equivalent rate limits at its edge.
+- **Evidence:** packet capture of requests sent through the deployed connector;
+  `services/tests/test_rate_limit.py::test_spoofed_forwarded_ips_share_quota_when_proxy_is_untrusted`;
+  `WorkLog.md` entry "make SparkTunnel rate-limit identity spoof-safe".

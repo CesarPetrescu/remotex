@@ -32,6 +32,109 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — deploy the private relay and verify its public boundary
+**Agent:** Codex (root integrator) · **Branch:** `main` · **Status:** done
+
+- **Why:** bring the reconciled stack live through SparkTunnel, pair this
+  machine's daemon, and close the deployment/authentication gaps found by a
+  real public-edge probe.
+- **Changed:** ignored mode-0600 `deploy/.env` contains the personal hostname,
+  generated user/Postgres secrets and connector token; mode-0600
+  `~/.remotex/config.toml` contains the one-time bridge key and public WSS URL.
+  None of those values is tracked. Root user linger is enabled for the systemd
+  user daemon.
+- **Changed:** provisioned one private user and host, issued one bridge key,
+  paired/restarted `remotex-daemon`, and removed one persisted public demo user
+  from the existing database. The demo account can only be restored by
+  deliberately reseeding it.
+- **Changed:** `services/relay/middleware/security_headers.py`, `app.py`, and
+  `tests/test_security_headers.py` — add CSP, HSTS, frame blocking, no-sniff,
+  referrer/permissions policy and API `no-store` through aiohttp's response
+  prepare hook, including errors, static files and WebSocket handshakes; remove
+  the server-version header. `deploy/README.md` documents that boundary.
+- **Verified:** a live clean SparkTunnel request carried only private platform
+  addresses; a second request preserved spoofed `X-Forwarded-For` and
+  `X-Real-IP`. The deployed profile therefore forces `RELAY_TRUST_PROXY=0` and
+  publishes zero relay ports. Public root/models returned 200, unauthenticated
+  hosts returned 401, and a 40-request invalid-token burst returned 32×401 plus
+  8×429. The login bundle is live and contains no demo-token fallback.
+- **Verified:** authenticated hosts returned one online daemon; telemetry was
+  current to 0 seconds after the final rebuild. Relay/Postgres are healthy,
+  SparkTunnel is broker-connected with zero restarts, the user daemon is active
+  and reattached over WSS, and the public response contains the new browser
+  headers with no `Server` banner.
+- **Verified:** backend pytest **148 passed** and Ruff passed; web Vitest
+  **59 passed**, ESLint passed and the production build passed; base, Caddy and
+  portless Spark Compose configurations validate.
+- **Left open:** `I-012` (iOS feature parity) and `I-014` (SparkTunnel cannot
+  support trustworthy per-visitor IP limiting until PhotonSpark supplies a
+  sanitized header or edge-native limit). Short-lived OIDC is still future
+  work; the deployed boundary is a high-entropy relay-issued bearer token.
+- **Restart needed:** none — relay, connector and daemon are live.
+
+## 2026-08-09 — gate the web app behind verified bearer sign-in
+**Agent:** Codex (`login_ui_impl`) · **Branch:** `main` · **Status:** done
+
+- **Why:** the web app previously mounted authenticated REST/WebSocket logic
+  immediately and silently fell back to the public demo token instead of
+  presenting a real sign-in boundary.
+- **Changed:** `apps/web/src/App.jsx`, `screens/LoginScreen.jsx`, and
+  `hooks/useRemotex.js` — verify saved or submitted tokens through the existing
+  hosts endpoint before mounting the dashboard, reuse the verified host result,
+  handle strict-mode saved-token checks once, and reload to `/` on logout.
+- **Changed:** `apps/web/src/util/tokenStorage.js`, `api/relayClient.js`, and
+  `components/SettingsPanel.jsx` — removed the demo fallback and in-app raw-token
+  editing, clear both credential stores on sign-out, expose HTTP status and
+  `Retry-After`, and show verified/storage status instead.
+- **Changed:** `apps/web/src/styles.css` and `README.md` — added the responsive,
+  accessible token login surface and documented its bearer/OIDC boundary.
+- **Changed:** lean Node tests cover token persistence/logout, bearer
+  verification metadata, and 401/429 login copy; obsolete reducer token-mutation
+  cases and tests were removed.
+- **Verified:** web Vitest **59 passed**, ESLint passed, Vite production build
+  passed; focused auth/storage rerun **6 passed**; `git diff --check` passed.
+- **Left open:** true short-lived OIDC remains future work, as documented; no
+  issue was introduced by this change.
+- **Restart needed:** relay image rebuild/recreate (the web bundle is baked in).
+
+## 2026-08-09 — make SparkTunnel rate-limit identity spoof-safe
+**Agent:** Codex (`spark_proxy_fix`) · **Branch:** `main` · **Status:** done
+
+- **Why:** live header capture showed SparkTunnel 0.2.0 preserves spoofed
+  forwarding headers and does not pass a trustworthy public visitor IP.
+- **Changed:** `deploy/docker-compose.sparktunnel.yml` — force
+  `RELAY_TRUST_PROXY=0`, even when `.env` requests `1`, while retaining the
+  portless connector profile.
+- **Changed:** deployment/service docs and rate-limit module prose — reserve
+  trusted forwarding headers for Caddy/sanitizing proxies and document
+  SparkTunnel's shared connector-peer bucket.
+- **Changed:** `services/tests/test_rate_limit.py` — exercise the real
+  `/api/hosts` auth path and prove rotating bearer plus spoofed
+  `X-Forwarded-For` values still reaches HTTP 429 when proxy trust is off.
+- **Verified:** focused rate-limit pytest **6 passed**, Ruff passed,
+  `git diff --check` passed; Spark Compose resolves trust to `0` despite an
+  explicit `RELAY_TRUST_PROXY=1` and publishes zero relay ports; base and Caddy
+  Compose configs validate.
+- **Left open:** `I-014` — per-visitor IP limits remain impossible through
+  SparkTunnel until PhotonSpark supplies a sanitized visitor-IP contract.
+- **Restart needed:** relay recreate/rebuild with the SparkTunnel override.
+
+## 2026-08-09 — clear stale host presence on relay startup
+**Agent:** Codex (`startup_online_fix`) · **Branch:** `main` · **Status:** done
+
+- **Why:** persisted `inventory_hosts.online = true` survived relay restarts
+  even though daemon presence is process-local, so the API could report a
+  disconnected daemon as online.
+- **Changed:** `services/relay/store.py` — the startup schema batch now marks
+  every persisted online host offline before the relay begins accepting daemon
+  reconnects.
+- **Changed:** `services/tests/test_store_helpers.py` — added a focused guard
+  that keeps the startup reset in the schema batch.
+- **Verified:** `pytest -q services/tests/test_store_helpers.py` (14 passed),
+  Ruff on both changed Python files, and `git diff --check` all passed.
+- **Left open:** none.
+- **Restart needed:** relay rebuild.
+
 ## 2026-08-09 — reconcile deployment work with hardened main and close I-013
 **Agent:** Codex (root integrator) · **Branch:** `reconcile-origin-main` · **Status:** done
 

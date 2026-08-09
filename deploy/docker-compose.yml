@@ -48,11 +48,9 @@ services:
       # Demo user/bridge tokens are public (they live in this repo), so
       # seeding stays OFF here. Only ever turn it on for a throwaway box.
       RELAY_SEED_DEMO: ${RELAY_SEED_DEMO:-0}
-      # Rate limiting keys on the TCP peer, which is the proxy container
-      # for every caller behind Caddy or SparkTunnel — one shared bucket.
-      # Set RELAY_TRUST_PROXY=1 in .env for either proxy mode so the relay
-      # reads X-Forwarded-For instead. Never set it when the relay is exposed
-      # directly: the header is caller-supplied.
+      # Caddy overwrites X-Forwarded-For, so its profile may set this to 1.
+      # Keep it 0 for direct access and untrusted proxies. The SparkTunnel
+      # override forces 0 because that connector preserves spoofed headers.
       RELAY_TRUST_PROXY: ${RELAY_TRUST_PROXY:-0}
       # Inventory (users/hosts/sessions) lives in the Postgres container.
       RELAY_DATABASE_URL: postgresql://${POSTGRES_USER:-remotex}:${POSTGRES_PASSWORD:-remotex-search}@postgres:5432/${POSTGRES_DB:-remotex}

@@ -196,23 +196,3 @@ describe('reducer: model options', () => {
     expect(s.effort).toBe('');
   });
 });
-
-describe('reducer: token storage preference', () => {
-  it('defaults to remembering the token', () => {
-    expect(initialState.rememberToken).toBe(true);
-  });
-
-  it('records an explicit opt-out alongside the token', () => {
-    const s = run([{ type: 'SET_TOKEN', token: 'tok-1', remember: false }]);
-    expect(s.userToken).toBe('tok-1');
-    expect(s.rememberToken).toBe(false);
-  });
-
-  it('leaves the preference alone when the token is set without one', () => {
-    const s = run([
-      { type: 'SET_REMEMBER_TOKEN', remember: false },
-      { type: 'SET_TOKEN', token: 'tok-2' },
-    ]);
-    expect(s.rememberToken).toBe(false);
-  });
-});

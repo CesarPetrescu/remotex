@@ -32,12 +32,14 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
 - Reconnects with `last_seq` so a refresh or a sleeping phone catches up
   on missed events instead of losing the stream.
 - Alerts on turn completion when the tab is backgrounded.
+- Gates the dashboard behind a bearer-token sign-in that verifies access with
+  `GET /api/hosts` before mounting any dashboard REST or WebSocket logic.
 - Persists sidebar layout and folder history in `localStorage`. The
-  bearer token goes to `localStorage` only when "remember on this device"
-  is on (the default, behind the sidebar's ⚙); with it off the token
-  lives in `sessionStorage` and dies with the tab. The prefilled
-  `demo-user-token` only authenticates against a relay started with
-  `RELAY_SEED_DEMO=1` — seeding is off by default.
+  verified bearer token goes to `localStorage` only when "remember on this
+  device" is on; with it off the token lives in `sessionStorage` and dies
+  with the tab. Sign out clears both stores. There is no prefilled demo token.
+  A short-lived OIDC flow remains future work for deployments that need more
+  than this relay-issued bearer-token boundary.
 - Refuses image attachments and workspace uploads over
   `MAX_FILE_BYTES` (25 MB, matching the relay's `REMOTEX_MAX_FILE_BYTES`)
   with a readable error instead of a failed request.
@@ -46,6 +48,7 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
 
 ```text
 App.jsx
+├── LoginScreen               verifies the bearer before mounting the app
 ├── DashboardScreen           host, thread, folder, and session entry points
 ├── SessionScreen             event stream + composer
 ├── FilesScreen / JumpPicker  choose a working directory
@@ -63,8 +66,8 @@ directly.
 
 Persistent browser state is intentionally small:
 
-- `localStorage`: user token, layout preferences, folder recents/favorites
-- `sessionStorage`: unresolved prompt backup for the current browser session
+- `localStorage`: remembered user token, layout preferences, folder recents/favorites
+- `sessionStorage`: tab-only user token and unresolved prompt backups
 - relay replay buffer: recent session events used after reconnect
 
 ## Development
@@ -118,6 +121,7 @@ apps/web/
     │   ├── useRemotex.js     the whole state machine: reducer, frame handling, actions
     │   └── useBackgroundCompletionAlert.js
     ├── screens/
+    │   ├── LoginScreen.jsx       verified bearer-token sign in
     │   ├── DashboardScreen.jsx   host + thread landing surface
     │   ├── SessionScreen.jsx     chat surface
     │   └── FilesScreen.jsx       standalone file browser
@@ -128,7 +132,7 @@ apps/web/
     │   ├── EventStream.jsx, EventRow.jsx
     │   ├── PendingPromptsPanel.jsx   approvals + user-input dialogs
     │   ├── JumpPicker.jsx        folder picker (search / teleport / browse)
-    │   ├── SettingsPanel.jsx     token + "remember on this device"
+    │   ├── SettingsPanel.jsx     verified sign-in status + sign out
     │   ├── WorkspaceFilesDrawer.jsx, FileRow.jsx
     │   ├── HostsSidebar.jsx, HostRow.jsx, DashboardHeader.jsx
     │   ├── RightSidebar.jsx, TelemetrySidebar.jsx, Sparkline.jsx
@@ -139,13 +143,14 @@ apps/web/
 ```
 
 Tests live next to what they cover (`src/**/*.test.js`) and run in
-vitest's `node` environment — the pure helpers plus the `useRemotex`
-reducer, which is exported for exactly that reason. No jsdom, no
-component rendering:
+vitest's `node` environment — pure helpers, token/HTTP auth behavior, and the
+`useRemotex` reducer. No jsdom or component rendering:
 
 ```
 src/util/{slash,path,fuzzy,url}.test.js
-src/hooks/useRemotex.test.js       reducer: prompt queues, model list, token pref
+src/util/tokenStorage.test.js      browser credential persistence + logout
+src/api/relayClient.test.js        bearer verification + rate-limit metadata
+src/hooks/useRemotex.test.js       reducer: prompt queues + model list
 ```
 
 `useRemotex.js` is the single source of truth for app state — a reducer

@@ -19,7 +19,6 @@ import { parseSlash } from '../util/slash';
 import { parentPath } from '../util/path';
 import { hostHomePath } from '../util/host';
 import { buildUrl, parseUrl } from '../util/url';
-import { loadRemember, loadToken, saveToken } from '../util/tokenStorage';
 
 const PROMPT_BACKUP_PREFIX = 'remotex.pendingPrompts.';
 
@@ -256,10 +255,10 @@ function appendSlashAckEvent(dispatch, cmd, ok, data = {}) {
 
 export const initialState = {
   screen: SCREENS.Hosts,
-  userToken: loadToken(),
+  userToken: '',
   // "remember on this device": ON keeps the token in localStorage, OFF
   // parks it in sessionStorage so it dies with the tab.
-  rememberToken: loadRemember(),
+  rememberToken: true,
   hosts: [],
   hostsLoading: false,
   selectedHostId: null,
@@ -316,15 +315,6 @@ const TELEMETRY_WINDOW_MS = 30000; // real 30-second sliding window
 
 export function reducer(state, action) {
   switch (action.type) {
-    case 'SET_TOKEN':
-      return {
-        ...state,
-        userToken: action.token,
-        rememberToken:
-          action.remember === undefined ? state.rememberToken : Boolean(action.remember),
-      };
-    case 'SET_REMEMBER_TOKEN':
-      return { ...state, rememberToken: Boolean(action.remember) };
     case 'SET_SCREEN':
       return { ...state, screen: action.screen };
     case 'SET_ERROR':
@@ -578,8 +568,13 @@ export function reducer(state, action) {
 
 // --- hook ---
 
-export function useRemotex() {
-  const [state, dispatch] = useReducer(reducer, initialState);
+export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
+  const [state, dispatch] = useReducer(reducer, {
+    ...initialState,
+    userToken: token,
+    rememberToken: Boolean(remember),
+    hosts: initialHosts || [],
+  });
 
   // Mutable plumbing — reducer state is derived output, these are the
   // I/O handles that outlive renders.
@@ -609,11 +604,6 @@ export function useRemotex() {
     sessionId: state.session?.sessionId,
     goal: state.goal,
   };
-
-  useEffect(() => {
-    saveToken(state.userToken, state.rememberToken);
-    apiRef.current.setToken(state.userToken);
-  }, [state.userToken, state.rememberToken]);
 
   // --- helpers ---
 
@@ -1057,8 +1047,8 @@ export function useRemotex() {
   }, []);
 
   useEffect(() => {
-    refreshHosts();
-  }, [refreshHosts]);
+    if (initialHosts === undefined) refreshHosts();
+  }, [initialHosts, refreshHosts]);
 
   // Model list, most-specific source first (contract B): what the selected
   // host's codex actually offers → the hostless default → the fallback
@@ -1515,8 +1505,6 @@ export function useRemotex() {
   return useMemo(
     () => ({
       state,
-      setToken: (t, remember) => dispatch({ type: 'SET_TOKEN', token: t, remember }),
-      setRememberToken: (remember) => dispatch({ type: 'SET_REMEMBER_TOKEN', remember }),
       setModel: (m) => dispatch({ type: 'SET_MODEL', model: m }),
       setEffort: (e) => dispatch({ type: 'SET_EFFORT', effort: e }),
       setPermissions: (p) => dispatch({ type: 'SET_PERMS', permissions: p }),

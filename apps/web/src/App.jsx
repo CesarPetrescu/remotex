@@ -6,6 +6,7 @@ import { Toast } from './components/Toast';
 import { SessionScreen } from './screens/SessionScreen';
 import { FilesScreen } from './screens/FilesScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
+import { LoginScreen } from './screens/LoginScreen';
 import { DashboardHeader } from './components/DashboardHeader';
 import { HostsSidebar } from './components/HostsSidebar';
 import { RightSidebar } from './components/RightSidebar';
@@ -13,6 +14,7 @@ import { JumpPicker } from './components/JumpPicker';
 import { SettingsPanel } from './components/SettingsPanel';
 import { hostHomePath, hostDisplayName } from './util/host';
 import { recordVisit } from './util/folderHistory';
+import { clearToken } from './util/tokenStorage';
 
 const RIGHT_VIEWS = ['prompts', 'telemetry', 'off'];
 const RIGHT_VIEW_KEY = 'remotex.rightView';
@@ -43,7 +45,27 @@ function isCompactLayout() {
 }
 
 export default function App() {
-  const r = useRemotex();
+  const [auth, setAuth] = useState(null);
+
+  if (!auth) return <LoginScreen onAuthenticated={setAuth} />;
+
+  return (
+    <AuthenticatedApp
+      auth={auth}
+      onLogout={() => {
+        clearToken();
+        window.location.replace('/');
+      }}
+    />
+  );
+}
+
+function AuthenticatedApp({ auth, onLogout }) {
+  const r = useRemotex({
+    token: auth.token,
+    remember: auth.remember,
+    initialHosts: auth.hosts,
+  });
   const { state } = r;
   // Tab-title + favicon flash for backgrounded users — only fires if the
   // tab was hidden at any point during the pending turn.
@@ -275,9 +297,8 @@ export default function App() {
 
       <SettingsPanel
         open={settingsOpen}
-        token={state.userToken}
         remember={state.rememberToken}
-        onSave={(token, remember) => r.setToken(token, remember)}
+        onSignOut={onLogout}
         onClose={() => setSettingsOpen(false)}
       />
 

@@ -23,12 +23,12 @@ request count — but they are not unlimited: the handlers call
 ``allow_ws_connection()`` for a per-remote cap on connection attempts.
 
 ``request.remote`` is the TCP peer, which is the reverse proxy when the
-relay is deployed behind one (the Caddy profile in
-``deploy/docker-compose.yml`` is exactly that) — every caller then shares
-one bucket. Set ``RELAY_TRUST_PROXY=1`` there so the client address is
-read from ``X-Forwarded-For`` instead. Leave it off when the relay is
-exposed directly: the header is caller-supplied and trusting it without a
-proxy in front hands every attacker an unlimited supply of buckets.
+relay is deployed behind one — every caller then shares one bucket. Set
+``RELAY_TRUST_PROXY=1`` only behind a proxy that overwrites
+``X-Forwarded-For`` (the bundled Caddy profile does). SparkTunnel 0.2.0
+preserves caller-supplied forwarding headers and supplies no trustworthy
+visitor IP, so its Compose override forces this setting off and all callers
+share its connector-peer bucket. Also leave it off for direct exposure.
 """
 from __future__ import annotations
 

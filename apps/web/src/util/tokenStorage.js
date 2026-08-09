@@ -11,7 +11,6 @@
 
 const TOKEN_KEY = 'remotex.userToken';
 const REMEMBER_KEY = 'remotex.rememberToken';
-export const DEFAULT_TOKEN = 'demo-user-token';
 
 function safeGet(store, key) {
   try {
@@ -55,10 +54,10 @@ export function loadToken() {
       safeGet(loadRemember() ? localStorage : sessionStorage, TOKEN_KEY) ||
       safeGet(sessionStorage, TOKEN_KEY) ||
       safeGet(localStorage, TOKEN_KEY) ||
-      DEFAULT_TOKEN
+      ''
     );
   } catch {
-    return DEFAULT_TOKEN;
+    return '';
   }
 }
 
@@ -72,6 +71,18 @@ export function saveToken(token, remember) {
     // The flag itself is a preference, not a credential — it always
     // lives in localStorage so "don't remember" survives a restart.
     safeSet(localStorage, REMEMBER_KEY, String(Boolean(remember)));
+  } catch {
+    // ignore
+  }
+}
+
+/** Remove the credential from both persistence modes. */
+export function clearToken() {
+  try {
+    safeRemove(localStorage, TOKEN_KEY);
+    safeRemove(sessionStorage, TOKEN_KEY);
+    safeRemove(localStorage, REMEMBER_KEY);
+    safeRemove(sessionStorage, REMEMBER_KEY);
   } catch {
     // ignore
   }

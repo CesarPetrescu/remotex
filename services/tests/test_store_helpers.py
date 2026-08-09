@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from relay.store import (
+    SCHEMA,
     DEMO_BRIDGE_TOKEN,
     DEMO_USER_TOKEN,
     hash_token,
@@ -44,3 +45,7 @@ def test_key_id_is_a_prefix_of_the_stored_hash():
     token = "brg_live_example"
     assert key_id(token) == hash_token(token)[:12]
     assert len(key_id(token)) == 12
+
+
+def test_startup_schema_marks_persisted_hosts_offline():
+    assert "UPDATE inventory_hosts SET online = FALSE WHERE online;" in SCHEMA

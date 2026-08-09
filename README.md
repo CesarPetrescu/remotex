@@ -457,8 +457,7 @@ SparkTunnel is not required. The normal `docker compose up -d --build` command
 continues to listen locally on `127.0.0.1:8080`; the portless behavior applies
 only when `docker-compose.sparktunnel.yml` is included.
 
-Set `SPARK_TUNNEL_TOKEN`, `RELAY_TRUST_PROXY=1`, and `RELAY_SEED_DEMO=0` in
-`deploy/.env`, then run:
+Set `SPARK_TUNNEL_TOKEN` and `RELAY_SEED_DEMO=0` in `deploy/.env`, then run:
 
 ```bash
 cd deploy
@@ -468,5 +467,8 @@ docker compose -f docker-compose.yml -f docker-compose.sparktunnel.yml \
 
 The default target is the private `http://relay:8080` Compose address. See the
 [deployment guide](deploy/README.md#publish-through-sparktunnel) for the full
-setup and security notes. SparkTunnel does not replace Remotex authentication;
-do not expose an installation that uses the public demo credentials.
+setup and security notes. The profile forces `RELAY_TRUST_PROXY=0` because
+SparkTunnel 0.2.0 preserves spoofable forwarding headers instead of supplying
+a trustworthy visitor IP, so all visitors share one connector-peer rate-limit
+bucket. SparkTunnel does not replace Remotex authentication; do not expose an
+installation that uses the public demo credentials.

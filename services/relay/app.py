@@ -44,7 +44,7 @@ from .handlers.ws_daemon import ws_daemon
 from .hub import Hub
 from .limits import HTTP_MAX_BODY_BYTES
 from .logging import configure_json_logging
-from .middleware import rate_limit_middleware
+from .middleware import add_security_headers, rate_limit_middleware
 from .store import Store
 
 log = logging.getLogger("relay")
@@ -69,6 +69,9 @@ def make_app(database_url: str | None, static_root: Path) -> web.Application:
     # freezes the Application before on_startup runs, so assigning a new
     # app key from _start_services is deprecated.
     app["tasks"] = {}
+    # The prepare signal also covers aiohttp-generated errors, FileResponse,
+    # and WebSocket handshakes; a normal response middleware does not.
+    app.on_response_prepare.append(add_security_headers)
     app.on_startup.append(_start_services)
     app.on_cleanup.append(_stop_services)
 

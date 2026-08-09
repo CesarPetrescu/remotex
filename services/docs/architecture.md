@@ -96,12 +96,12 @@ own per-remote cap on connection *attempts* instead
 (`RELAY_WS_CONNECT_BURST`, default 60, refilling at
 `RELAY_WS_CONNECT_PER_SECOND`, default 5/s).
 
-`request.remote` is the TCP peer, so behind a reverse proxy (the Caddy or
-SparkTunnel profile in `deploy/docker-compose.yml`) every caller collapses
-onto one address and shares one bucket. Set `RELAY_TRUST_PROXY=1` **only**
-in a proxied deployment: it makes the relay read the client address from
-`X-Forwarded-For`, which is a caller-supplied header and worthless
-without a proxy in front to overwrite it.
+`request.remote` is the TCP peer, so behind a reverse proxy every caller
+collapses onto one address and shares one bucket. Set `RELAY_TRUST_PROXY=1`
+**only** behind a proxy that overwrites caller-supplied `X-Forwarded-For`;
+the bundled Caddy profile does. SparkTunnel 0.2.0 preserves spoofed forwarding
+headers and supplies no trustworthy visitor IP, so its Compose override forces
+the setting off and all public callers share the connector-peer bucket.
 
 | Method | Path                                | Purpose |
 |--------|-------------------------------------|---------|

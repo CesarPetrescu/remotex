@@ -75,29 +75,39 @@ def test_ws_connections_are_capped_per_remote():
 
 
 @pytest.mark.asyncio
-async def test_rotating_the_credential_does_not_mint_a_fresh_quota(aiohttp_client):
-    """The bucket key used to be the caller-supplied bearer, so an
-    attacker rotating the header was never throttled at all — which is
-    exactly the shape of a token brute-force."""
+async def test_spoofed_forwarded_ips_share_quota_when_proxy_is_untrusted(
+    aiohttp_client, monkeypatch,
+):
+    """SparkTunnel preserves caller-supplied forwarding headers, so its
+    safe profile must ignore them and throttle invalid auth on the TCP peer."""
     import relay.middleware.rate_limit as rl
+    from relay.handlers.hosts import list_hosts
     from relay.middleware import rate_limit_middleware
 
+    class RejectingStore:
+        async def user_for_token(self, token: str) -> None:
+            return None
+
+    monkeypatch.setattr(rl, "_TRUSTED_PROXY", False)
+    monkeypatch.setattr(rl, "_REMOTE_BURST", 5)
+    monkeypatch.setattr(rl, "_REMOTE_PER_SECOND", 1e-9)
     app = web.Application(middlewares=[rate_limit_middleware])
-
-    async def hello(request: web.Request) -> web.Response:
-        return web.json_response({"ok": True})
-
-    app.router.add_get("/api/hello", hello)
+    app["store"] = RejectingStore()
+    app.router.add_get("/api/hosts", list_hosts)
     client = await aiohttp_client(app)
 
     statuses: list[int] = []
-    for i in range(rl._REMOTE_BURST + 20):
+    for i in range(rl._REMOTE_BURST + 2):
         resp = await client.get(
-            "/api/hello", headers={"Authorization": f"Bearer guess-{i}"},
+            "/api/hosts",
+            headers={
+                "Authorization": f"Bearer guess-{i}",
+                "X-Forwarded-For": f"198.51.100.{i + 1}",
+            },
         )
         statuses.append(resp.status)
         await resp.read()
-    assert 429 in statuses
+    assert statuses == [401] * rl._REMOTE_BURST + [429, 429]
 
 
 @pytest.mark.asyncio

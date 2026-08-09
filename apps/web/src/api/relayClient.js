@@ -2,13 +2,19 @@
 // RelayClient.kt signature-for-signature so the two clients talk to
 // the same contract.
 
+async function responseError(res) {
+  const body = await res.text();
+  const error = new Error(
+    `${res.status} ${res.statusText}${body ? `: ${body}` : ''}`,
+  );
+  error.status = res.status;
+  error.retryAfter = res.headers.get('Retry-After');
+  return error;
+}
+
 export class RelayClient {
   constructor(token) {
     this.token = token;
-  }
-
-  setToken(t) {
-    this.token = t;
   }
 
   async #request(path, init = {}) {
@@ -21,8 +27,7 @@ export class RelayClient {
       },
     });
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+      throw await responseError(res);
     }
     return res.json();
   }
@@ -36,8 +41,8 @@ export class RelayClient {
   // has a token. Prefer listHostModels() as soon as a host is known.
   listModels() {
     return fetch('/api/models')
-      .then((res) => {
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      .then(async (res) => {
+        if (!res.ok) throw await responseError(res);
         return res.json();
       })
       .then((r) => r.models);
@@ -109,8 +114,7 @@ export class RelayClient {
       },
     );
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`${res.status} ${res.statusText}: ${body}`);
+      throw await responseError(res);
     }
     return res.json();
   }

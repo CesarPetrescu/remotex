@@ -249,15 +249,21 @@ docker compose -f docker-compose.yml -f docker-compose.sparktunnel.yml \
   --profile sparktunnel logs -f sparktunnel
 ```
 
-Set `SPARK_TUNNEL_TOKEN`, `RELAY_TRUST_PROXY=1`, and `RELAY_SEED_DEMO=0` in
-`.env`. The connector defaults are normally correct:
+Set `SPARK_TUNNEL_TOKEN` and `RELAY_SEED_DEMO=0` in `.env`. The connector
+defaults are normally correct:
 
 ```dotenv
 RELAY_SEED_DEMO=0
-RELAY_TRUST_PROXY=1
 SPARK_TUNNEL_SERVER=https://webhost.photonspark.com
 SPARK_TUNNEL_TARGET=http://relay:8080
 ```
+
+The SparkTunnel override forces `RELAY_TRUST_PROXY=0`. SparkTunnel 0.2.0 does
+not provide the relay with a trustworthy visitor IP and preserves
+caller-supplied `X-Forwarded-For` / `X-Real-IP` values. Trusting those headers
+would let a caller evade the per-address rate limit. With the safe setting,
+all public visitors share the connector's TCP-peer bucket; true per-visitor IP
+limits require a future PhotonSpark header contract that strips spoofed input.
 
 The target is deliberately the relay's private Compose address. The
 SparkTunnel override removes the relay's host port entirely; only containers
@@ -275,6 +281,8 @@ SparkTunnel does not add application authentication. Anyone who can reach the
 PhotonSpark hostname can reach Remotex's authentication boundary, so never
 publish a relay that still uses the repository's demo tokens. Keep the
 connector token out of Git and rotate it from PhotonSpark if it is exposed.
+The relay adds CSP, HSTS, frame blocking, no-sniff and referrer-policy headers
+to browser responses, and marks authenticated API responses `no-store`.
 
 ## Install a host daemon
 
@@ -349,7 +357,7 @@ python3 -m daemon run --config ./demo-config.toml
 | `RELAY_SESSION_RESERVATION_TTL_SECONDS` | `600` | Lifetime of an unattached session reservation |
 | `REMOTEX_MAX_FILE_BYTES` | `26214400` | File and derived WebSocket size ceiling |
 | `RELAY_SEED_DEMO` | `0` | Opt-in public demo credentials; never enable on a published relay |
-| `RELAY_TRUST_PROXY` | `0` | Trust proxy-supplied client addresses; set to `1` behind Caddy or SparkTunnel |
+| `RELAY_TRUST_PROXY` | `0` | Trust `X-Forwarded-For` only behind a proxy that overwrites it; Caddy may use `1`, SparkTunnel forces `0` |
 | `POSTGRES_DB` | `remotex` | Inventory database |
 | `POSTGRES_USER` | `remotex` | Inventory database user |
 | `POSTGRES_PASSWORD` | `remotex-search` | Inventory database password |

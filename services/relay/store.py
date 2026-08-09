@@ -78,6 +78,8 @@ ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAU
 ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS thread_id TEXT;
 ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS cwd TEXT;
 CREATE INDEX IF NOT EXISTS inventory_hosts_owner_idx ON inventory_hosts(owner_token, created_at DESC);
+-- Presence is in-memory; after a relay restart every daemon must reconnect.
+UPDATE inventory_hosts SET online = FALSE WHERE online;
 -- Tokens are hashed at rest. The owner_token FK has to cascade before the
 -- users PK can be rewritten in place; sessions.owner_token has no FK, so it
 -- is rewritten explicitly. The 64-hex guard makes each UPDATE idempotent —

@@ -3,3 +3,7 @@ services:
     # SparkTunnel reaches relay:8080 on the private Compose network.
     # Do not publish the relay on the host in this deployment.
     ports: !reset []
+    environment:
+      # SparkTunnel 0.2.0 preserves caller-supplied forwarding headers and
+      # does not provide a trustworthy visitor IP. Key limits on its TCP peer.
+      RELAY_TRUST_PROXY: "0"

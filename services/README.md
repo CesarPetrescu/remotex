@@ -73,7 +73,7 @@ services/
 │   ├── limits.py               REMOTEX_MAX_FILE_BYTES → HTTP body + WS frame caps
 │   ├── models.py               default model/effort fallback served at /api/models
 │   ├── logging.py              JSON formatter + `audit()` + `user_hash()`
-│   ├── middleware/rate_limit.py   per-token REST bucket + per-remote WS connect bucket
+│   ├── middleware/rate_limit.py   per-remote + per-token REST buckets; WS connect cap
 │   └── handlers/
 │       ├── ws_daemon.py        daemon socket: hello → welcome → frame loop
 │       ├── ws_client.py        client socket: attach, replay, forward, grace watchdog
