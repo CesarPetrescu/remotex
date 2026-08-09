@@ -32,6 +32,20 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — redact private deployment metadata from current docs
+**Agent:** Codex · **Branch:** main · **Status:** partial
+
+- **Why:** deployment-specific values belong in ignored configuration, not the
+  public repository.
+- **Changed:** `WorkLog.md` — replace the private deployment hostname with
+  generic wording. The README shared-mode guide already uses placeholders.
+- **Verified:** no SparkTunnel connector-token pattern exists anywhere in Git
+  history. The hostname is removed from the current tree.
+- **Left open:** a concurrent agent had already pushed and tagged the commit
+  containing the old wording; purging that historical occurrence requires an
+  explicitly approved history rewrite of `main` and `v0.1.0`.
+- **Restart needed:** none (documentation only).
+
 ## 2026-08-09 — releases usable from a phone: runtime relay URL + release pipeline fixes
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done
 
@@ -114,9 +128,9 @@ file is the only shared memory.
 ## 2026-08-09 — deploy shared Codex transport through SparkTunnel
 **Agent:** Codex · **Branch:** main · **Status:** deployed
 
-- **Why:** put the shared local Codex control plane live at
-  `https://remotex.photonspark.ro` without interrupting the active shell
-  session or exposing host ports.
+- **Why:** put the shared local Codex control plane live at the configured
+  public hostname without interrupting the active shell session or exposing
+  host ports.
 - **Changed:** rebuilt and recreated only the relay/web container, set the
   private daemon config to `mode = "shared"`, and restarted only the
   `remotex-daemon` user unit. Secrets remain outside Git in ignored/private
