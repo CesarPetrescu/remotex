@@ -39,12 +39,22 @@ final class SessionSocket {
         receive()
     }
 
-    func sendTurn(_ input: String, clientMessageId: String) {
-        send([
+    func sendTurn(
+        _ input: String,
+        clientMessageId: String,
+        model: String = "",
+        effort: String = "",
+        permissions: String = ""
+    ) {
+        var frame: [String: Any] = [
             "type": "turn-start",
             "input": input,
             "client_message_id": clientMessageId,
-        ])
+        ]
+        if !model.isEmpty { frame["model"] = model }
+        if !effort.isEmpty { frame["effort"] = effort }
+        if !permissions.isEmpty { frame["permissions"] = permissions }
+        send(frame)
     }
 
     func sendInterrupt() {

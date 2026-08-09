@@ -32,6 +32,64 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — phone-IA batch (web) + native parity: previews everywhere, iOS thread list & pickers
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed; iOS compile-verified via CI
+
+- **Why:** owner asked for buckets A (phone-IA polish) and B (native
+  parity) done properly for both platforms. Recon finding: iOS had NO
+  thread list at all — saved chats were unreachable from its UI, so "iOS
+  prefetch" required building the list first.
+- **Web (A):**
+  - Drawers ≤640px are bottom sheets: rounded top, drag-handle
+    (`SheetHandle` — tap or >70px swipe-down dismisses), 82dvh height,
+    dashboard visible behind. **Gotcha:** the app has a global
+    `border-radius: 0 !important` square-off inside `.dashboard-layout`
+    (~line 1409) with an opt-in list — new round things (sheets, tool
+    dots, jump pill) must be added there or they silently render square.
+  - Compact session header: the static facts row folds while reading
+    history (EventStream lifts at-bottom state via `onAtBottomChange`).
+  - Composer focus mode (≤640): `:has(.prompt:focus)` hides the chip row.
+  - Touch-target floor 44px; approval buttons ≥48px in the sheet.
+  - PWA: `viewport-fit=cover` + safe-area padding on the composer;
+    `overscroll-behavior-y: none` kills pull-to-refresh.
+  - **Broke prod for a few minutes:** re-referenced `closeRightView`
+    which had been deleted as dead code after the telemetry-× removal —
+    blank page post-login. eslint/build DID NOT catch it (runtime-only).
+    Restored. Lesson: grep for the symbol before re-adding a reference.
+- **Android (B):** `getThreadPreview` in RelayClient + instant paint on
+  resume (`paintPreview` → `preview_*` rows shown while the session
+  opens; HISTORY commit strips them). Compile + 25 unit tests green.
+- **iOS (B):** NEW thread list ("Recent sessions" under Hosts, loaded
+  with the first online host via `loadHostExtras`), `resumeThread` with
+  parallel preview fetch + instant paint, `listThreads`/`threadPreview`/
+  `listHostModels` in RelayClient, model/effort/permissions **pickers**
+  (Menu chips above the composer, efforts follow the selected model),
+  `sendTurn` now carries model/effort/permissions. History commit strips
+  preview rows. Braces balanced; macOS CI is the compile check.
+- **Verified:** web — sheet computed style asserted via Playwright
+  (bottom-anchored, 640px, 14px radius, handle visible) + screenshot;
+  69 vitest + eslint + build; relay redeployed. Android — compile +
+  tests. iOS — CI on this push.
+- **Restart needed:** already done (relay). Android install + iOS
+  sideload when owner is at the devices.
+
+## 2026-08-09 — deploy daemon latency popover
+**Agent:** Codex · **Branch:** main · **Status:** deployed
+
+- **Why:** complete the daemon-ping work logged below after the concurrent web
+  edits settled.
+- **Changed:** rebuilt and recreated only the relay/web container from the
+  settled tree; the daemon had already been restarted with the ping responder.
+  The temporary clean deployment worktree was removed afterward; it contained
+  no user-authored files and is not recoverable or needed.
+- **Verified:** full services suite 176 passed; Ruff clean; web ESLint, 69
+  tests, and production build clean. Relay/Postgres are healthy, daemon and
+  SparkTunnel are online, the deployed bundle contains both the latency
+  popover and the concurrent transcript changes, and an authenticated live
+  request completed the public relay→daemon→relay ping with HTTP 200.
+- **Left open:** none.
+- **Restart needed:** none.
+
 ## 2026-08-09 — correct stale multi-GPU web deployment
 **Agent:** Codex · **Branch:** main · **Status:** deployed
 

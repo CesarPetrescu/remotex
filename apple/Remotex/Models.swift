@@ -97,3 +97,52 @@ struct UserInputPrompt: Identifiable, Equatable {
 
     var id: String { callId }
 }
+
+
+struct ThreadInfo: Identifiable, Decodable, Equatable {
+    let id: String
+    let title: String?
+    let titleIsGeneric: Bool?
+    let preview: String?
+    let cwd: String?
+    let updatedAt: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case titleIsGeneric = "title_is_generic"
+        case preview
+        case cwd
+        case updatedAt = "updated_at"
+    }
+
+    var displayTitle: String {
+        if let title, titleIsGeneric == false { return title }
+        return preview?.isEmpty == false ? preview! : "(no preview)"
+    }
+}
+
+struct ThreadsResponse: Decodable {
+    let threads: [ThreadInfo]
+}
+
+struct PreviewTurn: Decodable {
+    let role: String
+    let text: String
+}
+
+struct PreviewResponse: Decodable {
+    let available: Bool
+    let turns: [PreviewTurn]
+}
+
+struct ModelOption: Identifiable, Decodable, Equatable {
+    let id: String
+    let label: String
+    let hint: String?
+    let efforts: [String]
+}
+
+struct ModelsResponse: Decodable {
+    let models: [ModelOption]
+}

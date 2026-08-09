@@ -1,4 +1,5 @@
 import { relativeAge } from '../util/time';
+import { SheetHandle } from './SheetHandle';
 import { usePrefetchIntent } from '../hooks/usePrefetchIntent';
 import { shortenCwd } from '../util/path';
 import { hostHomePath } from '../util/host';
@@ -33,6 +34,7 @@ export function HostsSidebar({
   const screenLabel = SCREEN_LABELS[state.screen];
   return (
     <aside className="hosts-sidebar" aria-label="Hosts and sessions">
+      <SheetHandle onDismiss={onClose} label="Close hosts" />
       {onClose && (
         <button
           type="button"

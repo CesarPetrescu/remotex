@@ -92,6 +92,11 @@ function AuthenticatedApp({ auth, onLogout }) {
     state.pendingApprovals.length + state.pendingUserInputs.length;
   const hasPendingPrompt = pendingPromptCount > 0;
 
+  const closeRightView = useCallback(() => {
+    setRightView('off');
+    setRightOpen(false);
+  }, [setRightView]);
+
   const openRightView = useCallback((v) => {
     setRightView(v);
     if (v === 'off') {
@@ -270,6 +275,7 @@ function AuthenticatedApp({ auth, onLogout }) {
 
       <RightSidebar
         view={rightView}
+        onClose={closeRightView}
         telemetry={telemetry}
         selectedHost={selectedHost}
         pendingApproval={state.pendingApproval}

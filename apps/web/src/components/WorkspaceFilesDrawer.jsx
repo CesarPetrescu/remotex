@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { compareFsEntries } from '../util/fsEntries';
+import { SheetHandle } from './SheetHandle';
 
 /**
  * Slide-in drawer (right-aligned) showing the contents of the current
@@ -101,6 +102,7 @@ export function WorkspaceFilesDrawer({
         role="dialog"
         aria-label="Workspace files"
       >
+        <SheetHandle onDismiss={onClose} label="Close files" />
         <header className="ws-drawer-head">
           <span className="ws-drawer-title">WORKSPACE FILES</span>
           <button type="button" className="ws-drawer-close" onClick={onClose}>×</button>

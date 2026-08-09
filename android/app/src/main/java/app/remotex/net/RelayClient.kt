@@ -7,6 +7,7 @@ import app.remotex.model.HostTelemetryResponse
 import app.remotex.model.HostsResponse
 import app.remotex.model.ModelInfo
 import app.remotex.model.ModelsResponse
+import app.remotex.model.PreviewResponse
 import app.remotex.model.OpenSessionResponse
 import app.remotex.model.ThreadInfo
 import app.remotex.model.ThreadsResponse
@@ -104,6 +105,27 @@ class RelayClient(
             check(resp.isSuccessful) { "openSession: ${resp.code} ${resp.message}" }
             val respBody = resp.body?.string().orEmpty()
             json.decodeFromString(OpenSessionResponse.serializer(), respBody).sessionId
+        }
+    }
+
+    /**
+     * Compact last-turns teaser for a saved thread. The daemon reads it
+     * from the rollout file on disk (LRU-cached, never touches codex), so
+     * calling this on every row press is harmless.
+     */
+    suspend fun getThreadPreview(
+        userToken: String,
+        hostId: String,
+        threadId: String,
+    ): PreviewResponse = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$baseUrl/api/hosts/$hostId/threads/$threadId/preview?turns=2")
+            .header("Authorization", "Bearer $userToken")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            check(resp.isSuccessful) { "threadPreview: ${resp.code} ${resp.message}" }
+            json.decodeFromString(PreviewResponse.serializer(), resp.body?.string().orEmpty())
         }
     }
 

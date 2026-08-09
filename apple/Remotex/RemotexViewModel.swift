@@ -11,6 +11,14 @@ final class RemotexViewModel: ObservableObject {
     }
     @Published private(set) var hosts: [Host] = []
     @Published private(set) var selectedHost: Host?
+    // Saved chats + picker options for the first online host — fetched
+    // right after the host list so the recent list is tappable instantly.
+    @Published private(set) var threads: [ThreadInfo] = []
+    @Published private(set) var threadsHost: Host?
+    @Published private(set) var modelOptions: [ModelOption] = []
+    @Published var model: String = ""
+    @Published var effort: String = ""
+    @Published var permissions: String = "default"
     @Published private(set) var status: ConnectionStatus = .idle
     @Published private(set) var session: SessionInfo?
     @Published private(set) var stream: [StreamItem] = []
@@ -82,9 +90,56 @@ final class RemotexViewModel: ObservableObject {
             do {
                 hosts = try await client.listHosts(baseURL: relayURL, userToken: userToken)
                 status = socket == nil ? .idle : status
+                if let host = hosts.first(where: { $0.online }) {
+                    loadHostExtras(host)
+                }
             } catch {
                 status = .error
                 errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Saved chats + model picker options for a host. Failures are silent —
+    /// the host list is already on screen and both have safe fallbacks.
+    private func loadHostExtras(_ host: Host) {
+        Task {
+            threadsHost = host
+            threads = (try? await client.listThreads(
+                baseURL: relayURL, userToken: userToken, hostId: host.id
+            )) ?? []
+        }
+        Task {
+            modelOptions = (try? await client.listHostModels(
+                baseURL: relayURL, userToken: userToken, hostId: host.id
+            )) ?? []
+        }
+    }
+
+    /// Resume a saved chat with instant paint: the disk-backed preview is
+    /// fetched in parallel with the session open and shown as placeholder
+    /// rows until the authoritative tail replaces them.
+    func resumeThread(_ thread: ThreadInfo) {
+        guard let host = threadsHost else { return }
+        let baseURL = relayURL
+        let token = userToken
+        let previewTask = Task { [client] in
+            try? await client.threadPreview(
+                baseURL: baseURL, userToken: token, hostId: host.id, threadId: thread.id
+            )
+        }
+        openSession(hostId: host.id, host: host, threadId: thread.id, cwd: thread.cwd)
+        Task { @MainActor in
+            guard let preview = await previewTask.value, preview.available else { return }
+            guard stream.isEmpty, session?.threadId == thread.id else { return }
+            stream = preview.turns.enumerated().map { index, turn in
+                StreamItem(
+                    id: "preview_\(thread.id)_\(index)",
+                    role: turn.role == "user" ? .user : .agent,
+                    title: turn.role == "user" ? "You" : "Codex",
+                    text: turn.text,
+                    completed: true
+                )
             }
         }
     }
@@ -161,7 +216,13 @@ final class RemotexViewModel: ObservableObject {
         unsentMessageId = messageId
         prompt = ""
         pending = true
-        socket.sendTurn(input, clientMessageId: messageId)
+        socket.sendTurn(
+            input,
+            clientMessageId: messageId,
+            model: model,
+            effort: effort,
+            permissions: permissions
+        )
     }
 
     func interruptTurn() {
@@ -457,6 +518,7 @@ final class RemotexViewModel: ObservableObject {
         historyOldest = data.int("oldest") ?? 0
         historyHasMore = data.bool("has_more")
         historyLoading = false
+        stream.removeAll { $0.id.hasPrefix("preview_") }
         let seen = Set(stream.map(\.id))
         let fresh = incoming.filter { !seen.contains($0.id) }
         if !fresh.isEmpty {

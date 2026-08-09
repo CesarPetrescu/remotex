@@ -981,6 +981,9 @@ class RemotexViewModel(
         // Track for the foreground service / done notification — they
         // need the thread id to look up the title and deep-link back.
         _lastResumeThreadId = resumeThreadId
+        if (resumeThreadId != null) {
+            paintPreview(target, resumeThreadId)
+        }
         _state.update {
             it.copy(
                 screen = Screen.Session,
@@ -1193,6 +1196,32 @@ class RemotexViewModel(
      * the frame when no turn is in flight, and echoes it to every attached
      * client — so we don't append it locally.
      */
+    /**
+     * Instant paint on resume: the disk-backed preview endpoint answers in
+     * milliseconds (daemon LRU, no codex), so the last exchange is visible
+     * while the real session opens. HISTORY commits replace these rows.
+     */
+    private fun paintPreview(hostId: String, threadId: String) {
+        viewModelScope.launch {
+            val preview = runCatching {
+                client.getThreadPreview(_state.value.userToken, hostId, threadId)
+            }.getOrNull() ?: return@launch
+            if (!preview.available || preview.turns.isEmpty()) return@launch
+            _state.update { s ->
+                // Only while this exact resume is still opening with nothing
+                // real on screen yet.
+                if (s.screen != Screen.Session || s.events.isNotEmpty()) return@update s
+                s.copy(events = preview.turns.mapIndexed { i, turn ->
+                    if (turn.role == "user") {
+                        UiEvent.User(id = "preview_${'$'}threadId_${'$'}i", text = turn.text)
+                    } else {
+                        UiEvent.Agent(id = "preview_${'$'}threadId_${'$'}i", text = turn.text, completed = true)
+                    }
+                })
+            }
+        }
+    }
+
     /** Pull the next page of older turns (scroll-to-top backfill). */
     fun loadOlderHistory() {
         val s = _state.value
@@ -1652,13 +1681,16 @@ class RemotexViewModel(
                 val oldest = (data["oldest"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
                 val hasMore = (data["has_more"] as? JsonPrimitive)?.contentOrNull == "true"
                 _state.update { s ->
-                    val seen = s.events.mapTo(HashSet()) { it.id }
+                    // The authoritative tail replaces the instant-paint
+                    // preview rows.
+                    val kept = s.events.filterNot { it.id.startsWith("preview_") }
+                    val seen = kept.mapTo(HashSet()) { it.id }
                     val fresh = incoming.filter { it.id !in seen }
                     s.copy(
                         // Prepending before existing events is right for both
                         // cases — on the initial tail, `events` holds at most
                         // live frames that raced in.
-                        events = fresh + s.events,
+                        events = fresh + kept,
                         historyOldest = oldest,
                         historyHasMore = hasMore,
                         historyLoading = false,

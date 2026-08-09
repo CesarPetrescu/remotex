@@ -35,3 +35,16 @@ data class ModelsResponse(
     val models: List<ModelInfo> = emptyList(),
     val efforts: List<String> = emptyList(),
 )
+
+
+@Serializable
+data class PreviewTurn(
+    val role: String = "",
+    val text: String = "",
+)
+
+@Serializable
+data class PreviewResponse(
+    val available: Boolean = false,
+    val turns: List<PreviewTurn> = emptyList(),
+)

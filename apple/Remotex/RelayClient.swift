@@ -54,6 +54,51 @@ final class RelayClient {
         return try decoder.decode(OpenSessionResponse.self, from: data).sessionId
     }
 
+    func listThreads(
+        baseURL: String,
+        userToken: String,
+        hostId: String,
+        limit: Int = 25
+    ) async throws -> [ThreadInfo] {
+        var request = URLRequest(
+            url: try url(baseURL: baseURL, path: "/api/hosts/\(hostId)/threads?limit=\(limit)")
+        )
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
+        let data = try await data(for: request)
+        return try decoder.decode(ThreadsResponse.self, from: data).threads
+    }
+
+    // Disk-backed on the daemon (never codex) — safe to fire on every tap.
+    func threadPreview(
+        baseURL: String,
+        userToken: String,
+        hostId: String,
+        threadId: String
+    ) async throws -> PreviewResponse {
+        var request = URLRequest(
+            url: try url(baseURL: baseURL, path: "/api/hosts/\(hostId)/threads/\(threadId)/preview?turns=2")
+        )
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
+        let data = try await data(for: request)
+        return try decoder.decode(PreviewResponse.self, from: data)
+    }
+
+    func listHostModels(
+        baseURL: String,
+        userToken: String,
+        hostId: String
+    ) async throws -> [ModelOption] {
+        var request = URLRequest(
+            url: try url(baseURL: baseURL, path: "/api/hosts/\(hostId)/models")
+        )
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
+        let data = try await data(for: request)
+        return try decoder.decode(ModelsResponse.self, from: data).models
+    }
+
     private func data(for request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {

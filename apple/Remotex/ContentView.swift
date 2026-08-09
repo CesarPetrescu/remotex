@@ -78,6 +78,29 @@ private struct HostsView: View {
                 }
             }
 
+            if !viewModel.threads.isEmpty {
+                Section("Recent sessions") {
+                    ForEach(viewModel.threads) { thread in
+                        Button {
+                            viewModel.resumeThread(thread)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(thread.displayTitle)
+                                    .foregroundStyle(Color.remotexText)
+                                    .lineLimit(1)
+                                if let cwd = thread.cwd, !cwd.isEmpty {
+                                    Text(cwd)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(Color.remotexMuted)
+                                        .lineLimit(1)
+                                        .truncationMode(.head)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
         }
         .scrollContentBackground(.hidden)
         .background(Color.remotexBackground)
@@ -302,7 +325,52 @@ private struct StreamRow: View {
 private struct Composer: View {
     @ObservedObject var viewModel: RemotexViewModel
 
+    private static let permissionOptions: [(id: String, label: String)] = [
+        ("default", "Default"),
+        ("full", "Full Access"),
+        ("readonly", "Read Only"),
+    ]
+
+    private var effortOptions: [String] {
+        let selected = viewModel.modelOptions.first { $0.id == viewModel.model }
+        return selected?.efforts ?? ["", "low", "medium", "high", "xhigh"]
+    }
+
     var body: some View {
+      VStack(spacing: 8) {
+        // Pre-turn settings, mirrored from the web chip row. Menus keep
+        // the row one line tall; the values ride the next turn-start.
+        if !viewModel.modelOptions.isEmpty {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(viewModel.modelOptions) { option in
+                        Button(option.label) { viewModel.model = option.id }
+                    }
+                } label: {
+                    PickerChip(
+                        title: "MODEL",
+                        value: viewModel.modelOptions.first { $0.id == viewModel.model }?.label ?? "default"
+                    )
+                }
+                Menu {
+                    ForEach(effortOptions, id: \.self) { option in
+                        Button(option.isEmpty ? "default" : option) { viewModel.effort = option }
+                    }
+                } label: {
+                    PickerChip(title: "EFFORT", value: viewModel.effort.isEmpty ? "default" : viewModel.effort)
+                }
+                Menu {
+                    ForEach(Self.permissionOptions, id: \.id) { option in
+                        Button(option.label) { viewModel.permissions = option.id }
+                    }
+                } label: {
+                    PickerChip(
+                        title: "PERMS",
+                        value: Self.permissionOptions.first { $0.id == viewModel.permissions }?.label ?? "Default"
+                    )
+                }
+            }
+        }
         HStack(alignment: .bottom, spacing: 10) {
             TextField("Message Codex", text: $viewModel.prompt, axis: .vertical)
                 .lineLimit(1...5)
@@ -338,8 +406,35 @@ private struct Composer: View {
             )
             .accessibilityLabel(viewModel.pending ? "Steer turn" : "Send")
         }
-        .padding(12)
-        .background(Color.remotexBackground)
+      }
+      .padding(12)
+      .background(Color.remotexBackground)
+    }
+}
+
+private struct PickerChip: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Color.remotexMuted)
+            Text(value)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Color.remotexAccent)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.remotexSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.remotexLine, lineWidth: 1)
+        )
     }
 }
 

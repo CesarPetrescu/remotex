@@ -1408,6 +1408,10 @@ main.screen-host {
 .dashboard-layout * {
   border-radius: 0 !important;
 }
+.dashboard-layout .tool-dot,
+.dashboard-layout .jump-to-bottom,
+.dashboard-layout .jump-dot,
+.dashboard-layout .working-star,
 .dashboard-layout .dot,
 .dashboard-layout .tag-dot,
 .dashboard-layout .card-dot,
@@ -4116,4 +4120,109 @@ main.screen-host {
 @media (max-width: 640px) {
   .tool-out-body, .diff-body { font-size: 11px; }
   .item-image-thumb { width: 72px; height: 72px; }
+}
+
+/* --- phone-IA batch --------------------------------------------------- */
+
+/* A6: no pull-to-refresh killing a live session; composer clears the
+   iPhone home bar. */
+html, body { overscroll-behavior-y: none; }
+.composer { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+
+/* A3: while typing, the chip row folds away — those are pre-turn
+   settings; mid-composition you want transcript. Phone only. */
+@media (max-width: 640px) {
+  .composer:has(.prompt:focus) .chip-row { display: none; }
+}
+
+/* A1: drawers become bottom sheets on phones. Same components, different
+   geometry: rise from the bottom under a drag handle, swipe-down to
+   dismiss (handled by useSheetDismiss on the handle). */
+@media (max-width: 640px) {
+  .dashboard-layout .hosts-sidebar,
+  .dashboard-layout .telemetry-sidebar,
+  .dashboard-layout .right-sidebar {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100vw;
+    height: min(82dvh, 640px);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: 14px 14px 0 0;
+    transform: translateY(105%);
+    box-shadow: var(--shadow-2);
+  }
+  .dashboard-layout.left-open .hosts-sidebar,
+  .dashboard-layout.right-open .telemetry-sidebar,
+  .dashboard-layout.right-open .right-sidebar {
+    transform: none;
+  }
+  .sheet-handle {
+    display: block;
+    width: 100%;
+    padding: 8px 0 4px;
+    background: transparent;
+    border: 0;
+    cursor: grab;
+    touch-action: none;
+  }
+  .sheet-handle::before {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 4px;
+    margin: 0 auto;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ink-dim) 45%, transparent);
+  }
+  .ws-drawer {
+    position: fixed;
+    inset: auto 0 0 0;
+    height: min(85dvh, 680px);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: 14px 14px 0 0;
+  }
+  .ws-drawer-scrim { align-items: flex-end; }
+
+  /* A5: touch-target floor for the controls that sat at 32-34px. */
+  .icon-button,
+  .header-tool,
+  .theme-toggle { min-width: 44px; min-height: 44px; }
+  .ws-drawer-actions button { width: 40px; height: 40px; }
+  .btn-sm { min-height: 40px; }
+
+  /* A4: approval decisions land in the thumb zone as full-width rows. */
+  .right-sidebar .pending-prompt-actions button,
+  .right-sidebar .btn-primary,
+  .right-sidebar .btn-surface {
+    min-height: 48px;
+    font-size: 13px;
+    flex: 1 1 auto;
+  }
+}
+.sheet-handle { display: none; }
+@media (max-width: 640px) {
+  .sheet-handle { display: block; }
+}
+
+/* A2: compact session header once the transcript scrolls. */
+@media (max-width: 640px) {
+  .session-meta.compact .session-meta-row2 { display: none; }
+  .session-meta.compact { padding-top: 6px; padding-bottom: 6px; }
+}
+.session-meta { transition: padding 140ms ease; }
+
+/* Bottom sheets opt out of the global square-off — rounded top corners
+   are the affordance that says "this pulls down". */
+@media (max-width: 640px) {
+  .dashboard-layout .hosts-sidebar,
+  .dashboard-layout .telemetry-sidebar,
+  .dashboard-layout .right-sidebar,
+  .ws-drawer {
+    border-radius: 14px 14px 0 0 !important;
+  }
+  .sheet-handle::before { border-radius: 999px !important; }
 }

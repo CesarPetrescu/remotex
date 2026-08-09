@@ -50,6 +50,8 @@ export function SessionScreen({
     : (hostId ? hostId.slice(0, 12) + '…' : '—');
 
   const [filesOpen, setFilesOpen] = useState(false);
+  // Phone: the static facts row folds while reading history (not at tail).
+  const [atBottom, setAtBottom] = useState(true);
   const fileInputRef = useRef(null);
 
   const onUpload = async (e) => {
@@ -73,7 +75,7 @@ export function SessionScreen({
           W6: workspace + add buttons live INSIDE the meta block as
           icon-only controls, so they're discoverable without claiming
           a whole row of vertical space between meta and chat. */}
-      <div className="session-meta">
+      <div className={`session-meta ${atBottom ? '' : 'compact'}`}>
         <div className="session-meta-row1">
           <span className="session-meta-title" title={chatTitle}>{chatTitle}</span>
           <button
@@ -117,6 +119,7 @@ export function SessionScreen({
         historyTick={state.historyTick}
         historyPrepend={state.historyPrepend}
         onLoadOlder={onLoadOlder}
+        onAtBottomChange={setAtBottom}
         placeholder={
           state.status === STATUS.Connected ? 'send a prompt to start…' : 'connecting…'
         }

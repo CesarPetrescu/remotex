@@ -1,4 +1,5 @@
 import { TelemetrySidebar } from './TelemetrySidebar';
+import { SheetHandle } from './SheetHandle';
 import { PendingPromptsPanel } from './PendingPromptsPanel';
 
 // Right column: telemetry. A pending approval/user-input prompt takes over the
@@ -7,6 +8,7 @@ import { PendingPromptsPanel } from './PendingPromptsPanel';
 // the column for the chat; the header telemetry button reopens it.
 export function RightSidebar({
   view,
+  onClose,
   telemetry,
   selectedHost,
   pendingApproval,
@@ -21,6 +23,7 @@ export function RightSidebar({
   const hasPrompt = !!(pendingApproval || pendingUserInput);
   return (
     <aside className="right-sidebar" aria-label="Right sidebar">
+      <SheetHandle onDismiss={onClose} label="Close panel" />
       <div className="right-sidebar-body">
         {hasPrompt ? (
           <PendingPromptsPanel

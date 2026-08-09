@@ -86,6 +86,7 @@ export function EventStream({
   historyTick = 0,
   historyPrepend = false,
   onLoadOlder,
+  onAtBottomChange,
 }) {
   const scrollerRef = useRef(null);
   const sentinelRef = useRef(null);
@@ -136,7 +137,9 @@ export function EventStream({
   const onScroll = () => {
     const el = scrollerRef.current;
     if (!el) return;
-    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 140);
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    setAtBottom(near);
+    onAtBottomChange?.(near);
   };
 
   // New session → disarm until its tail lands.
