@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { compareFsEntries } from '../util/fsEntries';
 import { createPortal } from 'react-dom';
 import { joinPath, parentPath } from '../util/path';
 import { fuzzyMatch } from '../util/fuzzy';
@@ -92,14 +93,7 @@ export function JumpPicker({
         if (mine !== reqRef.current) return;
         const dirs = (r.entries || [])
           .filter((e) => e.isDirectory)
-          .sort((a, b) => {
-            // Real project folders first; dotfolders (.cache, .config, …)
-            // sink to the bottom instead of burying the useful entries.
-            const aDot = a.fileName.startsWith('.');
-            const bDot = b.fileName.startsWith('.');
-            if (aDot !== bDot) return aDot ? 1 : -1;
-            return a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base' });
-          });
+          .sort(compareFsEntries);
         setPath(r.path || p);
         setEntries(dirs);
         setHi(0);

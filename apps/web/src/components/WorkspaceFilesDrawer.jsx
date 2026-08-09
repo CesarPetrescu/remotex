@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { compareFsEntries } from '../util/fsEntries';
 
 /**
  * Slide-in drawer (right-aligned) showing the contents of the current
@@ -26,7 +27,7 @@ export function WorkspaceFilesDrawer({
     setLoading(true); setError(null);
     try {
       const r = await apiRef.current.readDirectory(hostId, p);
-      setEntries(r.entries || []);
+      setEntries((r.entries || []).slice().sort(compareFsEntries));
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -105,17 +106,17 @@ export function WorkspaceFilesDrawer({
           <button type="button" className="ws-drawer-close" onClick={onClose}>×</button>
         </header>
         <div className="ws-drawer-path">
-          {path !== '/' && (
-            <button
-              type="button"
-              className="ws-drawer-up"
-              onClick={() => {
-                const next = path.split('/').slice(0, -1).join('/') || '/';
-                setPath(next); refresh(next);
-              }}
-            >↑ up</button>
-          )}
-          <span className="ws-drawer-cwd">{path}</span>
+          <button
+            type="button"
+            className="ws-drawer-up"
+            onClick={() => {
+              const next = path.split('/').slice(0, -1).join('/') || '/';
+              setPath(next); refresh(next);
+            }}
+            disabled={path === '/'}
+            aria-label="Parent folder"
+          >↑</button>
+          <span className="ws-drawer-cwd" title={path}><bdi dir="ltr">{path}</bdi></span>
         </div>
         {error && <div className="ws-drawer-error">{error}</div>}
         {loading ? (
@@ -126,37 +127,47 @@ export function WorkspaceFilesDrawer({
           <ul className="ws-drawer-list">
             {entries.map((entry) => (
               <li key={entry.fileName} className="ws-drawer-row">
-                <span className={`ws-drawer-icon ${entry.isDirectory ? 'dir' : 'file'}`} />
                 <button
                   type="button"
-                  className="ws-drawer-name"
+                  className={`ws-drawer-name ${entry.isDirectory ? 'is-dir' : 'is-file'}`}
                   onClick={() => {
                     if (entry.isDirectory) {
                       const next = join(path, entry.fileName);
                       setPath(next); refresh(next);
+                    } else {
+                      // Tapping a file downloads it — the only file-level
+                      // "open" that makes sense from a phone.
+                      onDownload(entry);
                     }
                   }}
-                  disabled={!entry.isDirectory}
+                  title={entry.isDirectory ? 'Open folder' : 'Download'}
                 >
-                  {entry.fileName}
+                  <span className="ws-drawer-icon" aria-hidden="true">
+                    {entry.isDirectory ? '▸' : '▪'}
+                  </span>
+                  <span className="ws-drawer-filename">
+                    {entry.fileName}
+                    {entry.isDirectory ? '/' : ''}
+                  </span>
                 </button>
                 <div className="ws-drawer-actions">
-                  {!entry.isDirectory && (
-                    <button type="button" onClick={() => onDownload(entry)}>↓</button>
-                  )}
                   <button
                     type="button"
+                    aria-label={`Rename ${entry.fileName}`}
+                    title="Rename"
                     onClick={() => {
                       setRenameTarget(entry);
                       setRenameValue(entry.fileName);
                     }}
-                  >ren</button>
+                  >✎</button>
                   {!entry.isDirectory && (
                     <button
                       type="button"
                       className="ws-drawer-del"
+                      aria-label={`Delete ${entry.fileName}`}
+                      title="Delete"
                       onClick={() => onConfirmDelete(entry)}
-                    >del</button>
+                    >✕</button>
                   )}
                 </div>
               </li>

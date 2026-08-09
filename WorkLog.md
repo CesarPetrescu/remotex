@@ -32,6 +32,41 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — phone UI fixes: full-width sheets, files drawer overhaul, header + composer
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
+
+- **Why:** owner sent live phone screenshots — drawers left a 52px sliver
+  of page peeking through (read as broken layout), the workspace files
+  drawer was unsorted with disabled-looking file rows and `↓ ren del`
+  micro-buttons, a lone header icon stretched into a 120px empty box, and
+  the composer stacked three rows.
+- **Changed:**
+  - `styles.css` — ≤640px: all drawers become 100vw sheets; scrim uses
+    `var(--scrim)` (was a near-invisible bg-mix in dark). `.header-tools`
+    mobile `flex: 1 1 auto; max-width:120px` → `flex: 0 0 auto` (that was
+    the empty-box bug). Drawer rows/path-bar/action-button styles
+    rebuilt: 44px touch rows, square icon actions, `.ws-drawer-cwd`
+    tail-truncates via `direction: rtl`.
+  - `WorkspaceFilesDrawer.jsx` — entries sorted (shared
+    `util/fsEntries.js` comparator, also used by JumpPicker now); file
+    rows are tappable (tap = download) instead of disabled buttons; dirs
+    render accent + trailing `/` + chevron; rename/delete are labeled
+    icon buttons; path wrapped in `<bdi dir="ltr">` — **gotcha:** bare
+    `direction: rtl` ellipsis migrates a path's leading `/` to the tail.
+  - `Composer.jsx` — `/plan` `/goal` chips moved into the picker chip row
+    (`.plan-row` deleted): composer is 2 rows, ~44px of chat back on every
+    phone. ≤640px chips get a 108px floor so the row overflows and the
+    next chip peeks — without it the row ended flush at the screen edge
+    and the plan/goal chips were undiscoverable.
+- **Verified:** eslint/vitest(62)/build clean; Playwright phone shots
+  (412×915, dark+light): dashboard, real session, telemetry sheet, files
+  drawer — sorted, full-width, path correct, chip peek visible. Relay
+  rebuilt + recreated.
+- **Left open:** phone-IA plan (bottom sheets, sticky header, composer
+  focus mode, approval action sheet, 44px sweep, PWA polish) written in
+  `ToDo.md`.
+- **Restart needed:** already done (relay).
+
 ## 2026-08-09 — hover/press prefetch + preview cache (plan phase 3)
 **Agent:** Claude Fable 5 · **Branch:** main (uncommitted) · **Status:** done, deployed
 

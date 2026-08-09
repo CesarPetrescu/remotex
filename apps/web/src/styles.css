@@ -2435,7 +2435,7 @@ main.screen-host {
     display: block;
     position: fixed;
     inset: 52px 0 0 0;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    background: var(--scrim);
     z-index: 15;
     border: none;
   }
@@ -2457,8 +2457,7 @@ main.screen-host {
     gap: 8px;
   }
   .header-tools {
-    flex: 1 1 auto;
-    max-width: min(34vw, 120px);
+    flex: 0 0 auto;
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
@@ -2957,50 +2956,67 @@ main.screen-host {
 .ws-drawer-close:hover { color: var(--amber); }
 .ws-drawer-path {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; border-bottom: 1px solid var(--line);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
 }
 .ws-drawer-up {
-  background: transparent; border: 1px solid var(--line); color: var(--accent);
-  font-family: var(--mono); font-size: 11px; padding: 2px 8px; cursor: pointer;
+  flex-shrink: 0;
+  width: 34px; height: 34px; padding: 0;
+  display: grid; place-items: center;
+  font-size: 14px;
 }
 .ws-drawer-cwd {
-  font-size: 11px; color: var(--ink); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* long paths keep their TAIL visible — the useful end */
+  direction: rtl;
+  text-align: left;
 }
-.ws-drawer-error {
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--warn) 10%, transparent);
-  color: var(--warn); font-size: 11px;
-  border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
-}
-.ws-drawer-empty { padding: 20px 12px; color: var(--ink-dim); font-size: 11px; }
-.ws-drawer-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+
 .ws-drawer-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 8px 2px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
 }
 .ws-drawer-icon {
-  width: 8px; height: 8px; flex-shrink: 0;
-  background: var(--ink-dim);
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  color: var(--ink-dim);
 }
-.ws-drawer-icon.dir { background: var(--amber); }
-.ws-drawer-icon.file { background: var(--ok); }
 .ws-drawer-name {
   flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
   background: transparent; border: 0; color: var(--ink);
-  text-align: left; font-family: inherit; font-size: 12px; cursor: pointer;
+  text-align: left; font-family: inherit; font-size: 12.5px; cursor: pointer;
+  /* touch-friendly rows without the airy waste of the old 40px+ ones */
+  padding: 9px 4px;
+  border-radius: 4px;
+}
+.ws-drawer-name:hover { background: color-mix(in srgb, var(--amber) 6%, transparent); }
+.ws-drawer-name.is-dir { color: var(--amber); }
+.ws-drawer-name.is-dir .ws-drawer-icon { color: var(--amber); }
+.ws-drawer-name.is-file { color: var(--ink); }
+.ws-drawer-filename {
+  min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ws-drawer-name:disabled { color: var(--ink-dim); cursor: default; }
 .ws-drawer-actions { display: flex; gap: 4px; }
 .ws-drawer-actions button {
-  background: var(--panel-2); border: 1px solid var(--line);
-  color: var(--ink-dim); font-family: var(--mono); font-size: 11px;
-  padding: 2px 6px; cursor: pointer;
+  background: transparent; border: 1px solid transparent;
+  color: var(--ink-dim); font-family: var(--mono); font-size: 13px;
+  width: 32px; height: 32px; padding: 0;
+  display: grid; place-items: center;
+  border-radius: 4px;
+  cursor: pointer;
 }
-.ws-drawer-actions button:hover { color: var(--amber); border-color: var(--amber); }
-.ws-drawer-actions .ws-drawer-del:hover { color: var(--warn); border-color: var(--warn); }
+.ws-drawer-actions button:hover { color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+.ws-drawer-actions .ws-drawer-del:hover { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .ws-drawer-rename {
   display: flex; gap: 6px; padding: 8px 12px;
   border-top: 1px solid var(--line);
@@ -3675,13 +3691,8 @@ main.screen-host {
 }
 
 /* ── Phase C: plan-mode chip + slash autocomplete ── */
-.plan-row {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(78px, 1fr);
-  gap: 6px;
-  padding: 0;
-}
-.plan-chip {
+/* .plan-row removed — plan/goal chips live in .chip-row now */.plan-chip {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3750,3 +3761,22 @@ main.screen-host {
   height: 36px;
 }
 .login-shell { position: relative; }
+
+/* --- phone drawer sizing ------------------------------------------- */
+/* A 360px drawer on a 412px phone leaves a 52px sliver of the page
+   peeking through, which reads as a broken layout. Below 640px every
+   drawer becomes a full-width sheet with an obvious close affordance. */
+@media (max-width: 640px) {
+  /* Pickers shrink-to-fit made the row end flush at the screen edge, hiding
+     the /plan and /goal chips entirely. A floor width forces overflow, so
+     the next chip peeks in and signals the row scrolls. */
+  .chip { flex: 1 0 auto; min-width: 108px; }
+  .dashboard-layout .hosts-sidebar,
+  .dashboard-layout .telemetry-sidebar,
+  .dashboard-layout .right-sidebar {
+    width: 100vw;
+    border-left: none;
+    border-right: none;
+  }
+  .ws-drawer { width: 100vw; border-left: none; }
+}

@@ -201,8 +201,6 @@ export function Composer({
         <ModelPicker value={model} models={models} onChange={onModelChange} />
         <EffortPicker model={model} value={effort} models={models} onChange={onEffortChange} />
         <PermissionsPicker value={permissions} onChange={onPermissionsChange} />
-      </div>
-      <div className="plan-row">
         <button
           type="button"
           className={`plan-chip ${planActive ? 'on' : ''}`}
