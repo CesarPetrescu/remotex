@@ -173,11 +173,33 @@ final class FrameHandlingTests: XCTestCase {
         XCTAssertEqual(vm.status, .connected)
     }
 
-    func testErrorFrameSurfacesTheMessage() {
+    /// A relay error frame must NOT flip `status` to `.error`: the socket is
+    /// still up, and `.error` would wedge the composer with no route back to
+    /// `.connected`. Only the message surfaces.
+    func testErrorFrameSurfacesTheMessageWithoutWedgingTheSession() {
         let vm = makeViewModel()
+        vm.handle(frame: ["type": "attached"])
+
         vm.handle(frame: ["type": "error", "error": "host offline"])
-        XCTAssertEqual(vm.status, .error)
+
         XCTAssertEqual(vm.errorMessage, "host offline")
+        XCTAssertEqual(vm.status, .connected, "an error frame is not a disconnect")
+        XCTAssertFalse(vm.pending)
+    }
+
+    /// The one error that *does* carry state: the relay rejected our turn
+    /// because one is already running, so send stays disabled.
+    func testTurnBusyErrorKeepsSendDisabled() {
+        let vm = makeViewModel()
+        vm.handle(frame: ["type": "attached"])
+
+        vm.handle(frame: [
+            "type": "error",
+            "error": "a turn is already running in this chat",
+        ])
+
+        XCTAssertTrue(vm.pending, "a turn really is running, so keep send disabled")
+        XCTAssertEqual(vm.errorMessage, "a turn is already running in this chat")
     }
 
     func testErrorFrameWithoutAMessageStillReportsSomething() {
