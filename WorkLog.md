@@ -32,6 +32,25 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — deploy settled current-main web bundle
+**Agent:** Codex · **Branch:** main · **Status:** deployed
+
+- **Why:** the header-popover/jump-to-latest fix landed immediately after the
+  inventory rollout. Its entry correctly said not deployed at that moment;
+  after the inventory checks passed there was no reason to leave production
+  one web commit behind `main`.
+- **Changed:** rebuilt `remotex/relay:local` from the clean settled tree and
+  recreated only `remotex-relay-1`. Postgres, SparkTunnel, the managed Codex
+  server, Android, and Apple were untouched.
+- **Verified:** 81 web tests, ESLint, and the production build pass. The relay
+  is healthy with no host port binding, SparkTunnel is running, the daemon
+  automatically reattached after the expected brief 1006/edge-502 window,
+  the public asset name matches the fresh bundle, and public inventory WSS
+  completes `inventory-ready` plus ping/pong.
+- **Left open:** I-019 and I-020 remain as documented; neither blocks the
+  deployed sidebar transport.
+- **Restart needed:** none; deployment complete.
+
 ## 2026-08-09 — post-deploy GitHub and dependency triage
 **Agent:** Codex · **Branch:** main · **Status:** done
 
