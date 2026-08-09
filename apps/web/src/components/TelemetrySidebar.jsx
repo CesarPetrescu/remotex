@@ -2,7 +2,7 @@ import { Sparkline } from './Sparkline';
 
 const EMPTY_HISTORY = { cpu: [], mem: [], gpu: [], up: [], down: [] };
 
-export function TelemetrySidebar({ telemetry, selectedHost, onClose }) {
+export function TelemetrySidebar({ telemetry, selectedHost }) {
   const current = telemetry?.current;
   const history = telemetry?.history || EMPTY_HISTORY;
   const vals = (a) => (a || []).map((p) => p.v);
@@ -28,16 +28,6 @@ export function TelemetrySidebar({ telemetry, selectedHost, onClose }) {
             {live ? 'Live' : online ? 'Stale' : 'Offline'}
           </span>
           <span className="tag-muted">3s</span>
-          {onClose && (
-            <button
-              type="button"
-              className="sidebar-close"
-              onClick={onClose}
-              aria-label="Close telemetry"
-            >
-              ×
-            </button>
-          )}
         </div>
       </div>
 

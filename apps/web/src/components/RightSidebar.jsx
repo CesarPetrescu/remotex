@@ -7,7 +7,6 @@ import { PendingPromptsPanel } from './PendingPromptsPanel';
 // the column for the chat; the header telemetry button reopens it.
 export function RightSidebar({
   view,
-  onClose,
   telemetry,
   selectedHost,
   pendingApproval,
@@ -37,7 +36,6 @@ export function RightSidebar({
           <TelemetrySidebar
             telemetry={telemetry}
             selectedHost={selectedHost}
-            onClose={onClose}
           />
         )}
       </div>

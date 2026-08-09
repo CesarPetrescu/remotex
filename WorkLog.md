@@ -32,6 +32,33 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — telemetry graphs + drawer close redundancy (phone feedback round 2)
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
+
+- **Why:** owner screenshot: sparklines looked dead (flat line drowning in
+  a fixed 0-100 plot, endpoint stretched into an oval), the telemetry ×
+  was off-center AND redundant with the header's right-sidebar toggle,
+  and that toggle's "▥" glyph read as noise.
+- **Changed:**
+  - `Sparkline.jsx` — axis autoscales to ~1.3× the observed peak (hard
+    ceiling still the passed max, floor 8% of full scale), so a 5% CPU
+    line has shape instead of hugging the floor. Data strokes and
+    endpoint dots use `vector-effect: non-scaling-stroke`; dots are
+    zero-length round-capped strokes — a plain `<circle>` stretches into
+    an oval under `preserveAspectRatio="none"` (that was the blob). Grid
+    colors moved from dark-only rgba to `color-mix(var(--ink-dim))` so
+    light theme gets a correct grid.
+  - `TelemetrySidebar.jsx` — the duplicate × removed; the header toggle
+    is the single open/close control. Dead `onClose` plumbing dropped
+    through `RightSidebar.jsx`/`App.jsx`.
+  - `DashboardHeader.jsx` — telemetry toggle icon is now an inline SVG
+    pulse (heartbeat polyline, `currentColor`) instead of "▥".
+- **Verified:** eslint 0 warnings, 62 vitest, build clean; phone
+  screenshots (412×915, both themes) — CPU/GPU charts show real shape,
+  round dots, no ×; header pulse icon renders in active/inactive states.
+  Relay rebuilt + recreated.
+- **Restart needed:** already done (relay).
+
 ## 2026-08-09 — phone UI fixes: full-width sheets, files drawer overhaul, header + composer
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
 

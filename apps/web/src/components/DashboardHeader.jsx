@@ -75,7 +75,18 @@ export function DashboardHeader({
             <HeaderTool
               id="telemetry"
               label={hasPendingPrompt ? 'Telemetry · pending prompt' : 'Telemetry'}
-              icon="▥"
+              icon={(
+                <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                  <polyline
+                    points="1,9 4.5,9 6.5,3.5 9.5,12.5 11.5,9 15,9"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
               active={rightView !== 'off'}
               onClick={() => onRightView(rightView === 'off' ? 'telemetry' : 'off')}
               badge={hasPendingPrompt ? String(pendingPromptCount) : null}

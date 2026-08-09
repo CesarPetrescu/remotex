@@ -26,7 +26,10 @@ export function Sparkline({
   const padY = 7;
   const primary = points.length ? points : [0, 0];
   const secondary = secondaryPoints.length ? secondaryPoints : null;
-  const cap = max ?? Math.max(1, ...primary, ...(secondary || []));
+  const dataMax = Math.max(...primary, ...(secondary || [0]));
+  const cap = max != null
+    ? Math.max(Math.min(max, dataMax * 1.3), max * 0.08, 0.001)
+    : Math.max(1, dataMax * 1.15);
   const plotW = width - padX * 2;
   const plotH = h - padY * 2;
   const guides = [0.15, 0.4, 0.65, 0.9].map((ratio) => padY + plotH * ratio);
@@ -90,8 +93,8 @@ export function Sparkline({
         y={padY}
         width={plotW}
         height={plotH}
-        fill="rgba(255,255,255,0.015)"
-        stroke="rgba(136,164,196,0.09)"
+        fill="color-mix(in srgb, var(--ink) 2%, transparent)"
+        stroke="color-mix(in srgb, var(--ink-dim) 12%, transparent)"
         strokeWidth="0.45"
       />
       {guides.map((y) => (
@@ -101,7 +104,7 @@ export function Sparkline({
           x2={width - padX}
           y1={y}
           y2={y}
-          stroke="rgba(136,164,196,0.12)"
+          stroke="color-mix(in srgb, var(--ink-dim) 16%, transparent)"
           strokeWidth="0.45"
           vectorEffect="non-scaling-stroke"
         />
@@ -113,7 +116,7 @@ export function Sparkline({
           x2={x}
           y1={padY}
           y2={h - padY}
-          stroke="rgba(136,164,196,0.08)"
+          stroke="color-mix(in srgb, var(--ink-dim) 10%, transparent)"
           strokeWidth="0.45"
           vectorEffect="non-scaling-stroke"
         />
@@ -141,6 +144,7 @@ export function Sparkline({
           strokeWidth={Math.max(1.2, strokeWidth - 0.15)}
           strokeLinejoin="round"
           strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
       )}
       <path
@@ -150,25 +154,24 @@ export function Sparkline({
         strokeWidth={strokeWidth}
         strokeLinejoin="round"
         strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
       />
       {secondarySeries?.last && (
-        <circle
-          cx={secondarySeries.last[0]}
-          cy={secondarySeries.last[1]}
-          r="1.9"
-          fill={secondaryColor}
-          stroke="rgba(5,9,16,0.9)"
-          strokeWidth="0.9"
+        <path
+          d={`M${secondarySeries.last[0].toFixed(2)},${secondarySeries.last[1].toFixed(2)} l0,0.001`}
+          stroke={secondaryColor}
+          strokeWidth="4.5"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
       )}
       {primarySeries.last && (
-        <circle
-          cx={primarySeries.last[0]}
-          cy={primarySeries.last[1]}
-          r="2.2"
-          fill={color}
-          stroke="rgba(5,9,16,0.95)"
-          strokeWidth="0.95"
+        <path
+          d={`M${primarySeries.last[0].toFixed(2)},${primarySeries.last[1].toFixed(2)} l0,0.001`}
+          stroke={color}
+          strokeWidth="5.5"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
       )}
     </svg>

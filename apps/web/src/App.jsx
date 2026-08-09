@@ -274,7 +274,6 @@ function AuthenticatedApp({ auth, onLogout }) {
 
       <RightSidebar
         view={rightView}
-        onClose={closeRightView}
         telemetry={telemetry}
         selectedHost={selectedHost}
         pendingApproval={state.pendingApproval}
