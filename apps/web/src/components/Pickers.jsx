@@ -14,11 +14,11 @@ export function ModelPicker({ value, onChange, models }) {
       label="model"
       value={current.label}
       items={list}
+      // Name only. The model list is long and fetched from codex, so a
+      // description on every row turned picking a model into reading a page.
+      // Kept as the title so the blurb is still there on hover.
       renderItem={(opt) => (
-        <div>
-          <div className="dd-line">{opt.label}</div>
-          <div className="dd-hint">{opt.hint}</div>
-        </div>
+        <div className="dd-line" title={opt.hint || ''}>{opt.label}</div>
       )}
       onPick={(opt) => onChange(opt.id)}
     />
