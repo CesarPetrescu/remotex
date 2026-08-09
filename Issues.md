@@ -46,6 +46,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-018 | open | medium | process | `git add -A` in this shared tree commits other agents' in-flight work |
 | I-019 | open | medium | codex/upstream | Codex 0.147 `thread/delete` fails against its migrated state database |
 | I-020 | open | medium | web/tooling | Dependabot reports high-severity vulnerabilities in web build/dev dependencies |
+| I-019 | open | low | daemon/deploy | Daemon reaches its own machine's relay via the public tunnel (the reconnect storm was relay restarts) |
 
 ---
 
@@ -525,3 +526,58 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 - **Evidence:** GitHub Dependabot API on 2026-08-09; local full audit reports
   three high, one moderate, one low package groups, while the production-only
   audit reports zero.
+
+### I-019 — daemon reaches its own machine's relay via the public internet
+
+- **Status:** open · **Severity:** low · **Area:** daemon/deploy
+- **Read the correction below before acting on this.** Filed at first as
+  "the tunnel keeps tearing down the daemon socket". That was wrong, and the
+  experiments that disproved it are recorded here so nobody repeats them.
+- **What is actually true:** `/root/.remotex/config.toml` has
+  `relay_url = "wss://remotex.photonspark.ro/ws/daemon"`, so a daemon and a
+  relay on the *same machine* talk via DNS → public edge
+  (`webhost.photonspark.com`) → SparkTunnel → `relay:8080`. That is real and
+  worth fixing, but it is **not** what produced the reconnect storm in the
+  logs.
+- **The reconnect storm was relay restarts — mostly ours.** Every
+  `docker compose up -d --force-recreate relay` yields exactly the observed
+  signature: `1006` (container killed under the socket) → `502` on the first
+  retry (tunnel has no upstream yet) → reattach 1–4s later. Proven for one
+  drop to sub-second precision:
+  - daemon: `20:24:59.386 relay websocket closed (code=1006)`
+  - `docker inspect remotex-relay-1 -f '{{.State.StartedAt}}'` →
+    `2026-08-09T17:24:59.702Z` (= 20:24:59.702 local)
+  The rest cluster in the same windows as builds/deploys during this
+  session. **Since the last deploy: 0 drops in 35 min.**
+- **Hypotheses tested and DISPROVEN** — do not re-litigate without new
+  evidence:
+  - *Tunnel/edge idle timeout:* two idle `/ws/inventory` sockets, one via
+    `wss://remotex.photonspark.ro` and one direct to the container, with
+    `heartbeat=None` client-side. **Both alive 18+ min.** If the edge killed
+    idle WS connections, the tunnel one would have died and the direct one
+    lived.
+  - *Oversize frame (the `REMOTEX_MAX_FILE_BYTES` trap):* drove the real web
+    app through login + opening a chat + scrolling to force history
+    backfill, recording every frame. **Largest frame 780 bytes** against a
+    25 MiB limit. Not close.
+  - *Event-loop starvation missing the `heartbeat=20` pong window:*
+    saturated all 32 cores for 45 s. **No drop.**
+- **Still genuine, but rare:** 4× `ClientConnectorDNSError` in 6 h — local
+  resolver failures. Only reachable because the daemon depends on public DNS
+  to reach its own machine.
+- **Separate, real, already filed as I-011:** 48× `421 Misdirected Request`
+  from `ws://127.0.0.1:18080/ws/daemon` in the 14:00 hour. 18080 is
+  published by the unrelated `gospod-nginx-1`, which rejects a Host it does
+  not serve. That collision is *why* the config was moved to the public URL.
+- **Fix, when someone wants it (low priority):** publish the relay on
+  `127.0.0.1:<free port>` and point `relay_url` there, keeping the tunnel for
+  phones. 18080 and 18081 are taken; 18090 and 19080 were free. The publish
+  must go in `docker-compose.sparktunnel.yml` — that file's
+  `ports: !reset []` wipes anything the base file publishes. Payoff is
+  modest: no DNS/edge dependency, and deploy-time drops reconnect faster.
+  It does **not** eliminate deploy-time drops — restarting the relay always
+  drops the socket.
+- **Do not build daemon-socket failover for this.** Two sockets over the
+  same path fail together, and load-balancing session frames across them
+  would reorder `turn-started`/`turn-completed` and the replay buffer. The
+  drops were deploys.
