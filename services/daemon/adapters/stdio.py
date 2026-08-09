@@ -24,6 +24,7 @@ from .permissions import (
     _approval_policy_to_codex,
     _image_suffix,
     _permissions_to_codex,
+    resolved_settings,
 )
 from .rollout import (
     _load_rollout_history,
@@ -148,6 +149,9 @@ class StdioCodexAdapter(SessionAdapter):
         # cleared on turn-completed.
         self._turn_tmp_files: list[str] = []
         self._current_model: str | None = None
+        # Codex's resolved model / effort / permissions for this thread. Empty
+        # until thread/start or thread/resume answers.
+        self._settings: dict = {}
         self._current_effort: str | None = None
         # Approval requests from codex are JSON-RPC requests (not notifs).
         # We record their rpc ids + shape so we can respond after the
@@ -270,12 +274,18 @@ class StdioCodexAdapter(SessionAdapter):
         if isinstance(thread.get("model"), str) and thread["model"].strip():
             self._current_model = thread["model"].strip()
         self._ready = True
+        # Codex resolves model / effort / sandbox itself, and the answer is
+        # often nothing like the request (a thread can come back as
+        # dangerFullAccess at high effort). Report the resolved truth so the
+        # clients' controls stop showing their own defaults.
+        self._settings = resolved_settings(thread)
         await self._queue.put(SessionEvent("session-started", {
             "model": thread.get("model") or model_hint,
             "cwd": thread.get("cwd", self._cwd),
             "thread_id": self._thread_id,
             "transport": transport,
             "kind": self._session_kind,
+            **({"settings": self._settings} if self._settings else {}),
         }))
         await self._goal_get()
 
@@ -656,11 +666,13 @@ class StdioCodexAdapter(SessionAdapter):
         if self._shared is not None and self._shared_registered:
             await self._shared.activate(self._thread_id, self._dispatch)
         self._ready = True
+        self._settings = resolved_settings(resp) or self._settings
         await self._queue.put(SessionEvent("thread-status", {
             "status": "resumed",
             "model": resp.get("model") or model_hint,
             "cwd": self._current_cwd,
             "thread_id": self._thread_id,
+            **({"settings": self._settings} if self._settings else {}),
             # The relay preserves shared turns while this daemon's WSS leg is
             # down. Reconcile that retained lock against Codex's atomic resume
             # snapshot without manufacturing a failed completion.
@@ -1560,6 +1572,14 @@ class StdioCodexAdapter(SessionAdapter):
                 "ok": True,
                 "message": "context compacted",
             }))
+        elif method == "thread/settings/updated":
+            incoming = params.get("threadId")
+            if self._thread_id and incoming and incoming != self._thread_id:
+                return
+            settings = resolved_settings(params.get("threadSettings"))
+            if settings and settings != self._settings:
+                self._settings = settings
+                await self._queue.put(SessionEvent("session-settings", settings))
         elif method == "thread/goal/updated":
             await self._queue.put(SessionEvent("goal-updated", {
                 "thread_id": params.get("threadId"),

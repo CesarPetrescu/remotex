@@ -32,6 +32,69 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — composer chips show codex's real settings, not local defaults
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** committed + tested; needs a daemon restart + relay rebuild to take effect
+
+Owner: "cant it auto update these from what it knows already?" — the MODEL /
+EFFORT / PERMS chips always read "default / medium / default".
+
+- **It was worse than cosmetic.** Those chips were pure local UI state
+  (`initialState.model = ''` → `ModelPicker` falls back to `list[0]`, labelled
+  "default"). The daemon's real model went into `session.model` and never
+  reached the picker. So **PERMS read "default" on a thread codex had actually
+  resolved to `dangerFullAccess` + `approvalPolicy: never`** — the control
+  claimed a sandbox that wasn't there.
+- **Followed the hard gate**: refreshed `/tmp/codex` (a16863f, matching
+  installed 0.147.0) and read
+  `app-server-protocol/src/protocol/v2/thread.rs`, then **probed a real
+  `codex app-server`** rather than trusting the source read.
+- **What codex actually reports** (probe output, `ephemeral: true` so no
+  rollout file):
+  - `thread/start` → `model`, `modelProvider`, `serviceTier`,
+    `reasoningEffort`, `approvalPolicy`, `approvalsReviewer`, `sandbox`,
+    `activePermissionProfile`. On this host: `gpt-5.6-sol` / `high` /
+    `never` / `dangerFullAccess`.
+  - `thread/settings/updated` fires with the **full** `ThreadSettings` on a
+    real change — and **sends nothing for a no-op**. My first probe set
+    effort `high`→`high` and saw no notification; I nearly concluded codex
+    does not push settings. It does. **Change the value when probing a
+    change notification.**
+  - **Trap worth remembering:** the two sources spell the same things
+    differently — `reasoningEffort`/`effort` and `sandbox`/`sandboxPolicy`.
+    Unguessable; `resolved_settings()` reads both.
+- **Changes:**
+  - `permissions.py`: `resolved_settings()` + `_permissions_from_codex()`
+    (inverse of the existing `_permissions_to_codex`). Returns **None** for a
+    sandbox we have no button for — absent means unknown, never "default".
+  - `stdio.py`: capture on `thread/start` and `thread/resume`, ship as
+    `settings` on `session-started` / `thread-status:resumed`, and forward
+    `thread/settings/updated` as a new `session-settings` event.
+  - `useRemotex.js`: `RESOLVED_SETTINGS` action seeds the pickers on
+    start/resume and on live pushes. Codex wins over local picker state.
+  - **No relay change needed** — `broadcast_to_session` forwards frames
+    verbatim, so a new event kind and a new field pass straight through.
+- **Verified:** 6 new daemon tests from the real probe frames (both wire
+  shapes, every UI permission round-tripping through
+  to_codex→from_codex, unknown policy → None) — **202 backend passing**. 3
+  new reducer tests against the real exported reducer — **87 web passing**.
+  eslint + build clean.
+- **Known gap, deliberate:** the relay persists only `thread_id`/`cwd` per
+  session, so a client attaching mid-session gets settings only if
+  `session-started` is still inside the 1000-frame replay buffer. Covering
+  that properly needs a session-row column; not worth it for the reported
+  problem (opening/resuming a session), but that is why it may still show
+  stale values on a re-attach to a very long session.
+- **Not effective yet:** needs `systemctl --user restart remotex-daemon` and
+  a relay rebuild. Held off — the owner had a live turn sitting on a command
+  approval.
+- **Note:** the typography work from the entry below **is already live** —
+  another agent's deploy at 21:34 carried it (live CSS hash
+  `index-Dt1EhsG6.css` == local build).
+- **Self-inflicted, worth flagging:** I wrote a `while old in s:` replace loop
+  where the replacement *contained* the search string — infinite loop, killed
+  after 120s. The file was untouched (the write came after the loop). Use the
+  Edit tool for repeated-anchor edits, not a hand-rolled loop.
+
 ## 2026-08-09 — deploy queue, typography, and theme web release
 **Agent:** Codex · **Branch:** main · **Status:** deployed
 

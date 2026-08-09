@@ -538,6 +538,19 @@ export function reducer(state, action) {
       return { ...state, effort: action.effort };
     case 'SET_PERMS':
       return { ...state, permissions: action.permissions };
+    // What codex says the thread is actually configured as. It wins over the
+    // local picker state: the composer used to show its own defaults
+    // ("default / medium / default") on a thread that was really
+    // gpt-5.6-sol / high / dangerFullAccess.
+    case 'RESOLVED_SETTINGS': {
+      const s = action.settings || {};
+      const next = { ...state };
+      if (s.model) next.model = s.model;
+      if (s.effort) next.effort = s.effort;
+      if (s.permissions) next.permissions = s.permissions;
+      if (s.approval_policy) next.approvalPolicy = s.approval_policy;
+      return next;
+    }
 
     case 'ATTACH_IMAGE':
       return { ...state, pendingImages: [...state.pendingImages, action.image] };
@@ -909,6 +922,9 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
             ...(data.thread_id ? { threadId: data.thread_id } : {}),
           },
         });
+        if (data.settings) {
+          dispatch({ type: 'RESOLVED_SETTINGS', settings: data.settings });
+        }
         dispatch({
           type: 'SET_ERROR',
           error: readOnlyHistory
@@ -1065,6 +1081,9 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
               ...(data.thread_id ? { threadId: data.thread_id } : {}),
             },
           });
+          if (data.settings) {
+            dispatch({ type: 'RESOLVED_SETTINGS', settings: data.settings });
+          }
           dispatch({ type: 'SET_ERROR', error: null });
           if (typeof data.shared_turn_in_flight === 'boolean') {
             dispatch({
@@ -1100,6 +1119,9 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         });
         return;
       }
+      case 'session-settings':
+        dispatch({ type: 'RESOLVED_SETTINGS', settings: data });
+        return;
       case 'goal-snapshot':
         dispatch({ type: 'GOAL_SET', goal: normalizeGoal(data.goal) });
         return;

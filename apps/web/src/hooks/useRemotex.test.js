@@ -377,3 +377,40 @@ describe('shared turn reconnect reconciliation', () => {
     expect(next.pending).toBe(true);
   });
 });
+
+describe('resolved settings from codex', () => {
+  // The composer used to show its own defaults ("default / medium / default")
+  // on a thread codex had actually resolved to gpt-5.6-sol / high /
+  // dangerFullAccess. Codex's answer wins.
+  it('adopts what codex reports', () => {
+    const next = reducer(initialState, {
+      type: 'RESOLVED_SETTINGS',
+      settings: {
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+        permissions: 'full',
+        approval_policy: 'never',
+      },
+    });
+    expect(next.model).toBe('gpt-5.6-sol');
+    expect(next.effort).toBe('high');
+    expect(next.permissions).toBe('full');
+    expect(next.approvalPolicy).toBe('never');
+  });
+
+  it('leaves anything codex did not report untouched', () => {
+    const base = { ...initialState, model: 'gpt-5.6-sol', permissions: 'readonly' };
+    // Absent keys mean "codex did not say", which must not become a default.
+    const next = reducer(base, { type: 'RESOLVED_SETTINGS', settings: { effort: 'low' } });
+    expect(next.effort).toBe('low');
+    expect(next.model).toBe('gpt-5.6-sol');
+    expect(next.permissions).toBe('readonly');
+  });
+
+  it('survives an empty or missing payload', () => {
+    expect(reducer(initialState, { type: 'RESOLVED_SETTINGS', settings: {} }).permissions)
+      .toBe(initialState.permissions);
+    expect(reducer(initialState, { type: 'RESOLVED_SETTINGS' }).model)
+      .toBe(initialState.model);
+  });
+});
