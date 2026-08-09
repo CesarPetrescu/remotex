@@ -32,6 +32,27 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — coherent dark, white, and high-contrast web themes
+**Agent:** Codex · **Branch:** main · **Status:** done, pending deploy
+
+- **Why:** the web app exposed dark/white switching, but several later RGB
+  tints bypassed the shared tokens and there was no explicit high-contrast
+  mode.
+- **Changed:** `apps/web/src/styles.css` now defines Dark, White, and High
+  Contrast from one complete token set. White uses AA text colors and visible
+  3:1 control borders; High Contrast uses black/white surfaces, bright semantic
+  colors, stronger borders, and no decorative shadows. Focus-visible rings and
+  native `color-scheme` are consistent across all three.
+- **Changed:** `apps/web/src/util/theme.js` cycles all three modes, honors
+  `prefers-contrast: more` before color-scheme when no choice is saved, and
+  keeps browser chrome color aligned. `ThemeToggle.jsx` uses accessible D/W/HC
+  marks and announces the current and next theme without emoji.
+- **Verified:** all sampled text/action combinations exceed WCAG AA (the
+  lowest is White warning text at 4.62:1); 82 web tests, ESLint, production
+  Vite build, and `git diff --check` pass.
+- **Left open:** none.
+- **Restart needed:** relay rebuild (web assets are baked into it).
+
 ## 2026-08-09 — deploy settled current-main web bundle
 **Agent:** Codex · **Branch:** main · **Status:** deployed
 

@@ -1,15 +1,15 @@
 /*
- * Two themes, one token set. Dark is the base (`:root`) — OLED-near-black
- * with cyan/teal accents sampled from docs/brand/logo.png. Light re-values
- * the same tokens under [data-theme="light"]; `src/util/theme.js` stamps
- * the attribute before first paint (system preference by default, header
- * toggle to override). Token names kept (--amber is the cyan accent) so
- * rules didn't need renaming across the file.
+ * Three themes, one token set. Dark is the base (`:root`) — OLED-near-black
+ * with cyan/teal accents sampled from docs/brand/logo.png. White and high
+ * contrast re-value the same tokens; `src/util/theme.js` stamps the attribute
+ * before first paint. Token names stay stable (--amber is the cyan accent),
+ * so component rules never contain theme-specific colors.
  *
  * Alpha tints are derived with color-mix() instead of hardcoded rgba(), so
  * hover washes / glass panels / scrims re-theme for free.
  */
 :root {
+  color-scheme: dark;
   --bg: #050910;
   --panel: #0a1120;
   --panel-2: #121a2c;
@@ -24,7 +24,7 @@
   /* Text sitting ON an accent-filled control (send button, "Start here"). */
   --on-accent: #000;
   --mesh-line: color-mix(in srgb, var(--amber) 8%, transparent);
-  --mesh-line-strong: rgba(106, 224, 194, 0.1);
+  --mesh-line-strong: color-mix(in srgb, var(--ok) 10%, transparent);
   --surface-glass: rgba(10, 17, 32, 0.84);
   /* Overlay scrim behind modals/drawers. */
   --scrim: rgba(0, 0, 0, 0.6);
@@ -46,21 +46,22 @@
 }
 
 :root[data-theme='light'] {
-  --bg: #f6f8fb;
+  color-scheme: light;
+  --bg: #f8fafc;
   --panel: #ffffff;
-  --panel-2: #eef2f8;
-  --line: #d7dfeb;
-  --line-strong: #aebdd2;
-  --ink: #101b2c;
-  --ink-dim: #51677f;
+  --panel-2: #f1f5f9;
+  --line: #8796aa;
+  --line-strong: #64748b;
+  --ink: #0f172a;
+  --ink-dim: #475569;
   /* Accents darkened for AA contrast on white; identity unchanged. */
   --amber: #007c9e;
   --ok: #0d7f66;
   --warn: #d92d20;
   --accent: #1668c7;
   --on-accent: #ffffff;
-  --mesh-line: rgba(0, 124, 158, 0.1);
-  --mesh-line-strong: rgba(13, 127, 102, 0.12);
+  --mesh-line: color-mix(in srgb, var(--amber) 10%, transparent);
+  --mesh-line-strong: color-mix(in srgb, var(--ok) 12%, transparent);
   --surface-glass: rgba(255, 255, 255, 0.86);
   --scrim: rgba(15, 26, 42, 0.38);
   --scrim-heavy: rgba(15, 26, 42, 0.48);
@@ -77,6 +78,39 @@
   --accent-green: #0d7f66;
   --accent-violet: #7c3aed;
   --accent-pink: #db2777;
+}
+
+:root[data-theme='contrast'] {
+  color-scheme: dark;
+  --bg: #000000;
+  --panel: #000000;
+  --panel-2: #0a0a0a;
+  --line: #767676;
+  --line-strong: #ffffff;
+  --ink: #ffffff;
+  --ink-dim: #d4d4d4;
+  --amber: #00e5ff;
+  --ok: #59ffa8;
+  --warn: #ff6b6b;
+  --accent: #70b7ff;
+  --on-accent: #000000;
+  --mesh-line: color-mix(in srgb, var(--ink) 14%, transparent);
+  --mesh-line-strong: color-mix(in srgb, var(--ink) 24%, transparent);
+  --surface-glass: rgba(0, 0, 0, 0.96);
+  --scrim: rgba(0, 0, 0, 0.82);
+  --scrim-heavy: rgba(0, 0, 0, 0.9);
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-3: none;
+  --code-string: #8dff9b;
+  --code-number: #ffd166;
+  --code-fn: #d8a7ff;
+  --user-accent: #9fc5ff;
+  --gold: #ffdf00;
+  --accent-blue: #70b7ff;
+  --accent-green: #59ffa8;
+  --accent-violet: #d8a7ff;
+  --accent-pink: #ff8fc7;
 }
 
 * { box-sizing: border-box; }
@@ -113,6 +147,10 @@ input, textarea {
   resize: none;
 }
 input:focus, textarea:focus { outline: none; border-color: var(--amber); }
+:where(button, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
 
 pre { margin: 0; font-family: var(--mono); }
 
@@ -2200,7 +2238,10 @@ main.screen-host {
   color: var(--ink-dim);
   background: var(--panel-2);
 }
-.tag.tag-live { color: var(--ok); border-color: rgba(106, 224, 194, 0.35); }
+.tag.tag-live {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
 .tag-muted {
   font-family: var(--mono);
   font-size: 11px;
@@ -2973,7 +3014,10 @@ main.screen-host {
   border-radius: 0;
 }
 .ws-toolbar-btn:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
-.ws-toolbar-btn.add { color: var(--accent); border-color: rgba(58,160,232,0.4); }
+.ws-toolbar-btn.add {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
 .ws-toolbar-btn.add:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ws-toolbar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .ws-toolbar-cwd {
@@ -3792,7 +3836,13 @@ main.screen-host {
 
 /* --- theme toggle --- */
 
-.theme-toggle { font-size: 14px; line-height: 1; }
+.theme-toggle {
+  min-width: 36px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
 .login-theme-toggle {
   position: absolute;
   top: 16px;
