@@ -32,6 +32,42 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — chat UX round: keyboard fix, autogrow, jump-to-bottom, titles, links, timestamps
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
+
+- **Why:** owner asked "what about chat's UX" — audit found 2 phone bugs
+  and 7 readability issues on the session screen.
+- **Changed:**
+  - `index.html` — viewport gains `interactive-widget=resizes-content`;
+    since Chrome 108 the on-screen keyboard OVERLAYS by default, hiding
+    the composer behind it. The worst chat bug, one line.
+  - `Composer.jsx` — textarea autogrows to ~5 lines (132px cap) then
+    scrolls; resets after send. All text mutations routed through one
+    sizing wrapper.
+  - `EventStream.jsx` — sticky ↓ jump-to-latest pill when scrolled away
+    from the tail (green dot while a turn streams); consecutive reasoning
+    items merge into one block at render (history replay emits each
+    summary part separately — the stacked "REASONING" rows); sparse
+    "2h ago" dividers between groups >30 min apart.
+  - `SessionScreen.jsx` — header title precedence: thread title → your
+    latest message → preview → "New session". Never `session sess_…`.
+  - `util/markdown.jsx` — link syntax finally parsed: http(s) targets are
+    real `<a target=_blank>`, file-path targets render label-only with the
+    path in the tooltip (no more 3-line path wraps).
+  - `useRemotex.js` — events get `ts` (rollout turn startedAt for history
+    via the daemon, arrival time live).
+  - `services/daemon/adapters/stdio.py` — `_emit_history_turn` payloads
+    carry `ts: turn.startedAt` (epoch s).
+  - `styles.css` — user bubbles read as prose (sans 13.5px); phone bubbles
+    span ~full width (94% / 100%, was 76% / 92%); `.prompt` max-height;
+    `.time-divider` + `.jump-to-bottom` styles; `.md-link`.
+- **Verified:** eslint clean, 62 vitest, build clean; daemon suite 28;
+  phone rig screenshots — title shows the real message, `ideas.md` link
+  renders label-only underlined, jump pill appears on scroll-up and
+  vanishes at the tail (clicked, smooth-scrolled, hid). Both daemons
+  restarted, relay rebuilt + recreated.
+- **Restart needed:** already done (daemon + relay).
+
 ## 2026-08-09 — telemetry graphs + drawer close redundancy (phone feedback round 2)
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
 

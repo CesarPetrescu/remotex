@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { EventRow } from './EventRow';
+import { relativeAge } from '../util/time';
 
 // Groups consecutive non-user events into a single "CODEX" block so a
 // chain of reasoning / agent / tool steps reads as one turn under one
@@ -19,6 +20,18 @@ function groupEvents(events) {
     }
     const prev = groups[groups.length - 1];
     if (prev && prev.kind === 'agent') {
+      // Consecutive reasoning items collapse into ONE block — history
+      // replay emits each summary part as its own item, which otherwise
+      // renders as a stack of identical "REASONING" rows.
+      const tail = prev.events[prev.events.length - 1];
+      if (e.role === 'reasoning' && tail?.role === 'reasoning') {
+        prev.events[prev.events.length - 1] = {
+          ...tail,
+          text: [tail.text, e.text].filter(Boolean).join('\n\n'),
+          completed: e.completed,
+        };
+        continue;
+      }
       prev.events.push(e);
     } else {
       groups.push({ kind: 'agent', events: [e] });
@@ -26,6 +39,15 @@ function groupEvents(events) {
   }
   return groups;
 }
+
+// Epoch seconds for a group (first event that has one); tolerates ms.
+function groupTs(g) {
+  const raw = g.events.find((e) => Number.isFinite(e.ts))?.ts;
+  if (!Number.isFinite(raw)) return null;
+  return raw > 1e12 ? raw / 1000 : raw;
+}
+
+const TIME_GAP_S = 30 * 60;
 
 // Scroll contract:
 //  - a committed history TAIL pins the view to the bottom in one jump
@@ -52,6 +74,7 @@ export function EventStream({
   const committedTick = useRef(0);
   const preCommit = useRef(null);
   const [armed, setArmed] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
 
   // Render-phase snapshot: when this render is committing a prepend batch,
   // capture the scroll geometry BEFORE React mutates the DOM. (Function
@@ -92,6 +115,12 @@ export function EventStream({
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [events]);
 
+  const onScroll = () => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 140);
+  };
+
   // New session → disarm until its tail lands.
   useEffect(() => {
     if (!events.length) setArmed(false);
@@ -115,7 +144,7 @@ export function EventStream({
   const groups = groupEvents(events);
 
   return (
-    <div className="stream" ref={scrollerRef}>
+    <div className="stream" ref={scrollerRef} onScroll={onScroll}>
       {!events.length && (
         <div className="empty">{placeholder || 'send a prompt to start…'}</div>
       )}
@@ -125,11 +154,16 @@ export function EventStream({
         </div>
       )}
       {groups.map((g, gi) => {
-        if (g.kind === 'user' || g.kind === 'gap') {
-          const e = g.events[0];
-          return <EventRow key={e.id} event={e} pending={pending} grouped={false} />;
-        }
-        return (
+        const ts = groupTs(g);
+        const prevTs = gi > 0 ? groupTs(groups[gi - 1]) : null;
+        const divider = ts != null && prevTs != null && ts - prevTs > TIME_GAP_S ? (
+          <div className="time-divider" key={`t-${gi}`} aria-hidden="true">
+            {relativeAge(Math.floor(ts))}
+          </div>
+        ) : null;
+        const row = (g.kind === 'user' || g.kind === 'gap') ? (
+          <EventRow key={g.events[0].id} event={g.events[0]} pending={pending} grouped={false} />
+        ) : (
           <div className="agent-group" key={`g-${gi}-${g.events[0].id}`}>
             <div className="agent-group-label">CODEX</div>
             <div className="agent-group-body">
@@ -139,7 +173,21 @@ export function EventStream({
             </div>
           </div>
         );
+        return divider ? [divider, row] : row;
       })}
+      {events.length > 0 && !atBottom && (
+        <button
+          type="button"
+          className={`jump-to-bottom ${pending ? 'streaming' : ''}`}
+          onClick={() => {
+            const el = scrollerRef.current;
+            el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+          }}
+          aria-label="Jump to latest"
+        >
+          ↓{pending && <span className="jump-dot" aria-hidden="true" />}
+        </button>
+      )}
     </div>
   );
 }

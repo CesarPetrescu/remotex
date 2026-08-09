@@ -962,6 +962,9 @@ class StdioCodexAdapter(SessionAdapter):
                 "item_type": snake,
                 "replayed": True,
                 "turn_index": turn_index,
+                # Rollout turn start (epoch seconds) — clients render sparse
+                # "2h ago" dividers from it. Live events use arrival time.
+                "ts": turn.get("startedAt"),
             }
             if codex_type == "userMessage":
                 # Flatten content array: keep text, list any image paths.

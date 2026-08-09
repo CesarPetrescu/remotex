@@ -794,6 +794,10 @@ main.screen-host {
 }
 .user-bubble .item-body {
   text-align: left;
+  /* Your words are prose, not terminal output — sans like the agent's. */
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 
 /* Agent group: one label + one continuous 2px left stripe covering all
@@ -1160,7 +1164,8 @@ main.screen-host {
   font-size: 11px;
 }
 
-.prompt-row { display: flex; gap: 8px; align-items: stretch; }
+.prompt-row { display: flex; gap: 8px; align-items: flex-end; }
+.prompt { max-height: 132px; overflow-y: auto; }
 .prompt {
   flex: 1;
   min-height: 44px;
@@ -3779,4 +3784,65 @@ main.screen-host {
     border-right: none;
   }
   .ws-drawer { width: 100vw; border-left: none; }
+}
+
+/* --- chat stream helpers ------------------------------------------- */
+
+/* Sparse "2h ago" markers between turn groups when >30 min passed. */
+.time-divider {
+  align-self: center;
+  padding: 1px 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 999px;
+  background: var(--panel);
+}
+
+/* Floating return-to-latest pill; sticky inside the scroller so it rides
+   the viewport bottom while scrolled up and disappears at the tail. */
+.jump-to-bottom {
+  position: sticky;
+  bottom: 10px;
+  align-self: flex-end;
+  margin-top: -44px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-glass);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+  z-index: 5;
+}
+.jump-to-bottom:hover { border-color: var(--amber); color: var(--amber); }
+.jump-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+
+/* Markdown links: label only, target in tooltip — long paths never wrap. */
+.md-link {
+  color: var(--amber);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.md-link-file { cursor: default; }
+
+/* Phone: bubbles claim the width instead of miming desktop insets. */
+@media (max-width: 640px) {
+  .user-bubble { max-width: 94%; }
+  .agent-group { width: 100%; }
 }

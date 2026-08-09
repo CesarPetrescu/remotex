@@ -64,6 +64,20 @@ export function Composer({
   const [text, setText] = useState('');
   const [slashIdx, setSlashIdx] = useState(0);
   const fileInputRef = useRef(null);
+  const promptRef = useRef(null);
+
+  // Grow the textarea with its content up to ~5 lines, then scroll
+  // internally. Reset to one line after a send.
+  function autosize() {
+    const el = promptRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }
+  function setTextSized(value) {
+    setText(value);
+    requestAnimationFrame(autosize);
+  }
   // While a turn runs you can still type: the message is steered into the
   // running turn (codex turn/steer) instead of interrupting and retyping.
   const enabled = connected;
@@ -87,10 +101,10 @@ export function Composer({
 
   function pickSlash(cmd) {
     if (cmd.takesArg) {
-      setText(`/${cmd.id} `);
+      setTextSized(`/${cmd.id} `);
     } else {
       // No-arg commands fire immediately.
-      setText('');
+      setTextSized('');
       setSlashIdx(0);
       onSlashCommand?.(cmd.id, '');
     }
@@ -108,19 +122,19 @@ export function Composer({
       const cmd = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space);
       const args = space === -1 ? '' : trimmed.slice(space + 1);
       if (KNOWN_SLASHES.some((s) => s.id === cmd)) {
-        setText('');
+        setTextSized('');
         onSlashCommand?.(cmd, args);
         return;
       }
     }
     if (canSteer) {
       onSteer(text);
-      setText('');
+      setTextSized('');
       return;
     }
     if (!canSend) return;
     onSend(text);
-    setText('');
+    setTextSized('');
   }
 
   function onKeyDown(e) {
@@ -142,7 +156,7 @@ export function Composer({
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        setText('');
+        setTextSized('');
         return;
       }
     }
@@ -161,7 +175,7 @@ export function Composer({
 
   function togglePlan() {
     if (!planMode && goalMode) {
-      setText(removeGoalCommand(text));
+      setTextSized(removeGoalCommand(text));
     }
     onSlashCommand?.(planMode ? 'default' : 'plan', '');
   }
@@ -169,13 +183,13 @@ export function Composer({
   function toggleGoal() {
     setSlashIdx(0);
     if (goalMode) {
-      setText(removeGoalCommand(text));
+      setTextSized(removeGoalCommand(text));
       return;
     }
     if (planMode) {
       onSlashCommand?.('default', '');
     }
-    setText(addGoalCommand(text));
+    setTextSized(addGoalCommand(text));
   }
 
   return (
@@ -258,11 +272,12 @@ export function Composer({
           onChange={onPickFiles}
         />
         <textarea
+          ref={promptRef}
           className="prompt"
           rows={1}
           placeholder={pending ? 'steer this turn' : 'ask codex'}
           value={text}
-          onChange={(e) => enabled && setText(e.target.value)}
+          onChange={(e) => enabled && setTextSized(e.target.value)}
           onKeyDown={onKeyDown}
           disabled={!enabled}
         />

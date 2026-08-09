@@ -805,12 +805,17 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
         return;
       }
       case 'item-started': {
+        const stamp = (ev) => {
+          if (!ev) return ev;
+          ev.ts = Number.isFinite(data.ts) ? data.ts : Date.now() / 1000;
+          return ev;
+        };
         if (data.replayed && historyBufRef.current) {
-          const ev = buildItemEvent(data);
+          const ev = stamp(buildItemEvent(data));
           if (ev) historyBufRef.current.items.push(ev);
           return;
         }
-        const ev = buildItemEvent(data);
+        const ev = stamp(buildItemEvent(data));
         if (ev) dispatch({ type: 'APPEND_EVENT', event: ev });
         if (data.item_type === 'user_message' && !data.replayed) {
           dispatch({ type: 'PENDING', pending: true });

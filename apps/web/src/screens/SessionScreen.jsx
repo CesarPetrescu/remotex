@@ -35,9 +35,15 @@ export function SessionScreen({
   // session UUID prefix.
   const threadId = info?.threadId || info?.thread_id;
   const thread = threadId ? state.threads.find((t) => t.id === threadId) : null;
+  // Title precedence: real thread title → your latest message → thread
+  // preview → a neutral placeholder. Never the session id — nobody can do
+  // anything with `session sess_29a6…`.
+  const lastUserText = [...state.events].reverse()
+    .find((e) => e.role === 'user' && e.text && !e.slash)?.text?.trim();
+  const clip = (t) => (t.length > 80 ? `${t.slice(0, 77)}…` : t);
   const chatTitle = thread?.title && !thread.title_is_generic
     ? thread.title
-    : (thread?.preview || (info?.sessionId ? `session ${info.sessionId.slice(0, 12)}…` : 'no session'));
+    : (lastUserText ? clip(lastUserText) : (thread?.preview || 'New session'));
   const host = state.hosts.find((h) => h.id === hostId);
   const hostLabel = host
     ? `${host.nickname}${host.os_user ? ' @' + host.os_user : ''}`

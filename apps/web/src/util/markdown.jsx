@@ -188,6 +188,40 @@ function inlineFormat(text) {
         continue;
       }
     }
+    if (c === '[') {
+      // [label](target) — http(s) targets become real links; file paths and
+      // other targets render as the label alone (full target in the tooltip)
+      // so a long absolute path never wraps across three lines.
+      const close = text.indexOf(']', i + 1);
+      if (close !== -1 && text[close + 1] === '(') {
+        const end = text.indexOf(')', close + 2);
+        if (end !== -1) {
+          const label = text.slice(i + 1, close);
+          const target = text.slice(close + 2, end);
+          if (/^https?:\/\//.test(target)) {
+            out.push(
+              <a
+                key={key++}
+                className="md-link"
+                href={target}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {label}
+              </a>,
+            );
+          } else {
+            out.push(
+              <span key={key++} className="md-link md-link-file" title={target}>
+                {label}
+              </span>,
+            );
+          }
+          i = end + 1;
+          continue;
+        }
+      }
+    }
     if (c === '*' && text[i + 1] === '*') {
       const end = text.indexOf('**', i + 2);
       if (end !== -1) {
@@ -225,6 +259,7 @@ function inlineFormat(text) {
       text[j] !== '`' &&
       text[j] !== '*' &&
       text[j] !== '_' &&
+      text[j] !== '[' &&
       text[j] !== '«'
     ) j++;
     if (j > i) {
