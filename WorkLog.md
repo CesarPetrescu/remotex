@@ -32,6 +32,85 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — releases usable from a phone: runtime relay URL + release pipeline fixes
+**Agent:** Claude Fable 5 · **Branch:** main · **Status:** done
+
+- **Why:** owner wants tagged releases carrying the APK and a
+  sideloadable IPA. The pipeline already existed (`release.yml`: nightly
+  prerelease on main pushes, stable on `v*` tags) but had two defects
+  that made published APKs useless and the nightly page a junk drawer.
+- **Findings + fixes:**
+  - **Published APKs baked `10.0.2.2`** (the emulator loopback) because
+    the workflow never passed `-PrelayUrl` — every release APK could not
+    reach any real relay, and Android had NO runtime way to change it
+    (`MainActivity` used `BuildConfig.RELAY_URL` directly; only the
+    token was editable).
+    - Android: relay URL is now a runtime setting — new `RelayUrlField`
+      on the Hosts screen (commits on Done/focus-loss, not per
+      keystroke), persisted in `remotex.settings` SharedPreferences,
+      `viewModel(key = relayUrl)` so committing a new URL rebuilds the
+      networking stack in place. Build-time URL is only the default.
+    - Workflow: bakes repo variable `RELEASE_RELAY_URL` (set to the
+      public relay via `gh variable set`) into release APKs; forks
+      without the variable keep the gradle default.
+  - **Nightly release had accumulated 54 assets since April** — asset
+    names carried date+sha, so every push added a pair forever. Nightly
+    assets are now the stable names `remotex-nightly.apk` /
+    `remotex-nightly.ipa` (clobbered each push; commit sha lives in the
+    release body) → permanent download URLs. Tagged releases keep
+    versioned names. Purged the 54 old assets one-time.
+- **Verified:** Android `compileDebugKotlin` clean (including a caught
+  bug: `mutableStateOf` without `remember` in `setContent` would reset
+  the URL on recomposition); workflow YAML parses; repo variable set.
+  Release run on the next push is the end-to-end check.
+- **Restart needed:** none server-side. The published APK/IPA update on
+  the next main push; stable installs come from `git tag vX.Y.Z && git
+  push --tags`.
+
+## 2026-08-09 — deploy web brand/status cleanup
+**Agent:** Codex · **Branch:** main · **Status:** deployed
+
+- **Why:** finish the header cleanup logged below by putting the rebuilt web
+  bundle on the live relay.
+- **Changed:** rebuilt `remotex/relay:local` and recreated only
+  `remotex-relay-1` with the SparkTunnel Compose override.
+- **Verified:** relay and Postgres healthy, SparkTunnel running, daemon active,
+  public HTTPS returns 200, and the running container contains the new
+  `.brand-logo` CSS.
+- **Left open:** no automated visual after-screenshot; unrelated concurrent
+  Android work remains untouched.
+- **Restart needed:** none.
+
+## 2026-08-09 — document and verify the persistent shared daemon
+**Agent:** Codex · **Branch:** main · **Status:** done
+
+- **Why:** make the live shell-to-web shared-mode setup understandable and
+  confirm the deployment host is ready for hands-on testing.
+- **Changed:** `README.md` — show both Codex transports in the architecture and
+  add the shortest shared-mode status, shell test, reconnect, and explicit
+  `stdio` fallback workflow without publishing private deployment values.
+- **Verified:** the user daemon is active and enabled, its unit is running, and
+  user lingering is enabled, so it remains available after logout/reboot.
+- **Left open:** none; no daemon, relay, web, Android, or Apple code changed.
+- **Restart needed:** none (documentation only).
+
+## 2026-08-09 — replace fake cursor logo and quiet connection status
+**Agent:** Codex · **Branch:** main · **Status:** done, deployment pending
+
+- **Why:** the web header rendered the brand as a thin cursor bar and gave the
+  connection state the visual weight of a primary control.
+- **Changed:** `apps/web/src/components/DashboardHeader.jsx`,
+  `apps/web/src/screens/LoginScreen.jsx`, and `apps/web/src/styles.css` — reuse
+  the shipped Remotex icon in both brand lockups, reduce connection state to a
+  borderless dot plus label, expose it as a polite status, and reserve green
+  for the actually connected state.
+- **Verified:** `npm run test:run` (66 passed), `npx eslint src`,
+  `npm run build`, and `git diff --check` all clean. The user-provided header
+  screenshot was inspected; no browser-based after screenshot was captured.
+- **Left open:** unrelated concurrent Android work in `MainActivity.kt` was
+  present and left untouched.
+- **Restart needed:** rebuild and recreate relay/web.
+
 ## 2026-08-09 — deploy shared Codex transport through SparkTunnel
 **Agent:** Codex · **Branch:** main · **Status:** deployed
 

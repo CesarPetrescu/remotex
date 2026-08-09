@@ -83,7 +83,7 @@ export function LoginScreen({ onAuthenticated }) {
       <ThemeToggle className="login-theme-toggle" />
       <section className="login-card" aria-labelledby="login-title">
         <div className="login-brand" aria-hidden="true">
-          <span className="brand-cursor">▍</span>
+          <img className="brand-logo" src="/favicon-192.png" alt="" />
           <span>REMOTEX</span>
         </div>
         <p className="login-eyebrow">Remote Codex control plane</p>

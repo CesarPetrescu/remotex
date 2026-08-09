@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import app.remotex.model.Host
 import app.remotex.ui.UiState
 import app.remotex.ui.components.SectionLabel
+import app.remotex.ui.components.RelayUrlField
 import app.remotex.ui.components.TokenField
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
@@ -37,6 +38,8 @@ import app.remotex.ui.theme.InkDim
 fun HostsScreen(
     state: UiState,
     onTokenChange: (String) -> Unit,
+    relayUrl: String = "",
+    onRelayUrlChange: (String) -> Unit = {},
     onRefresh: () -> Unit,
     onHostTap: (Host) -> Unit,
     @Suppress("UNUSED_PARAMETER") onModelChange: (String) -> Unit,
@@ -55,6 +58,7 @@ fun HostsScreen(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        item { RelayUrlField(relayUrl, onRelayUrlChange) }
         item { TokenField(state.userToken, onTokenChange) }
         item {
             Button(

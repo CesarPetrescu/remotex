@@ -42,9 +42,16 @@ import app.remotex.ui.theme.Warn
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RemotexApp(relayUrl: String) {
+fun RemotexApp(
+    relayUrl: String,
+    onRelayUrlChange: (String) -> Unit = {},
+) {
     val context = LocalContext.current
+    // Keyed on the URL: changing it in settings builds a fresh ViewModel
+    // (and RelayClient) pointed at the new relay — no reinstall, no
+    // process restart.
     val vm: RemotexViewModel = viewModel(
+        key = relayUrl,
         factory = RemotexViewModel.factory(context.applicationContext as android.app.Application, relayUrl)
     )
     val state by vm.state.collectAsState()
@@ -97,6 +104,8 @@ fun RemotexApp(relayUrl: String) {
                     Screen.Hosts -> HostsScreen(
                         state = state,
                         onTokenChange = vm::setToken,
+                        relayUrl = relayUrl,
+                        onRelayUrlChange = onRelayUrlChange,
                         onRefresh = vm::refresh,
                         onHostTap = vm::openHost,
                         onModelChange = vm::setModel,

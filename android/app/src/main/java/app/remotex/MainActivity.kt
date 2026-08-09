@@ -9,7 +9,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import app.remotex.service.RemotexEvents
 import app.remotex.service.SessionNotifier
 import app.remotex.ui.RemotexApp
@@ -25,9 +30,27 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         SessionNotifier.ensureChannels(this)
         maybeRequestNotificationsPermission()
+        // Relay URL: user preference wins, the build-time default is only a
+        // starting point. Released APKs bake the public relay; local
+        // builds bake the LAN IP via android/build.sh — either way the
+        // user can repoint the app without reinstalling.
+        val prefs = getSharedPreferences("remotex.settings", MODE_PRIVATE)
         setContent {
+            var relayUrl by remember {
+                mutableStateOf(
+                    prefs.getString(PREF_RELAY_URL, null)?.takeIf { it.isNotBlank() }
+                        ?: BuildConfig.RELAY_URL,
+                )
+            }
             RemotexTheme {
-                RemotexApp(relayUrl = BuildConfig.RELAY_URL)
+                RemotexApp(
+                    relayUrl = relayUrl,
+                    onRelayUrlChange = { raw ->
+                        val next = raw.trim().trimEnd('/')
+                        prefs.edit { putString(PREF_RELAY_URL, next) }
+                        if (next.isNotBlank()) relayUrl = next
+                    },
+                )
             }
         }
         handleDeepLink(intent)
@@ -68,5 +91,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_HOST_ID = "host_id"
         const val EXTRA_THREAD_ID = "thread_id"
+        private const val PREF_RELAY_URL = "relay_url"
     }
 }

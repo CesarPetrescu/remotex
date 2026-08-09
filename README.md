@@ -27,7 +27,7 @@ flowchart TB
     A -- "HTTPS + WSS<br/>user bearer token" --> R
     I -- "HTTPS + WSS<br/>user bearer token" --> R
     D == "outbound WSS<br/>bridge token" ==> R
-    D == "local stdio<br/>JSON-RPC" ==> X
+    D == "local stdio or WebSocket-over-UDS<br/>JSON-RPC" ==> X
     R -- "inventory" --> P
 
     classDef clientNode fill:#1a1e26,stroke:#e8a756,color:#e8dfd0;
@@ -256,6 +256,34 @@ Invocations with config/profile/strict-config overrides can remain isolated by
 Codex and therefore will not mirror live.
 For a persistent Linux installation, use `deploy/install-daemon.sh`; see the
 [deployment guide](deploy/README.md).
+
+#### Test a shared shell session
+
+After installing the persistent daemon, set `mode = "shared"` under `[daemon]`
+in `~/.remotex/config.toml`, then check the local pieces:
+
+```bash
+codex app-server daemon start
+systemctl --user enable --now remotex-daemon
+sudo loginctl enable-linger "$USER"   # keep it running after logout
+systemctl --user is-active remotex-daemon
+codex app-server daemon version
+
+cd services
+~/.local/share/remotex/venv/bin/python -m daemon status
+```
+
+Run a plain `codex` command in another shell and start a turn. In the Remotex
+web client, select this online host and resume that thread. Remotex attaches to
+the selected thread; it does not automatically open every local Codex thread.
+Messages entered in either client should then appear in both.
+
+Restarting `remotex-daemon` is a safe reconnect test: the managed Codex process
+and its turn keep running while Remotex reconnects and reloads the live state.
+Relay and shared-socket failures use bounded backoff. Shared mode deliberately
+does not fall back automatically to `stdio`, because that would start a
+different Codex process instead of reconnecting to the shell session. Set
+`mode = "stdio"` and restart the service when an isolated fallback is wanted.
 
 The daemon refuses to start against a cleartext `ws://` relay on anything
 but loopback — that would put the bridge token and every prompt on the

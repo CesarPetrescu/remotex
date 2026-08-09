@@ -144,7 +144,6 @@ pre { margin: 0; font-family: var(--mono); }
   font-weight: 600;
   letter-spacing: 0.12em;
 }
-.login-brand .brand-cursor { color: var(--amber); }
 .login-eyebrow {
   margin: 28px 0 7px;
   color: var(--amber);
@@ -1600,18 +1599,11 @@ main.screen-host {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
   font-family: var(--mono);
   font-size: 11px;
-  /* W10: UPPERCASE matches the rest of the chrome (HOSTS, SESSIONS, …). */
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
   color: var(--ink-dim);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 999px;
 }
-.status-pill.is-live { color: var(--ok); border-color: rgba(106, 224, 194, 0.35); }
+.status-pill.is-live { color: var(--ok); }
 
 .header-picker {
   display: inline-flex;
@@ -3040,23 +3032,10 @@ main.screen-host {
 }
 .ws-drawer-rename button:hover { border-color: var(--accent); }
 
-/* ── new logo cursor ── */
-.brand-cursor {
-  display: inline-block;
-  width: 6px;
-  height: 16px;
-  background: var(--amber);
-  margin-right: 8px;
-  /* W11: solid by default; only animate while the connection is being
-     handshaked (Connecting/Opening). Constant peripheral motion was
-     distracting once people knew where the brand was. */
-}
-.brand-cursor.blinking {
-  animation: brand-cursor-blink 1.4s steps(2, end) infinite;
-}
-@keyframes brand-cursor-blink {
-  0%, 50% { opacity: 1; }
-  50.01%, 100% { opacity: 0.25; }
+.brand-logo {
+  width: 24px;
+  height: 24px;
+  object-fit: cover;
 }
 .brand-button .brand {
   font-family: var(--mono);

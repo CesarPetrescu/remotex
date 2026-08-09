@@ -22,10 +22,7 @@ export function DashboardHeader({
   onDashboard,
 }) {
   const label = STATUS_LABELS[state.status] || 'idle';
-  const isLive =
-    state.status === STATUS.Connected || state.status === STATUS.Connecting;
-  const cursorBlinking =
-    state.status === STATUS.Connecting || state.status === STATUS.Opening;
+  const isLive = state.status === STATUS.Connected;
   return (
     <header className="dashboard-header">
       <div className="dashboard-header-left">
@@ -56,14 +53,15 @@ export function DashboardHeader({
           onClick={onDashboard}
           title="Dashboard"
         >
-          <span
-            className={`brand-cursor${cursorBlinking ? ' blinking' : ''}`}
-            aria-hidden="true"
-          >▍</span>
+          <img className="brand-logo" src="/favicon-192.png" alt="" />
           <span className="brand">REMOTEX</span>
         </button>
-        <span className={`status-pill ${isLive ? 'is-live' : ''}`}>
-          <span className={`tag-dot ${isLive ? 'ok' : ''}`} />
+        <span
+          className={`status-pill ${isLive ? 'is-live' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span className={`tag-dot ${isLive ? 'ok' : ''}`} aria-hidden="true" />
           {label}
         </span>
       </div>

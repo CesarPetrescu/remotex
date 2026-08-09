@@ -94,14 +94,31 @@ jobs:
 
       - name: Build debug APK
         working-directory: android
+        env:
+          # Repo variable RELEASE_RELAY_URL — the relay this APK should talk
+          # to out of the box. The app can be repointed at runtime (Hosts
+          # screen → RELAY URL), so this is a default, not a lock-in.
+          RELEASE_RELAY_URL: ${{ vars.RELEASE_RELAY_URL }}
         run: |
           chmod +x ./gradlew
+          EXTRA=()
+          if [[ -n "$RELEASE_RELAY_URL" ]]; then
+            EXTRA+=("-PrelayUrl=$RELEASE_RELAY_URL")
+          fi
           ./gradlew assembleDebug --no-daemon --stacktrace \
-            -PversionName="${{ steps.label.outputs.label }}"
+            -PversionName="${{ steps.label.outputs.label }}" "${EXTRA[@]}"
       - name: Rename APK with version label
         run: |
           src=android/app/build/outputs/apk/debug/app-debug.apk
-          dst="android/app/build/outputs/apk/debug/remotex-${{ steps.label.outputs.label }}.apk"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # Stable releases keep the version in the filename.
+            dst="android/app/build/outputs/apk/debug/remotex-${{ steps.label.outputs.label }}.apk"
+          else
+            # The nightly keeps ONE stable name and clobbers it, so the
+            # prerelease page doesn't accumulate an APK per push and the
+            # download URL never changes. The commit is in the release body.
+            dst="android/app/build/outputs/apk/debug/remotex-nightly.apk"
+          fi
           cp "$src" "$dst"
           echo "artifact=$dst" >> "$GITHUB_ENV"
 
@@ -193,7 +210,12 @@ jobs:
           staging="$(mktemp -d)"
           mkdir -p "$staging/Payload"
           cp -R "$app_dir" "$staging/Payload/"
-          out="build/remotex-${{ steps.label.outputs.label }}.ipa"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            out="build/remotex-${{ steps.label.outputs.label }}.ipa"
+          else
+            # Stable nightly filename — see the Android job for why.
+            out="build/remotex-nightly.ipa"
+          fi
           (cd "$staging" && zip -qry "$GITHUB_WORKSPACE/$out" Payload)
           echo "artifact=$out" >> "$GITHUB_ENV"
           ls -lh "$out"
