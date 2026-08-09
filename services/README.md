@@ -62,6 +62,9 @@ the relay preserves inventory but drops active routes and replay buffers.
 6. Sequence numbers and a bounded replay buffer let clients reconnect without
    replacing other viewers. Pending approval and user-input prompts are
    restored separately, and the first response wins.
+7. A separate owner-authenticated `/ws/inventory` channel notifies browsers
+   when that owner's hosts or threads change; clients then refresh the relevant
+   REST inventory without polling.
 
 ## Layout
 
@@ -85,6 +88,7 @@ services/
 │       ├── threads.py          proxied thread/list
 │       ├── fs.py               proxied filesystem ops
 │       ├── models_route.py     GET /api/models + GET /api/hosts/{id}/models
+│       ├── ws_inventory.py     owner-scoped host/thread change notifications
 │       └── static.py           SPA + asset serving
 ├── daemon/
 │   ├── __main__.py             CLI: init / run / status
@@ -96,18 +100,19 @@ services/
 │       ├── base.py             SessionEvent envelope + SessionAdapter ABC
 │       ├── factory.py          mode → adapter
 │       ├── stdio.py            the real bridge to `codex app-server` (the big one)
+│       ├── shared.py           shared app-server WS/UDS multiplexer + thread routing
 │       ├── mock.py             scripted events for tests and offline demos
 │       ├── admin.py            long-lived codex for cheap read-only ops
 │       │                       (thread/list, model/list, fs/readDirectory)
 │       ├── elicitation.py      MCP elicitation ↔ structured user input
 │       ├── items.py            Codex item type → relay item_type, field flattening
 │       ├── reasoning.py        reasoning-content summarization
-│       ├── permissions.py      UI permission chip → sandboxPolicy/approvalPolicy
+│       ├── permissions.py      UI ↔ Codex permission/settings translation
 │       ├── rollout.py          reads ~/.codex/sessions rollout files for local replay
 │       └── codex_config.py     enables the Codex `goals` feature in config.toml
-├── tests/                      pytest suite (hub, ws attach/binding, prompt queues,
-│                               session reservations, rate limit, size limits + fs,
-│                               logging, both model endpoints, store + daemon helpers)
+├── tests/                      pytest suite (hub, all WS paths, shared/stdio adapters,
+│                               prompts/settings, reservations, reconnect, limits + fs,
+│                               logging, models, telemetry, store + daemon helpers)
 ├── scripts/e2e_test.py         in-process relay ↔ daemon ↔ client end-to-end test
 └── docs/
     ├── architecture.md         topology, frames, lifecycle, failure modes, known gaps
@@ -256,13 +261,15 @@ OIDC-issued credentials is the top item under "Known gaps" in
 
 - **Relay transport** — real. WS routing, Postgres inventory, bearer auth
   (hashed at rest), rate limiting, REST proxying to the daemon, sequenced
-  replay with an explicit `replay-gap` when the buffer fell short, and one
+  replay with an explicit `replay-gap` when the buffer fell short,
+  owner-scoped live host/thread inventory notifications, and one
   `REMOTEX_MAX_FILE_BYTES` ceiling shared by the HTTP body cap and every
-  websocket leg.
+  WebSocket leg.
 - **Daemon → relay** — real. Outbound WSS with a 10s welcome deadline,
   exponential backoff and equal jitter (1s → 30s), stable-connection reset,
   slower authentication retries, clean replacement handling, session runners,
-  and host telemetry. A lost socket resumes threads after reconnect; an
+  and host telemetry (including every NVIDIA GPU reported by `nvidia-smi`).
+  A lost socket resumes threads after reconnect; an
   in-flight `stdio` turn is failed explicitly because its child Codex process
   cannot survive the daemon-side adapter teardown. Shared Codex threads remain
   owned by Codex's app-server daemon and can be resumed after reconnect.
@@ -271,7 +278,7 @@ OIDC-issued credentials is the top item under "Known gaps" in
   WebSocket-over-Unix-socket control plane. Both perform the handshake, stream
   turns, and handle approvals, user-input prompts, slash commands, thread goals,
   token usage, image attachments, active-turn steering, MCP elicitation,
-  and thread resume.
+  thread resume, and Codex-resolved model/effort/permission settings.
 - **Model list** — real, and host-scoped. `GET /api/hosts/{id}/models`
   asks that host's Codex (`model/list` through the admin adapter); if the
   host cannot supply it, the fallback entry leaves model selection to Codex.

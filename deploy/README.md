@@ -170,11 +170,13 @@ for 60 seconds resets the next outage to the short delay. Invalid bridge
 credentials retry slowly, and a daemon displaced by a newer process exits
 instead of the two processes continually evicting each other.
 
-The saved session and Codex thread resume after reconnect, but an active turn
-cannot: losing the daemon socket tears down that turn's local Codex process.
-The relay therefore emits a failed `turn-completed`, clears stale approval and
-input prompts, and releases the turn slot so the user can retry after the host
-comes back online.
+The saved session and Codex thread resume after reconnect in both modes. In
+`stdio` mode, however, losing the daemon socket tears down that session's local
+Codex child, so an active turn cannot survive: the relay emits a failed
+`turn-completed`, clears stale prompts, and releases the turn slot. In `shared`
+mode the managed Codex app server owns the turn independently; after reconnect,
+Remotex resumes the thread and reconciles its live snapshot instead of starting
+a second process.
 
 ## File transfer ceiling
 
@@ -398,6 +400,13 @@ python3 -m daemon run --config ./demo-config.toml
 | `REMOTEX_MAX_FILE_BYTES` | `26214400` | File and derived WebSocket size ceiling |
 | `RELAY_SEED_DEMO` | `0` | Opt-in public demo credentials; never enable on a published relay |
 | `RELAY_TRUST_PROXY` | `0` | Trust `X-Forwarded-For` only behind a proxy that overwrites it; Caddy may use `1`, SparkTunnel forces `0` |
+| `RELAY_RATE_LIMIT_REMOTE_BURST` | `120` | Per-remote REST burst capacity |
+| `RELAY_RATE_LIMIT_REMOTE_PER_SECOND` | `40` | Per-remote REST refill rate |
+| `RELAY_RATE_LIMIT_MAX_BUCKETS` | `10000` | Maximum entries in each REST bucket map before cleanup |
+| `RELAY_RATE_LIMIT_IDLE_SECONDS` | `300` | Idle age for REST bucket eviction |
+| `RELAY_WS_CONNECT_BURST` | `60` | Per-remote WebSocket connection burst capacity |
+| `RELAY_WS_CONNECT_PER_SECOND` | `5` | Per-remote WebSocket connection refill rate |
+| `TZ` | `Etc/UTC` | Relay container timezone |
 | `POSTGRES_DB` | `remotex` | Inventory database |
 | `POSTGRES_USER` | `remotex` | Inventory database user |
 | `POSTGRES_PASSWORD` | `remotex-search` | Inventory database password |
@@ -409,9 +418,12 @@ python3 -m daemon run --config ./demo-config.toml
 | `SPARK_TUNNEL_DOWNLOAD_URL` | official Linux amd64 artifact | Connector image build source |
 | `SPARK_TUNNEL_SHA256` | pinned 0.2.0 digest | Connector artifact integrity check |
 
-The stall-ceiling and replay-limit variables are not present in
-`docker-compose.yml`; add them to the relay service's `environment` section
-when their defaults are unsuitable.
+Compose passes the reconnect grace, reservation TTL, file limit, demo seed,
+proxy trust, and timezone variables through to the relay. The stall/replay and
+rate-limit variables above are read by the relay code but are not currently in
+the Compose service's `environment` list; setting them only in `.env` has no
+effect. Add the variables you want to tune to that list before recreating the
+relay.
 
 ## Storage and restart behavior
 
@@ -420,8 +432,11 @@ when their defaults are unsuitable.
 - `remotex_relay-data` exists only for one-time migration from older SQLite
   installations.
 - `remotex_caddy-data` and `remotex_caddy-config` contain Caddy state.
-- Live sockets, event replay, active turns, and pending prompts are in relay
-  memory and do not survive a relay restart.
+- Live routes, replay buffers, turn locks, and pending-prompt bookkeeping are
+  in relay memory and do not survive a relay restart. An isolated `stdio` turn
+  ends when its adapter disconnects; a `shared` Codex turn can keep running in
+  the managed app server and is reconciled when Remotex reconnects, although
+  relay-buffered events from the outage are unavailable.
 - Codex thread history stays on each daemon host.
 
 ## Operations

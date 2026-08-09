@@ -152,6 +152,10 @@ cd android
 9. Codex notifications are normalized into `session-event` frames and
    streamed back through the relay to the client.
 
+While a turn is active, the web client can send `turn-steer` to affect that
+same Codex turn or retain a follow-up in its local FIFO queue. A queued item is
+sent later as an ordinary `turn-start`, after the active turn completes.
+
 ## Repo Layout
 
 ```text
@@ -371,7 +375,7 @@ docker compose --profile tls up -d --build
 | Daemon -> relay connection | Working; outbound WebSocket with bounded jittered reconnect and clean active-turn failure/resume semantics |
 | Real Codex bridge | Working through isolated app-server stdio or opt-in shared WebSocket-over-UDS |
 | Mock adapter | Working for tests and offline demos |
-| Web client | Lists hosts, opens/resumes sessions, sends text/image turns, streams reasoning/tool/agent events, handles approvals, user-input prompts, models, effort, permissions, slash commands, goals, files, and telemetry |
+| Web client | Live host/thread inventory, open/resume, text/images, FIFO queue or active-turn steer, streamed events, approvals/input prompts, Codex-resolved settings, slash commands, goals, files, all NVIDIA GPUs, and Dark/White/High Contrast themes |
 | Android client | At parity with web apart from push: hosts, thread resume, events, turns, images, model/effort/permissions, approvals, user-input, slash commands, goals, files, interrupt, reconnect, background notifications |
 | iPhone client | Starter SwiftUI app; lists hosts, opens sessions, sends text turns, streams events, answers queued approval/user-input prompts, keeps its token in the Keychain |
 | Docker Compose | Working relay + web bundle, Postgres inventory store, optional Caddy TLS or outbound SparkTunnel ingress |
@@ -403,20 +407,25 @@ with `session_id` and `client_id` stamped on by the relay.
 | `approval-resolved` / `user-input-resolved` | relay -> client | Tell other peers a prompt was answered |
 | `host-telemetry` | daemon -> relay -> client | CPU / memory / GPU / network samples |
 | `threads-list-request` / `models-list-request` / `fs-*-request` | relay -> daemon | REST calls proxied to the host |
+| `threads-list-response` / `models-list-response` / `fs-*-response` | daemon -> relay | Correlated by `(host_id, request_id)` |
+| `session-closed` | daemon -> client | End the session |
+| `ping` / `pong` | either way | Keepalive; also marks the session active |
 
 The web client's follow-up queue is intentionally not a wire frame. Codex has
 no queue RPC: the browser retains FIFO items locally, then sends one ordinary
 `turn-start` after `turn-completed`. Use **Steer** to affect the running turn
 immediately, or **Queue** to start a separate turn afterward.
-| `threads-list-response` / `models-list-response` / `fs-*-response` | daemon -> relay | Correlated by `(host_id, request_id)` |
-| `session-closed` | daemon -> client | End the session |
-| `ping` / `pong` | either way | Keepalive; also marks the session active |
 
 `session-event` kinds: `session-started`, `turn-started`, `turn-completed`,
-`item-started`, `item-delta`, `item-completed`, `approval-request`,
-`user-input-request`, `thread-status`, `token-usage`, `goal-snapshot`,
-`goal-updated`, `goal-cleared`, `slash-ack`, `collab-modes`,
-`history-begin`, `history-end`.
+`item-started`, `item-delta`, `item-patch`, `item-completed`, `steer-failed`,
+`approval-request`, `approval-resolved`, `user-input-request`,
+`user-input-resolved`, `thread-status`, `session-settings`, `token-usage`,
+`goal-snapshot`, `goal-updated`, `goal-cleared`, `slash-ack`, `collab-modes`,
+`history-begin`, `history-chunk-begin`, `history-chunk-end`, `history-end`.
+
+The separate owner-scoped `/ws/inventory` socket sends `inventory-ready`,
+`hosts-changed`, and `threads-changed` so the sidebar can refresh without
+polling or requiring an attached chat session.
 
 Full payload shapes live in
 [`services/docs/architecture.md`](services/docs/architecture.md).
@@ -435,8 +444,9 @@ These are the main items before exposing Remotex to untrusted users:
 4. Bring the iPhone app to Android feature parity: thread resume, images,
    model/effort controls, permissions, interrupt, and reconnect backoff.
 5. Add mobile push notifications for approval requests.
-6. Add fault tests: daemon disconnect mid-turn, slow clients getting
-   closed, and host offline during a turn.
+6. Add end-to-end fault tests for a real slow consumer being closed with 1013
+   and a client starting a turn while its selected host is offline. Daemon
+   disconnect and shared-session recovery paths already have focused coverage.
 7. Decide whether to keep pursuing custom remote-control features now that
    official Codex Remote Connections covers the mainstream hosted path.
 

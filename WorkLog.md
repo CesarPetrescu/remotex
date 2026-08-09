@@ -32,6 +32,33 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — synchronize non-native READMEs with current relay/daemon/web code
+**Agent:** Codex · **Branch:** main · **Status:** done
+
+- **Why:** recent shared-session recovery, live inventory, multi-GPU,
+  Codex-resolved settings, picker, theme, and queue work had outgrown parts of
+  the checked-in documentation; the root protocol table was also malformed.
+- **Changed:** `README.md` — repaired the protocol table; documented queue vs.
+  steer, the inventory socket, current event kinds, current web capabilities,
+  and narrowed the remaining fault-test gap to cases that are not already
+  covered.
+- **Changed:** `apps/web/README.md` — documented inventory reconnect/refresh,
+  all-GPU telemetry, resolved settings, three themes, responsive picker sheets,
+  actual browser persistence, current source layout, and current test coverage.
+- **Changed:** `services/README.md` — added the inventory handler and shared
+  adapter to the architecture, plus current reconnect, telemetry, settings, and
+  test behavior.
+- **Changed:** `deploy/README.md` — distinguished `stdio` from `shared` active
+  turn recovery and documented every relay rate-limit variable, Compose
+  pass-through limits, timezone, and precise relay-restart state loss.
+- **Verified:** ESLint, 87 vitest tests, and production Vite build pass; Ruff
+  and 202 pytest tests pass; `git diff --check`, base Compose config, combined
+  SparkTunnel Compose config, and local links in all four edited READMEs pass.
+  Final scope inspection found no Android/Apple changes and no credentials.
+- **Left open:** no documentation defect found in the audited non-native
+  surfaces. Native READMEs/code were deliberately excluded per owner request.
+- **Restart needed:** none (documentation only).
+
 ## 2026-08-09 — composer chips show codex's real settings, not local defaults
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** committed + tested; needs a daemon restart + relay rebuild to take effect
 

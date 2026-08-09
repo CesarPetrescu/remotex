@@ -7,8 +7,11 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
 
 ## What it does
 
-- Loads hosts from `/api/hosts` and shows which are online, with live
-  CPU / memory / GPU / network telemetry sparklines per host.
+- Loads hosts from `/api/hosts` and keeps host/thread inventory current through
+  the owner-scoped `/ws/inventory` socket. Inventory reconnects with bounded
+  backoff; change notices trigger coalesced, retried REST refreshes.
+- Shows live CPU / memory / network telemetry plus a separate graph for every
+  NVIDIA GPU reported by the selected host.
 - Lists saved Codex threads per host and resumes them, replaying the
   transcript while Codex rehydrates in the background.
 - Opens a session, attaches to `/ws/client`, and streams events:
@@ -21,6 +24,9 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
   The model list comes from
   `/api/hosts/{host_id}/models` (what that host's Codex actually offers);
   if the host cannot supply it, the default entry lets Codex choose.
+- Updates the model, effort, and permission chips from Codex's resolved thread
+  settings at start/resume and whenever `thread/settings/updated` arrives.
+  Only sandbox policies with a known UI mapping replace the permission chip.
 - Queues approval prompts and Codex user-input dialogs — a second
   concurrent prompt lines up behind the first instead of replacing it —
   with first-response-wins arbitration when several clients are attached.
@@ -35,6 +41,12 @@ Docker image (`deploy/Dockerfile.relay` builds it and copies `dist/` to
 - Reconnects with `last_seq` so a refresh or a sleeping phone catches up
   on missed events instead of losing the stream.
 - Alerts on turn completion when the tab is backgrounded.
+- Provides Dark, White, and High Contrast themes. With no saved preference,
+  the first load honors the operating system's color-scheme and contrast
+  preferences; the chosen theme is then persisted.
+- Uses portalled desktop picker menus and responsive-web bottom sheets for
+  model, effort, and permission selection, with Escape/outside-dismiss and
+  listbox semantics.
 - Gates the dashboard behind a bearer-token sign-in that verifies access with
   `GET /api/hosts` before mounting any dashboard REST or WebSocket logic.
 - Persists sidebar layout and folder history in `localStorage`. The
@@ -59,7 +71,8 @@ App.jsx
 ├── RightSidebar              approvals, questions, telemetry
 └── useRemotex                state reducer + REST/WS orchestration
     ├── api/relayClient.js     HTTP client
-    └── api/sessionSocket.js   WebSocket framing and client identity
+    ├── api/sessionSocket.js   session WebSocket + replay cursor
+    └── api/inventorySocket.js owner-scoped host/thread change socket
 ```
 
 `useRemotex` is the client state machine. It reduces normalized relay events,
@@ -69,8 +82,12 @@ directly.
 
 Persistent browser state is intentionally small:
 
-- `localStorage`: remembered user token, layout preferences, folder recents/favorites
-- `sessionStorage`: tab-only user token and unresolved prompt backups
+- `localStorage`: remembered user token, theme, layout preferences, and folder
+  recents/favorites
+- `sessionStorage`: tab-only user token, WebSocket client ID, per-session
+  `last_seq`, thread preview cache, and unresolved prompt backups
+- component memory: unsent FIFO follow-ups (survive socket reconnects, not
+  reloads)
 - relay replay buffer: recent session events used after reconnect
 
 ## Development
@@ -118,11 +135,13 @@ apps/web/
     ├── config.js             screens, statuses, permission chips, default model entry, size cap
     ├── styles.css            the entire stylesheet
     ├── api/
-    │   ├── relayClient.js    REST wrapper around the relay
-    │   └── sessionSocket.js  /ws/client socket with reconnect + last_seq
+    │   ├── relayClient.js      REST wrapper around the relay
+    │   ├── sessionSocket.js    /ws/client socket with reconnect + last_seq
+    │   └── inventorySocket.js  /ws/inventory heartbeat and ready watchdog
     ├── hooks/
     │   ├── useRemotex.js     the whole state machine: reducer, frame handling, actions
-    │   └── useBackgroundCompletionAlert.js
+    │   ├── useBackgroundCompletionAlert.js
+    │   └── usePrefetchIntent.js
     ├── screens/
     │   ├── LoginScreen.jsx       verified bearer-token sign in
     │   ├── DashboardScreen.jsx   host + thread landing surface
@@ -130,7 +149,8 @@ apps/web/
     │   └── FilesScreen.jsx       standalone file browser
     ├── components/
     │   ├── Composer.jsx          chip row + textarea + queue/steer/send/stop
-    │   ├── Pickers.jsx           model / effort / permission chips
+    │   ├── Pickers.jsx           desktop menus / responsive bottom sheets
+    │   ├── SheetHandle.jsx, ThemeToggle.jsx
     │   ├── SendOrStopButton.jsx
     │   ├── EventStream.jsx, EventRow.jsx
     │   ├── PendingPromptsPanel.jsx   approvals + user-input dialogs
@@ -141,34 +161,37 @@ apps/web/
     │   ├── RightSidebar.jsx, TelemetrySidebar.jsx, Sparkline.jsx
     │   ├── ResumingBanner.jsx, CopyButton.jsx, Toast.jsx
     └── util/
-        markdown.jsx, path.js, slash.js, url.js, fuzzy.js,
-        copy.js, time.js, host.js, folderHistory.js, tokenStorage.js
+        markdown.jsx, path.js, slash.js, url.js, fuzzy.js, fsEntries.js,
+        copy.js, time.js, host.js, folderHistory.js, theme.js,
+        threadPreview.js, tokenStorage.js
 ```
 
-Tests live next to what they cover (`src/**/*.test.js`) and run in
-vitest's `node` environment — pure helpers, token/HTTP auth behavior, and the
-`useRemotex` reducer. No jsdom or component rendering:
+Tests live next to what they cover (`src/**/*.test.js` and `*.test.jsx`) and
+run in vitest's `node` environment. They cover utilities, credential and REST
+behavior, both WebSocket clients, reducer/reconnect/queue/settings behavior,
+and server-rendered event/telemetry output. There is no jsdom environment:
 
 ```
 src/util/{slash,path,fuzzy,url}.test.js
-src/util/tokenStorage.test.js      browser credential persistence + logout
+src/util/{theme,tokenStorage}.test.js
 src/api/relayClient.test.js        bearer verification + rate-limit metadata
-src/hooks/useRemotex.test.js       reducer: prompt queues + model list
+src/api/inventorySocket.test.js    ready watchdog, heartbeat, close behavior
+src/hooks/useRemotex.test.js       reducer, inventory retry, queue, settings
+src/components/{EventStream,TelemetrySidebar}.test.jsx
 ```
 
-`useRemotex.js` is the single source of truth for app state — a reducer
-plus the WebSocket attach/reconnect logic and the REST calls. Its Android
-counterpart is `RemotexViewModel.kt`, which mirrors the same reducer and
-state shape deliberately; changing the event handling here usually means
-changing it there too.
+`useRemotex.js` is the single source of truth for web state — a reducer plus
+the session/inventory WebSocket orchestration and REST calls. Native clients
+have separate reducers, so wire-protocol changes must be coordinated with
+them as a separate piece of work.
 
 ## Gotcha: modals must be portalled
 
 `.dashboard-layout > * { position: relative }` (in `styles.css`) creates a
 containing block that turns any child's `position: fixed` into a stray
-grid cell. Anything that overlays the page — `Toast`, `JumpPicker`, and
-the `Pickers` dropdowns — renders through `createPortal(node,
-document.body)`. Add new overlays the same way.
+grid cell. Anything that overlays the page — `Toast`, `JumpPicker`, picker
+menus, and the responsive picker sheet — renders through
+`createPortal(node, document.body)`. Add new overlays the same way.
 
 ## Still to do
 
