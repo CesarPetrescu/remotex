@@ -32,6 +32,30 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-09 — deploy shared Codex transport through SparkTunnel
+**Agent:** Codex · **Branch:** main · **Status:** deployed
+
+- **Why:** put the shared local Codex control plane live at
+  `https://remotex.photonspark.ro` without interrupting the active shell
+  session or exposing host ports.
+- **Changed:** rebuilt and recreated only the relay/web container, set the
+  private daemon config to `mode = "shared"`, and restarted only the
+  `remotex-daemon` user unit. Secrets remain outside Git in ignored/private
+  files with mode `0600`. Android and Apple were not touched.
+- **Verified:** Postgres and relay are healthy; SparkTunnel is running with no
+  published ports; the daemon is online over the shared Unix socket and has no
+  direct Codex child; the managed app-server PID remained unchanged; public
+  HTTPS returns 200; the authenticated public API reports the host online; a
+  public WSS attach to the current shell thread hydrated its active turn and
+  items; the temporary verification session was closed and left no open row;
+  current daemon and relay logs contain no post-rollout errors.
+- **Left open:** the still-running managed app-server is 0.144.3 while the
+  installed managed CLI is 0.147.0. Restart it only after the active Codex
+  session ends. I-014 remains blocked because SparkTunnel 0.2.0 does not expose
+  a trustworthy visitor IP for per-client rate limiting.
+- **Restart needed:** none now; later run `codex app-server daemon restart`
+  after ending the active shell session to pick up app-server 0.147.0.
+
 ## 2026-08-09 — shared Codex control plane, reconnect reconciliation, and web repair
 **Agent:** Codex · **Branch:** main · **Status:** done, deployment pending
 
