@@ -129,8 +129,9 @@ final class RemotexViewModel: ObservableObject {
     private var sentImagesByMessageId: [String: [PendingImage]] = [:]
 
     init() {
-        self.relayURL = UserDefaults.standard.string(forKey: Self.relayURLKey) ?? ""
-        self.userToken = Self.loadUserToken(for: relayURL)
+        let savedRelayURL = UserDefaults.standard.string(forKey: Self.relayURLKey) ?? ""
+        self.relayURL = savedRelayURL
+        self.userToken = Self.loadUserToken(for: savedRelayURL)
         restartInventorySocketNow()
         restorePersistedSessionIfPossible()
     }
