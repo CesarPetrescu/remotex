@@ -53,6 +53,13 @@ const TIME_GAP_S = 30 * 60;
 // half-finished line or a settling image still count as following along.
 const TAIL_SLACK_PX = 140;
 
+export const STREAM_A11Y_PROPS = {
+  role: 'log',
+  'aria-live': 'polite',
+  // Announce newly appended rows without re-reading every streaming delta.
+  'aria-relevant': 'additions',
+};
+
 // Exported for tests: jsdom has no layout, so the predicate is kept pure and
 // the component feeds it real geometry.
 export function isNearTail({ scrollHeight, scrollTop, clientHeight }) {
@@ -201,7 +208,12 @@ export function EventStream({
   const groups = groupEvents(events);
 
   return (
-    <div className="stream" ref={scrollerRef} onScroll={onScroll}>
+    <div
+      className="stream"
+      ref={scrollerRef}
+      onScroll={onScroll}
+      {...STREAM_A11Y_PROPS}
+    >
       {!events.length && (
         <div className="empty">{placeholder || 'send a prompt to start…'}</div>
       )}

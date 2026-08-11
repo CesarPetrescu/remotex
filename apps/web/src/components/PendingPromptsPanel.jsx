@@ -1,4 +1,24 @@
 import { useEffect, useState } from 'react';
+import { DEFAULT_APPROVAL_DECISIONS } from '../config';
+
+const APPROVAL_ACTIONS = {
+  decline: { label: 'decline', className: 'decline' },
+  cancel: { label: 'cancel', className: 'cancel' },
+  acceptForSession: { label: 'always', className: 'always' },
+  accept: { label: 'accept', className: 'accept' },
+};
+const APPROVAL_ACTION_ORDER = ['decline', 'cancel', 'acceptForSession', 'accept'];
+
+export function approvalActions(decisions) {
+  const allowed = new Set(
+    Array.isArray(decisions) && decisions.length > 0
+      ? decisions
+      : DEFAULT_APPROVAL_DECISIONS,
+  );
+  return APPROVAL_ACTION_ORDER
+    .filter((decision) => allowed.has(decision))
+    .map((decision) => ({ decision, ...APPROVAL_ACTIONS[decision] }));
+}
 
 // Renders the HEAD of each pending-prompt queue (contract F). Answering
 // the head pops it and the next one takes its place — a second concurrent
@@ -58,17 +78,16 @@ function ApprovalPromptCard({ prompt, onDecision }) {
       )}
       {prompt.cwd && <div className="pending-prompt-meta">cwd: {prompt.cwd}</div>}
       <div className="pending-prompt-actions">
-        <button type="button" className="prompt-btn decline" onClick={() => onDecision('decline')}>
-          decline
-        </button>
-        {prompt.decisions?.includes('acceptForSession') && (
-          <button type="button" className="prompt-btn always" onClick={() => onDecision('acceptForSession')}>
-            always
+        {approvalActions(prompt.decisions).map(({ decision, label, className }) => (
+          <button
+            key={decision}
+            type="button"
+            className={`prompt-btn ${className}`}
+            onClick={() => onDecision(decision)}
+          >
+            {label}
           </button>
-        )}
-        <button type="button" className="prompt-btn accept" onClick={() => onDecision('accept')}>
-          accept
-        </button>
+        ))}
       </div>
     </div>
   );
@@ -167,14 +186,28 @@ function UserInputPromptCard({ prompt, onSubmit, onCancel }) {
         </div>
       )}
 
-      <textarea
-        className="pending-prompt-notes"
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        placeholder={current.options?.length ? 'optional notes' : 'type your answer'}
-        rows={current.options?.length ? 2 : 4}
-        spellCheck={false}
-      />
+      {current.isSecret === true ? (
+        <input
+          type="password"
+          className="pending-prompt-notes"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="type your secret answer"
+          aria-label={current.header || current.question || 'Secret answer'}
+          autoComplete="new-password"
+          spellCheck={false}
+        />
+      ) : (
+        <textarea
+          className="pending-prompt-notes"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder={current.options?.length ? 'optional notes' : 'type your answer'}
+          aria-label={current.header || current.question || 'Answer'}
+          rows={current.options?.length ? 2 : 4}
+          spellCheck={false}
+        />
+      )}
 
       <div className="pending-prompt-actions">
         <button type="button" className="prompt-btn decline" onClick={onCancel}>

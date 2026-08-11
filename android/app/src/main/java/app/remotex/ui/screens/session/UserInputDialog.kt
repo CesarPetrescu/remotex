@@ -2,7 +2,7 @@ package app.remotex.ui.screens.session
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +36,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.ui.UserInputPrompt
@@ -145,7 +150,11 @@ fun UserInputDialog(
                         shape = RectangleShape,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { selected[current.id] = opt.label },
+                            .selectable(
+                                selected = isSelected,
+                                role = Role.RadioButton,
+                                onClick = { selected[current.id] = opt.label },
+                            ),
                     ) {
                         Column(Modifier.padding(8.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -190,11 +199,25 @@ fun UserInputDialog(
                             fontSize = 12.sp,
                         ),
                         cursorBrush = SolidColor(Amber),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = if (current.isSecret) {
+                                KeyboardType.Password
+                            } else {
+                                KeyboardType.Text
+                            },
+                        ),
+                        visualTransformation = if (current.isSecret) {
+                            PasswordVisualTransformation()
+                        } else {
+                            VisualTransformation.None
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp)
-                            .padding(8.dp),
+                            .padding(8.dp)
+                            .semantics {
+                                contentDescription = if (current.isSecret) "Secret answer" else "Answer"
+                            },
                         decorationBox = { inner ->
                             if (notes[noteKey].isNullOrEmpty()) {
                                 Text(

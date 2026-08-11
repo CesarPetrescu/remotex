@@ -122,8 +122,9 @@ so any web change requires a relay image rebuild.
 
 The relay binds inside Docker on `:8080`. Base Compose publishes it using
 `RELAY_HOST_PORT` / `RELAY_HOST_BIND` from the gitignored `deploy/.env`;
-the SparkTunnel override publishes no host port and reaches `relay:8080`
-on the private Compose network. Read the selected Compose files and `.env`
+the SparkTunnel override publishes only a loopback endpoint (port 19080 by
+default) and reaches `relay:8080` on the private Compose network. Read the
+selected Compose files and `.env`
 instead of assuming a mode. For direct LAN access from a phone, use
 `http://<LAN-IP>:<RELAY_HOST_PORT>`; see `android/README.md`.
 

@@ -16,14 +16,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.remotex.model.FsEntry
 import app.remotex.net.RelayClient
+import app.remotex.ui.ContentTooLargeException
+import app.remotex.ui.MAX_FILE_BYTES
 import app.remotex.ui.PermissionsMode
 import app.remotex.ui.Status
 import app.remotex.ui.UiState
+import app.remotex.ui.openableMetadata
+import app.remotex.ui.readBounded
 import app.remotex.ui.screens.session.composer.ComposerBar
 import app.remotex.ui.screens.session.events.EventList
 import app.remotex.ui.screens.session.files.WorkspaceFilesPanel
 import app.remotex.ui.screens.session.files.decodeBase64
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SessionScreen(
@@ -31,6 +37,8 @@ fun SessionScreen(
     onSend: (String) -> Unit,
     onStop: () -> Unit,
     onSteer: (String) -> Unit,
+    onQueue: (String) -> Unit,
+    onRemoveQueued: (String) -> Unit,
     onLoadOlder: () -> Unit,
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
@@ -52,14 +60,20 @@ fun SessionScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             try {
-                val name = ctx.contentResolver.query(uri, null, null, null, null)
-                    ?.use { cur ->
-                        val nameIdx = cur.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                        if (nameIdx >= 0 && cur.moveToFirst()) cur.getString(nameIdx) else "upload.bin"
-                    } ?: "upload.bin"
-                val mime = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
-                val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: error("could not read selected file")
+                val (name, mime, bytes) = withContext(Dispatchers.IO) {
+                    val metadata = ctx.contentResolver.openableMetadata(uri)
+                    metadata.size?.let { size ->
+                        if (size > MAX_FILE_BYTES) {
+                            throw ContentTooLargeException(size, MAX_FILE_BYTES)
+                        }
+                    }
+                    val name = metadata.displayName ?: "upload.bin"
+                    val mime = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
+                    val bytes = ctx.contentResolver.openInputStream(uri)?.use {
+                        readBounded(it, MAX_FILE_BYTES)
+                    } ?: error("could not read selected file")
+                    Triple(name, mime, bytes)
+                }
                 onUploadWorkspaceFile(workspaceCwd, name, bytes, mime)
                 Toast.makeText(ctx, "Uploaded $name to $workspaceCwd", Toast.LENGTH_SHORT).show()
             } catch (t: Throwable) {
@@ -111,9 +125,12 @@ fun SessionScreen(
             pending = state.pending,
             planMode = state.planMode,
             pendingImages = state.pendingImages,
+            queuedTurns = state.queuedTurns,
             onSend = onSend,
             onStop = onStop,
             onSteer = onSteer,
+            onQueue = onQueue,
+            onRemoveQueued = onRemoveQueued,
             onAttachImage = onAttachImage,
             onRemoveImage = onRemoveImage,
             onSlashCommand = onSlashCommand,

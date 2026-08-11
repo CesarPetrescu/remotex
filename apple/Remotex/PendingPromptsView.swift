@@ -80,6 +80,12 @@ private struct ApprovalPromptCard: View {
                     .lineLimit(6)
                     .textSelection(.enabled)
             }
+            if let permissions = prompt.permissions, !permissions.isEmpty {
+                Text(permissions)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(Color.remotexText)
+                    .textSelection(.enabled)
+            }
             if let cwd = prompt.cwd, !cwd.isEmpty {
                 Text("cwd: \(cwd)")
                     .font(.caption2.monospaced())
@@ -190,6 +196,10 @@ private struct UserInputPromptCard: View {
 
     private func questionView(_ question: UserInputQuestion) -> some View {
         let placeholder: String = question.options.isEmpty ? "type your answer" : "optional notes"
+        let answer = Binding(
+            get: { notes[question.id] ?? "" },
+            set: { notes[question.id] = $0 }
+        )
         return VStack(alignment: .leading, spacing: 6) {
             if !question.header.isEmpty {
                 Text(question.header)
@@ -225,15 +235,17 @@ private struct UserInputPromptCard: View {
                 }
                 .buttonStyle(.plain)
             }
-            TextField(
-                placeholder,
-                text: Binding(
-                    get: { notes[question.id] ?? "" },
-                    set: { notes[question.id] = $0 }
-                ),
-                axis: .vertical
-            )
+            Group {
+                if question.isSecret {
+                    SecureField(placeholder, text: answer)
+                        .textContentType(.password)
+                } else {
+                    TextField(placeholder, text: answer, axis: .vertical)
+                }
+            }
             .lineLimit(1...4)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
             .textFieldStyle(.plain)
             .padding(8)
             .background(Color.remotexSurface)

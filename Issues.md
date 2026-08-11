@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-022**.
+  never reuse. Next free ID: **I-025**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -37,7 +37,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-009 | fixed | low | daemon | `thread/compacted` ignored after we send `thread/compact/start` |
 | I-010 | fixed | low | daemon | Elicitation multi-select / nested object fields not mapped |
 | I-011 | fixed | high | env | Relay port 18080 is held by an unrelated project; no remotex relay is running |
-| I-012 | open | low | apple | iOS client has approval UI, but still lacks steer / interrupt and progressive item-patch handling |
+| I-012 | fixed | low | apple | iOS client has approval UI, but still lacks steer / interrupt and progressive item-patch handling |
 | I-013 | fixed | high | process | Local `main` was 3 commits / +7830 lines behind `origin/main`; a whole session was built on a stale base |
 | I-014 | blocked | medium | deploy/security | SparkTunnel 0.2.0 supplies no trustworthy visitor IP for per-address limits |
 | I-015 | wontfix | info | daemon/upstream | Codex external-clock mode rejects multi-subscriber shared threads |
@@ -45,8 +45,11 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-017 | open | info | daemon | GPU telemetry is NVIDIA-only; Intel/AMD accelerators are not sampled |
 | I-018 | open | medium | process | `git add -A` in this shared tree commits other agents' in-flight work |
 | I-019 | open | medium | codex/upstream | Codex 0.147 `thread/delete` fails against its migrated state database |
-| I-020 | open | medium | web/tooling | Dependabot reports high-severity vulnerabilities in web build/dev dependencies |
-| I-021 | open | low | daemon/deploy | Daemon reaches its own machine's relay via the public tunnel (the reconnect storm was relay restarts) |
+| I-020 | fixed | medium | web/tooling | Dependabot reports high-severity vulnerabilities in web build/dev dependencies |
+| I-021 | fixed | low | daemon/deploy | Daemon reaches its own machine's relay via the public tunnel (the reconnect storm was relay restarts) |
+| I-022 | open | medium | windows/release | Windows release executables are not Authenticode-signed |
+| I-023 | open | medium | apple/release | Release IPA is unsigned and must be re-signed before installation |
+| I-024 | open | low | mobile | No FCM/APNs delivery after a mobile app is stopped or suspended |
 
 ---
 
@@ -331,7 +334,10 @@ verify its public boundary".
 
 ## I-012 — iOS client still lacks steer / interrupt and progressive item patches
 
-**Status:** open · **Sev:** low · **Area:** apple · **Opened:** 2026-08-09
+**Status:** fixed · **Sev:** low · **Area:** apple · **Opened:** 2026-08-09
+**Resolution:** 2026-08-11 — the v0.2 parity pass added progressive patches,
+steer/interrupt, FIFO follow-ups, reconnect/replay, and focused XCTest coverage;
+see the 2026-08-11 WorkLog entry.
 
 - **Symptom:** the SwiftUI client can start turns and answer ordered approval
   and user-input prompts, but it still cannot stop or steer a running turn.
@@ -507,7 +513,10 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 
 ### I-020 — vulnerable web build/dev dependencies
 
-- **Status:** open · **Severity:** medium · **Area:** web/tooling
+- **Status:** fixed · **Severity:** medium · **Area:** web/tooling
+- **Resolution:** 2026-08-11 — upgraded to Vite 8.2.1, Vitest 4.1.10,
+  and the current React plugin line; full `npm audit`, lint, 106 tests, and a
+  production build are clean. See the 2026-08-11 WorkLog entry.
 - **What:** GitHub Dependabot reports nine open npm advisories (four high,
   four moderate, one low). A current local `npm audit` collapses them into
   five affected packages: direct `vite`, plus transitive `esbuild`,
@@ -529,7 +538,12 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 
 ### I-021 — daemon reaches its own machine's relay via the public internet
 
-- **Status:** open · **Severity:** low · **Area:** daemon/deploy
+- **Status:** fixed · **Severity:** low · **Area:** daemon/deploy
+- **Resolution:** 2026-08-11 — the SparkTunnel override now publishes the
+  relay only on `127.0.0.1:19080`; the host daemon uses that loopback WebSocket
+  while phones keep using the public tunnel. Both paths returned the same live
+  API response, the public web bundle updated, and the daemon reattached after
+  restart. See the 2026-08-11 WorkLog entry.
 - **Read the correction below before acting on this.** Filed at first as
   "the tunnel keeps tearing down the daemon socket". That was wrong, and the
   experiments that disproved it are recorded here so nobody repeats them.
@@ -581,3 +595,40 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
   same path fail together, and load-balancing session frames across them
   would reorder `turn-started`/`turn-completed` and the replay buffer. The
   drops were deploys.
+
+### I-022 — Windows release executables lack Authenticode
+
+- **Status:** open · **Severity:** medium · **Area:** windows/release
+- **Impact:** the NSIS and portable executables are reproducibly built,
+  checksummed, and attested, but Windows SmartScreen can still show an
+  unknown-publisher warning.
+- **How to fix:** obtain a Windows code-signing certificate (preferably EV or
+  a managed signing service), store its reference as GitHub release secrets,
+  and configure `electron-builder` signing plus timestamping.
+- **Evidence:** `apps/desktop/package.json` has no Windows certificate
+  configuration; `.github/workflows/release.yml` explicitly labels the
+  artifacts unsigned in its release notes.
+
+### I-023 — iPhone release IPA is unsigned
+
+- **Status:** open · **Severity:** medium · **Area:** apple/release
+- **Impact:** the release workflow compiles and tests the iPhone app, but its
+  IPA must be re-signed with the installer's Apple identity; it is not a
+  TestFlight or App Store distribution.
+- **How to fix:** create an Apple Developer team/app identity and provisioning
+  pipeline, then publish through TestFlight or a signed ad-hoc channel.
+- **Evidence:** the iPhone release build sets `CODE_SIGNING_ALLOWED=NO` and
+  packages that unsigned `.app` under `Payload/`.
+
+### I-024 — no remote mobile push after stop/suspension
+
+- **Status:** open · **Severity:** low · **Area:** mobile
+- **Impact:** Android can retain a running turn with its foreground service,
+  and iPhone can notify while its app/WebSocket remains alive. Neither client
+  receives approval/completion pushes once its process is stopped; iOS
+  suspension also prevents delivery.
+- **How to fix:** add relay-managed device-token registration and scoped
+  FCM/APNs delivery with revocation, rate limits, and content-minimized push
+  payloads.
+- **Evidence:** no FCM/APNs dependencies or device-token routes exist; native
+  clients only use local notification APIs.

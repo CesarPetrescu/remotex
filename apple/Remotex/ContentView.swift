@@ -1,6 +1,11 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
+import UIKit
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorSchemeContrast) private var systemContrast
     @StateObject private var viewModel = RemotexViewModel()
     @StateObject private var theme = ThemeSetting()
     @State private var telemetryOpen = false
@@ -23,7 +28,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: theme.iconName)
                     }
-                    .accessibilityLabel("Theme: \(theme.choice.rawValue)")
+                    .accessibilityLabel("Theme: \(theme.choice.displayName)")
                 }
                 if viewModel.session != nil {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -63,11 +68,25 @@ struct ContentView: View {
         }
         .tint(.remotexAccent)
         .preferredColorScheme(theme.choice.colorScheme)
+        .environment(
+            \.colorSchemeContrast,
+            theme.choice == .highContrast ? .increased : systemContrast
+        )
+        .onChange(of: scenePhase) { _, phase in
+            viewModel.setAppActive(phase != .background)
+            if phase == .active {
+                viewModel.reconnectAfterForeground()
+                if viewModel.session == nil, viewModel.isConfigured {
+                    viewModel.refreshHosts()
+                }
+            }
+        }
     }
 }
 
 private struct HostsView: View {
     @ObservedObject var viewModel: RemotexViewModel
+    @State private var startHost: Host?
 
     var body: some View {
         List {
@@ -80,6 +99,16 @@ private struct HostsView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .font(.system(.body, design: .monospaced))
+                if !viewModel.relayURL.isEmpty,
+                   RelayClient.validatedBaseComponents(baseURL: viewModel.relayURL) == nil {
+                    Text(
+                        RelayClient.allowsInsecureRelay
+                            ? "Enter an HTTP or HTTPS relay URL without embedded credentials."
+                            : "Use an HTTPS relay URL without embedded credentials."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(Color.remotexWarn)
+                }
                 Button {
                     viewModel.refreshHosts()
                 } label: {
@@ -87,6 +116,14 @@ private struct HostsView: View {
                         viewModel.status == .loading ? "Loading" : "Load hosts",
                         systemImage: "arrow.clockwise"
                     )
+                }
+                .disabled(!viewModel.isConfigured)
+                if !viewModel.userToken.isEmpty {
+                    Button(role: .destructive) {
+                        viewModel.signOut()
+                    } label: {
+                        Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
                 }
             }
 
@@ -96,7 +133,7 @@ private struct HostsView: View {
                 } else {
                     ForEach(viewModel.hosts) { host in
                         Button {
-                            viewModel.openSession(host: host)
+                            startHost = host
                         } label: {
                             HostRow(host: host)
                         }
@@ -131,10 +168,122 @@ private struct HostsView: View {
         }
         .scrollContentBackground(.hidden)
         .background(Color.remotexBackground)
+        .refreshable {
+            viewModel.refreshHosts()
+        }
         .onAppear {
-            if viewModel.hosts.isEmpty {
+            if viewModel.hosts.isEmpty, viewModel.isConfigured {
                 viewModel.refreshHosts()
             }
+        }
+        .sheet(item: $startHost) { host in
+            HostStartView(viewModel: viewModel, host: host)
+        }
+    }
+}
+
+private struct HostStartView: View {
+    @ObservedObject var viewModel: RemotexViewModel
+    let host: Host
+    @Environment(\.dismiss) private var dismiss
+    @State private var typedPath = "/"
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Start a session") {
+                    TextField("/path/on/host", text: $typedPath)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(.body, design: .monospaced))
+                        .onSubmit {
+                            viewModel.loadStartDirectory(on: host, path: typedPath)
+                        }
+                    HStack {
+                        Button("Up", systemImage: "arrow.up") {
+                            viewModel.loadStartDirectory(
+                                on: host,
+                                path: RemotexViewModel.parentRemotePath(viewModel.startPath)
+                            )
+                        }
+                        .disabled(viewModel.startPath == "/")
+                        Spacer()
+                        Button("Go") {
+                            viewModel.loadStartDirectory(on: host, path: typedPath)
+                        }
+                        Button("Start here") {
+                            viewModel.openSession(host: host, cwd: viewModel.startPath)
+                            dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Button("Start in host default folder") {
+                        viewModel.openSession(host: host)
+                        dismiss()
+                    }
+                }
+
+                Section("Folders") {
+                    if viewModel.startLoading && viewModel.startEntries.isEmpty {
+                        ProgressView()
+                    } else {
+                        ForEach(viewModel.startEntries.filter(\.isDirectory)) { entry in
+                            Button {
+                                viewModel.loadStartDirectory(
+                                    on: host,
+                                    path: RemotexViewModel.joinRemotePath(
+                                        viewModel.startPath,
+                                        entry.fileName
+                                    )
+                                )
+                            } label: {
+                                Label(entry.fileName, systemImage: "folder")
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                        }
+                    }
+                }
+
+                if viewModel.threadsHost?.id == host.id, !viewModel.threads.isEmpty {
+                    Section("Saved chats") {
+                        ForEach(viewModel.threads) { thread in
+                            Button {
+                                viewModel.resumeThread(thread)
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(thread.displayTitle).lineLimit(1)
+                                    if let cwd = thread.cwd, !cwd.isEmpty {
+                                        Text(cwd)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(Color.remotexMuted)
+                                            .lineLimit(1)
+                                            .truncationMode(.head)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(host.nickname)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Refresh", systemImage: "arrow.clockwise") {
+                        viewModel.refreshHostExtras(host)
+                        viewModel.loadStartDirectory(on: host, path: viewModel.startPath)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            viewModel.prepareStart(on: host)
+        }
+        .onChange(of: viewModel.startPath) { _, path in
+            typedPath = path
         }
     }
 }
@@ -275,6 +424,48 @@ private struct SessionHeader: View {
                     .foregroundStyle(Color.remotexMuted)
                     .lineLimit(1)
             }
+            if let message = viewModel.connectionMessage, !message.isEmpty {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(Color.remotexMuted)
+                    .lineLimit(2)
+            }
+            if let goal = viewModel.goal {
+                HStack(spacing: 8) {
+                    Text("goal \(goal.status.isEmpty ? "active" : goal.status)")
+                    if let budget = goal.tokenBudget, budget > 0 {
+                        ProgressView(
+                            value: Double(min(goal.tokensUsed, budget)),
+                            total: Double(budget)
+                        )
+                        .frame(maxWidth: 120)
+                        Text("\(compactCount(goal.tokensUsed))/\(compactCount(budget))")
+                    } else if goal.tokensUsed > 0 {
+                        Text("\(compactCount(goal.tokensUsed)) used")
+                    }
+                }
+                .font(.caption.monospaced())
+                .foregroundStyle(Color.remotexMuted)
+                if !goal.objective.isEmpty {
+                    Text(goal.objective)
+                        .font(.caption)
+                        .foregroundStyle(Color.remotexMuted)
+                        .lineLimit(1)
+                }
+            }
+            if [
+                viewModel.tokensInput,
+                viewModel.tokensOutput,
+                viewModel.tokensCached,
+                viewModel.tokensReasoning,
+            ].contains(where: { $0 > 0 }) {
+                Text(
+                    "tokens \(compactCount(viewModel.tokensInput)) in · "
+                        + "\(compactCount(viewModel.tokensOutput)) out"
+                )
+                .font(.caption.monospaced())
+                .foregroundStyle(Color.remotexMuted)
+            }
         }
         .padding(12)
         .background(Color.remotexSurface)
@@ -376,6 +567,29 @@ private struct UserBubble: View {
                     .font(.system(size: 14))
                     .foregroundStyle(Color.remotexText)
                     .textSelection(.enabled)
+                if item.imageCount > 0 {
+                    Label(
+                        "\(item.imageCount) image\(item.imageCount == 1 ? "" : "s")",
+                        systemImage: "photo"
+                    )
+                    .font(.caption.monospaced())
+                    .foregroundStyle(Color.remotexMuted)
+                }
+                if !item.imageData.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(item.imageData.enumerated()), id: \.offset) { _, data in
+                                if let preview = UIImage(data: data) {
+                                    Image(uiImage: preview)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 96, height: 72)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                            }
+                        }
+                    }
+                }
             }
             .padding(10)
             .background(Color.remotexAccent.opacity(0.10))
@@ -385,6 +599,16 @@ private struct UserBubble: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
+}
+
+private func compactCount(_ value: Int) -> String {
+    if value >= 1_000_000 {
+        return String(format: value >= 10_000_000 ? "%.0fm" : "%.1fm", Double(value) / 1_000_000)
+    }
+    if value >= 1_000 {
+        return String(format: value >= 10_000 ? "%.0fk" : "%.1fk", Double(value) / 1_000)
+    }
+    return String(max(0, value))
 }
 
 private struct ThinkingRow: View {
@@ -490,6 +714,7 @@ private func headline(_ text: String) -> String {
 
 private struct Composer: View {
     @ObservedObject var viewModel: RemotexViewModel
+    @State private var pickedPhotos: [PhotosPickerItem] = []
 
     private static let permissionOptions: [(id: String, label: String)] = [
         ("default", "Default"),
@@ -502,13 +727,59 @@ private struct Composer: View {
         return selected?.efforts ?? ["", "low", "medium", "high", "xhigh"]
     }
 
+    private var connected: Bool { viewModel.status == .connected }
+
+    private var slashOnly: Bool {
+        viewModel.pendingImages.isEmpty
+            && viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")
+    }
+
     var body: some View {
-      VStack(spacing: 8) {
-        // Pre-turn settings, mirrored from the web chip row. Menus keep
-        // the row one line tall; the values ride the next turn-start.
-        if !viewModel.modelOptions.isEmpty {
-            HStack(spacing: 8) {
+        VStack(spacing: 8) {
+            if !viewModel.pendingImages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(viewModel.pendingImages) { image in
+                            PendingImageTile(image: image) {
+                                viewModel.removeImage(image.id)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !viewModel.queuedTurns.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        Text("NEXT (\(viewModel.queuedTurns.count))")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(Color.remotexMuted)
+                        ForEach(viewModel.queuedTurns) { turn in
+                            HStack(spacing: 5) {
+                                Text(turn.text.ifEmpty("\(turn.images.count) image\(turn.images.count == 1 ? "" : "s")"))
+                                    .lineLimit(1)
+                                Button {
+                                    viewModel.removeQueuedTurn(turn.id)
+                                } label: {
+                                    Image(systemName: "xmark")
+                                }
+                                .disabled(turn.sending)
+                            }
+                            .font(.caption.monospaced())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.remotexSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                }
+            }
+
+            // Settings and control commands stay one line tall on phones.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
                 Menu {
+                    Button("Codex default") { viewModel.model = "" }
                     ForEach(viewModel.modelOptions) { option in
                         Button(option.label) { viewModel.model = option.id }
                     }
@@ -535,20 +806,77 @@ private struct Composer: View {
                         value: Self.permissionOptions.first { $0.id == viewModel.permissions }?.label ?? "Default"
                     )
                 }
+                Menu {
+                    Button(viewModel.planMode ? "Use default mode" : "Use plan mode") {
+                        viewModel.sendSlash(viewModel.planMode ? "default" : "plan")
+                    }
+                    Button("List collaboration modes") {
+                        viewModel.sendSlash("collab")
+                    }
+                    ForEach(viewModel.collaborationModes, id: \.self) { mode in
+                        Button(mode, action: {})
+                            .disabled(true)
+                    }
+                } label: {
+                    PickerChip(title: "MODE", value: viewModel.planMode ? "plan" : "default")
+                }
+                Menu {
+                    Button("Inspect goal") { viewModel.refreshGoal() }
+                    Button("Set or update goal") { beginGoalComposition() }
+                    if let goal = viewModel.goal {
+                        if goal.status == "paused" {
+                            Button("Resume goal") { viewModel.resumeGoal() }
+                        } else {
+                            Button("Pause goal") { viewModel.pauseGoal() }
+                        }
+                        Button("Clear goal", role: .destructive) { viewModel.clearGoal() }
+                    }
+                } label: {
+                    PickerChip(title: "GOAL", value: viewModel.goal?.status ?? "/goal")
+                }
+                Menu {
+                    Button("/plan") { viewModel.sendSlash("plan") }
+                    Button("/default") { viewModel.sendSlash("default") }
+                    Button("/goal …") { beginGoalComposition() }
+                    Button("/cd …") { viewModel.prompt = "/cd " }
+                    Button("/pwd") { viewModel.sendSlash("pwd") }
+                    Button("/compact") { viewModel.sendSlash("compact") }
+                    Button("/collab") { viewModel.sendSlash("collab") }
+                } label: {
+                    PickerChip(title: "CMD", value: "/")
+                }
             }
-        }
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message Codex", text: $viewModel.prompt, axis: .vertical)
-                .lineLimit(1...5)
-                .textFieldStyle(.plain)
-                .padding(10)
-                .background(Color.remotexSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.remotexLine, lineWidth: 1)
+            }
+
+            HStack(alignment: .bottom, spacing: 8) {
+                PhotosPicker(
+                    selection: $pickedPhotos,
+                    maxSelectionCount: 5,
+                    matching: .images
+                ) {
+                    Image(systemName: "paperclip")
+                        .frame(width: 30, height: 30)
+                }
+                .disabled(!connected)
+                .accessibilityLabel("Attach image")
+
+                TextField(
+                    viewModel.pending ? "Steer this turn" : "Message Codex",
+                    text: $viewModel.prompt,
+                    axis: .vertical
                 )
-            if viewModel.pending {
+                    .lineLimit(1...5)
+                    .textFieldStyle(.plain)
+                    .padding(10)
+                    .background(Color.remotexSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.remotexLine, lineWidth: 1)
+                    )
+                    .disabled(!connected)
+
+                if viewModel.pending {
                 Button {
                     viewModel.interruptTurn()
                 } label: {
@@ -557,24 +885,91 @@ private struct Composer: View {
                         .foregroundStyle(Color.remotexWarn)
                 }
                 .accessibilityLabel("Stop turn")
+                    if viewModel.hasComposerContent, !slashOnly {
+                        Button {
+                            viewModel.queuePrompt()
+                        } label: {
+                            Image(systemName: "tray.and.arrow.down.fill")
+                                .font(.system(size: 24))
+                        }
+                        .accessibilityLabel("Queue follow-up")
+                    }
+                }
+                Button {
+                    viewModel.sendPrompt()
+                } label: {
+                    // While a turn runs, typed text STEERS it. The adjacent
+                    // tray button queues a FIFO follow-up instead.
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 30))
+                }
+                .disabled(!connected || !viewModel.hasComposerContent)
+                .accessibilityLabel(viewModel.pending ? "Steer turn" : "Send")
             }
-            Button {
-                viewModel.sendPrompt()
-            } label: {
-                // While a turn runs, typed text STEERS it (codex turn/steer)
-                // instead of being locked out — same flow as web/Android.
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 30))
-            }
-            .disabled(
-                viewModel.status != .connected
-                    || viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            )
-            .accessibilityLabel(viewModel.pending ? "Steer turn" : "Send")
         }
-      }
-      .padding(12)
-      .background(Color.remotexBackground)
+        .padding(12)
+        .background(Color.remotexBackground)
+        .onChange(of: pickedPhotos) { _, items in
+            loadPhotos(items)
+        }
+    }
+
+    private func loadPhotos(_ items: [PhotosPickerItem]) {
+        Task { @MainActor in
+            for item in items {
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    let type = item.supportedContentTypes.first { $0.conforms(to: .image) }
+                    let mime = type?.preferredMIMEType ?? "image/jpeg"
+                    let label = type?.preferredFilenameExtension.map { "photo.\($0)" } ?? "photo"
+                    viewModel.attachImage(data: data, mime: mime, label: label)
+                } catch {
+                    viewModel.errorMessage = "Image: \(error.localizedDescription)"
+                }
+            }
+            pickedPhotos = []
+        }
+    }
+
+    private func beginGoalComposition() {
+        if viewModel.planMode {
+            viewModel.sendSlash("default")
+        }
+        viewModel.prompt = "/goal "
+    }
+}
+
+private struct PendingImageTile: View {
+    let image: PendingImage
+    let onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let preview = UIImage(data: image.data) {
+                    Image(uiImage: preview)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "photo")
+                        .foregroundStyle(Color.remotexMuted)
+                }
+            }
+            .frame(width: 56, height: 56)
+            .background(Color.remotexSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.75))
+            }
+            .offset(x: 5, y: -5)
+            .accessibilityLabel("Remove \(image.label)")
+        }
+        .padding(.top, 5)
     }
 }
 
@@ -592,7 +987,7 @@ private struct PickerChip: View {
                 .foregroundStyle(Color.remotexAccent)
                 .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 92, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.remotexSurface)

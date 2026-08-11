@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from 'vitest';
 import {
   attachedTurnInFlight,
+  browseHostId,
   dequeuePrompt,
   enqueuePrompt,
   initialState,
@@ -9,6 +10,14 @@ import {
   reducer,
   shouldRetryInventoryRequest,
 } from './useRemotex';
+
+describe('file-route host selection', () => {
+  it('prefers the host encoded in a direct files URL over stale selected state', () => {
+    expect(browseHostId('url-host', 'old-host')).toBe('url-host');
+    expect(browseHostId(null, 'selected-host')).toBe('selected-host');
+    expect(browseHostId(null, null)).toBeNull();
+  });
+});
 
 describe('inventory retry policy', () => {
   it('retries network, timeout, throttling, and server failures', () => {

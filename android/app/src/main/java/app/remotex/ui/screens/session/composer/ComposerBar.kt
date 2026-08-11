@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import coil.compose.AsyncImage
 import app.remotex.ui.PendingImage
+import app.remotex.ui.QueuedTurn
 import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
@@ -59,9 +60,12 @@ internal fun ComposerBar(
     pending: Boolean,
     planMode: Boolean,
     pendingImages: List<PendingImage>,
+    queuedTurns: List<QueuedTurn> = emptyList(),
     onSend: (String) -> Unit,
     onStop: () -> Unit,
     onSteer: (String) -> Unit = {},
+    onQueue: (String) -> Unit = {},
+    onRemoveQueued: (String) -> Unit = {},
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
     // Slash command sender — composer bypasses sendTurn for these.
@@ -73,6 +77,8 @@ internal fun ComposerBar(
     val textEnabled = connected
     val hasContent = text.isNotBlank() || pendingImages.isNotEmpty()
     val canSteer = connected && pending && hasContent
+    val slashOnly = pendingImages.isEmpty() && text.trimStart().startsWith("/")
+    val canQueue = canSteer && !slashOnly
     val goalMode = isGoalCommand(text)
     // Plan + goal are mutually exclusive in the chip rail: the plan chip never
     // reads "on" while a /goal command is being composed (clicks already
@@ -118,6 +124,52 @@ internal fun ComposerBar(
                                     tint = Ink,
                                     modifier = Modifier.size(12.dp),
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+            if (queuedTurns.isNotEmpty()) {
+                Text(
+                    "next (${queuedTurns.size})",
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(queuedTurns.size, key = { queuedTurns[it].id }) { index ->
+                        val queued = queuedTurns[index]
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            border = BorderStroke(1.dp, Line),
+                            shape = RectangleShape,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    queued.text.ifBlank {
+                                        "${queued.imageCount} image${if (queued.imageCount == 1) "" else "s"}"
+                                    },
+                                    color = Ink,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .width(160.dp)
+                                        .padding(start = 8.dp),
+                                )
+                                IconButton(
+                                    onClick = { onRemoveQueued(queued.id) },
+                                    enabled = !queued.sending,
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "Remove queued turn",
+                                        tint = InkDim,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -227,6 +279,7 @@ internal fun ComposerBar(
                     pending = pending,
                     canSend = connected && !pending && hasContent,
                     canSteer = canSteer,
+                    canQueue = canQueue,
                     onSend = {
                         val sent = handleSubmit(
                             text,
@@ -245,6 +298,15 @@ internal fun ComposerBar(
                             onSteer,
                         )
                         if (sent) text = ""
+                    },
+                    onQueue = {
+                        val queued = handleSubmit(
+                            text,
+                            pendingImages.isNotEmpty(),
+                            onSlashCommand,
+                            onQueue,
+                        )
+                        if (queued) text = ""
                     },
                 )
             }

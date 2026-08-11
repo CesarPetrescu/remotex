@@ -9,6 +9,7 @@ import { InventorySocket } from '../api/inventorySocket';
 import { RelayClient } from '../api/relayClient';
 import { SessionSocket } from '../api/sessionSocket';
 import {
+  DEFAULT_APPROVAL_DECISIONS,
   FALLBACK_MODEL_OPTIONS,
   MAX_FILE_BYTES,
   SCREENS,
@@ -92,10 +93,6 @@ function clearPromptBackup(sessionId) {
   }
 }
 
-// Every decision codex accepts, for a prompt that didn't name its own.
-// Kept identical in RemotexViewModel.kt and RemotexViewModel.swift.
-export const DEFAULT_APPROVAL_DECISIONS = ['accept', 'acceptForSession', 'decline', 'cancel'];
-
 export function attachedTurnInFlight(frame) {
   return typeof frame?.turn_in_flight === 'boolean' ? frame.turn_in_flight : null;
 }
@@ -109,7 +106,9 @@ function normalizeApprovalPrompt(data = {}) {
     command: data.command,
     cwd: data.cwd,
     permissions: data.permissions,
-    decisions: data.decisions || DEFAULT_APPROVAL_DECISIONS,
+    decisions: Array.isArray(data.decisions) && data.decisions.length > 0
+      ? data.decisions
+      : DEFAULT_APPROVAL_DECISIONS,
     // Relay-assigned queue position; absent on live request frames.
     order: Number.isFinite(data.order) ? data.order : undefined,
   };
@@ -1601,8 +1600,8 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     }
   }, [state.hosts, state.selectedHostId, refreshThreads]);
 
-  const browseDir = useCallback(async (path) => {
-    const target = latestInputsRef.current.selectedHostId;
+  const browseDir = useCallback(async (path, hostOverride = null) => {
+    const target = browseHostId(hostOverride, latestInputsRef.current.selectedHostId);
     if (!target) return;
     dispatch({ type: 'BROWSE_LOADING', loading: true, path });
     try {
@@ -2004,7 +2003,9 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
     if (route.screen === SCREENS.Files && route.hostId) {
       dispatch({ type: 'SELECT_HOST', id: route.hostId });
       dispatch({ type: 'SET_SCREEN', screen: SCREENS.Files });
-      browseDir(route.path || '/');
+      // Reducer state/ref updates land on the next render. Pass the URL's host
+      // explicitly so a bookmark never lists the previously selected host.
+      browseDir(route.path || '/', route.hostId);
       return;
     }
     if (route.screen === SCREENS.Session && route.sessionId) {
@@ -2128,6 +2129,10 @@ export function useRemotex({ token = '', remember = true, initialHosts } = {}) {
       removeImage,
     ],
   );
+}
+
+export function browseHostId(hostOverride, selectedHostId) {
+  return hostOverride || selectedHostId || null;
 }
 
 // --- helpers ---

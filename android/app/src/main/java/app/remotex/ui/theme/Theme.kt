@@ -79,6 +79,48 @@ val LightPalette = RemotexPalette(
     isDark = false,
 )
 
+// Optional maximum-contrast palette for bright sunlight, low-vision users,
+// and displays whose vendor color processing crushes the regular dark tones.
+// Every informational foreground is deliberately high-luminance on black;
+// selection never relies on color alone in the controls that use it.
+val HighContrastPalette = RemotexPalette(
+    bg = Color.Black,
+    panel = Color.Black,
+    panel2 = Color(0xFF111111),
+    line = Color.White,
+    ink = Color.White,
+    inkDim = Color(0xFFE6E6E6),
+    accent = Color(0xFF00E5FF),
+    accentDeep = Color(0xFF80BFFF),
+    ok = Color(0xFF80FFD4),
+    warn = Color(0xFFFF8A8A),
+    gold = Color(0xFFFFE066),
+    onAccent = Color.Black,
+    codeString = Color(0xFF9CFF9C),
+    codeNumber = Color(0xFFFFCE80),
+    codeKeyword = Color(0xFF80EFFF),
+    codeComment = Color(0xFFE6E6E6),
+    isDark = true,
+)
+
+enum class RemotexThemeMode {
+    Dark,
+    Light,
+    HighContrast;
+
+    fun next(): RemotexThemeMode = when (this) {
+        Dark -> Light
+        Light -> HighContrast
+        HighContrast -> Dark
+    }
+
+    companion object {
+        fun fromStored(value: String?, systemDark: Boolean): RemotexThemeMode =
+            entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
+                ?: if (systemDark) Dark else Light
+    }
+}
+
 val LocalPalette = compositionLocalOf { DarkPalette }
 
 // --- token accessors: same names the whole app already imports ---------
@@ -124,9 +166,14 @@ private fun schemeFor(p: RemotexPalette) = if (p.isDark) {
 @Composable
 fun RemotexTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    highContrast: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val palette = if (darkTheme) DarkPalette else LightPalette
+    val palette = when {
+        highContrast -> HighContrastPalette
+        darkTheme -> DarkPalette
+        else -> LightPalette
+    }
     androidx.compose.runtime.CompositionLocalProvider(LocalPalette provides palette) {
         MaterialTheme(colorScheme = schemeFor(palette), content = content)
     }

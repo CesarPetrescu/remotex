@@ -4,66 +4,78 @@ The native Android client is built with Kotlin and Jetpack Compose. OkHttp
 handles REST and WebSocket transport; kotlinx.serialization handles relay
 frames.
 
-It is a working client, not a skeleton.
+## Current coverage
 
-## Status
+The app supports the main web workflow:
 
-Feature-complete against the web client apart from push notifications.
-What works:
+- Provider setup at runtime, live host inventory, host-scoped Codex models,
+  saved-thread listing, preview, resume, and paged transcript history.
+- Streamed user, reasoning, command, file-change, MCP, dynamic-tool, and agent
+  items, including progressive diffs and replay-gap markers.
+- Text and image turns, active-turn steer or stop, and a removable local FIFO
+  follow-up queue that snapshots its images and model/effort/permission
+  settings.
+- Model, reasoning-effort, and permission controls resolved against the
+  selected host.
+- Ordered approval and user-input queues, authoritative decision lists,
+  secret input fields, and multi-client resolution handling.
+- `/plan`, `/default`, `/cd`, `/pwd`, `/compact`, `/goal`, and `/collab`, plus
+  goal get/set/pause/resume/clear handling.
+- Jump-style workspace selection with recents and favorites, directory
+  creation, upload, download, rename, and delete.
+- Session replay and reconnect with stable sequence cursors, owner-scoped
+  inventory invalidations, provider-scoped active-session restoration after
+  process recreation, host telemetry, dark/light/high-contrast themes, a
+  foreground service during turns, completion notifications, and notification
+  actions to return to or stop a chat.
 
-- Host list with online state, `POST /api/sessions`, and thread list /
-  resume with transcript replay and a "resuming" banner.
-- Full session surface: streamed reasoning, tool calls, file changes,
-  MCP tool calls, and agent messages, grouped per turn with markdown
-  rendering.
-- Composer with model, reasoning-effort, and permission pickers, image
-  attachments, send/steer/stop, and turn interrupt. The model list comes
-  from `GET /api/hosts/{host_id}/models`; if the host cannot supply it,
-  the default entry lets Codex choose.
-- Approval dialogs and Codex user-input dialogs.
-- Slash commands (`/plan`, `/default`, `/cd`, `/pwd`, `/compact`,
-  `/goal`, `/collab`) plus direct `goal-get` / `goal-set` / `goal-clear`
-  frames.
-- Workspace file browsing with the Jump folder picker (search-first, with
-  recents and favorites), folder creation, and file upload.
-- Reconnect with `last_seq` replay; a foreground service and
-  notifications so a long turn survives the app being backgrounded, with
-  a cancel-turn action from the notification.
+The remaining platform gaps are at the bottom of this file. The most important
+one is remote push: local notifications work while Android is retaining the
+session, but the relay has no FCM path for an approval arriving after the app
+has been fully stopped.
 
-Not done — tracked in the root `README.md` and under "Known gaps" in
-`services/docs/architecture.md`:
+## Provider and token storage
 
-- FCM push for approvals that arrive while the app is closed.
-- OIDC login — the token is still a plain bearer string.
-- Runtime relay switching (the URL is a compile-time constant; see below).
+Public release APKs contain no operator URL and no demo credential. On first
+launch, enter the base URL of the relay you intend to use and its user bearer
+token. A release build requires an HTTPS relay; cleartext LAN and emulator
+URLs are debug-only.
 
-## Architecture
+The relay URL is saved as an ordinary app preference because it is not a
+secret. The token is encrypted with AES-GCM using a non-exportable key from
+Android Keystore. Each normalized relay base URL gets a separate key and
+ciphertext slot, so switching providers does not send one relay's token to
+another. The token UI masks it by default and provides explicit reveal and
+clear actions. Auth preferences are excluded from Android backup; if a
+device-bound key is missing or invalid, the app fails signed out.
 
-```text
-MainActivity
-└── RemotexApp                         screen navigation and app shell
-    ├── HostsScreen
-    ├── ThreadsScreen
-    ├── FilesScreen                    working-directory picker
-    └── SessionScreen                  events, prompts, files, composer
-         │
-         ▼
-    RemotexViewModel                   state machine and event reducer
-    ├── RelayClient                    REST calls
-    ├── SessionSocket                  `/ws/client` WebSocket → SharedFlow
-    └── SessionForegroundService       lifecycle and notifications
+Changing the relay URL rebuilds the ViewModel and network clients against the
+new provider. It does not require rebuilding or reinstalling the APK.
+The URL is parsed at the network boundary before a bearer token can be
+attached; embedded credentials, query strings, and fragments are rejected.
+
+## Install a release APK
+
+Download `remotex-<version>.apk` from
+[GitHub Releases](https://github.com/CesarPetrescu/remotex/releases), then
+install it with Android's package installer or ADB:
+
+```bash
+adb install remotex-v0.2.0.apk
 ```
 
-The ViewModel mirrors the web client's normalized session state. It owns the
-active socket, remembers the last event sequence for replay, and exposes UI
-actions; Compose screens remain presentation-focused.
+Releases before `v0.2.0` were signed with Android's debug key. Android cannot
+upgrade an installed package across signing identities, so users of one of
+those builds must uninstall it once before installing the new release-signed
+line. Uninstalling clears that app's local settings.
 
-## Requirements
+Verify the APK against `SHA256SUMS.txt` and the GitHub build-provenance
+attestation published with the release.
+
+## Requirements for local builds
 
 - JDK 17 (OpenJDK or Temurin).
-- Android SDK with `platforms;android-35` + `build-tools;34.0.0`.
-  Android Studio installs both; headless machines can use
-  `cmdline-tools/latest/bin/sdkmanager`.
+- Android SDK with `platforms;android-35` and `build-tools;34.0.0`.
 - `adb` when installing to a device.
 
 Set the SDK path once:
@@ -72,148 +84,123 @@ Set the SDK path once:
 cp android/local.properties.example android/local.properties
 ```
 
-### Use `./build.sh`, not bare Gradle
+### Use `./build.sh` for a phone build
 
-The debug build's default relay URL is `http://10.0.2.2:8080` — the magic
-address the **emulator** uses to reach the host's loopback. A real phone
-can't resolve it, so the app sits on "connecting…" forever. `build.sh`
-picks the right URL for you from the host's first non-loopback IPv4
-address and `RELAY_HOST_PORT` in `deploy/.env` (default 8080):
+The debug build's bare-Gradle default is `http://10.0.2.2:8080`, the Android
+emulator alias for the host's loopback. `build.sh` instead detects a local
+SparkTunnel hostname or a reachable LAN address and supplies it as the app's
+initial URL:
 
 ```bash
 cd android
-./build.sh                          # build only — prints the chosen URL
-./build.sh install                  # also `adb install -r` to the connected device
-./build.sh install 192.168.10.50    # override the auto-detected IP
-RELAY_URL=https://relay.example.com ./build.sh   # full URL override
+./build.sh
+./build.sh install
+./build.sh install 192.168.10.50
+RELAY_URL=https://relay.example.com ./build.sh install
 ```
 
-Bare Gradle is fine for an emulator, or when you pass the URL yourself:
+The value is only a starting point and remains editable in the app. Bare
+Gradle is appropriate for an emulator or an explicit test relay:
 
 ```bash
-./gradlew assembleDebug             # emulator only (10.0.2.2:8080)
+./gradlew assembleDebug
 ./gradlew assembleDebug -PrelayUrl=http://192.168.x.y:18080
 ./gradlew installDebug
-./gradlew test                      # JVM unit tests
-./gradlew lint                      # Android lint
+./gradlew test
+./gradlew lint
 ```
 
-The value is baked into `BuildConfig.RELAY_URL` at compile time — there's
-no runtime relay picker, so switching servers means rebuild + reinstall.
+The release build's default `BuildConfig.RELAY_URL` is deliberately empty.
+`-PversionName=<label>` sets the APK version name; semver names also derive a
+monotonic version code, and `-PversionCode=<int>` can override it.
 
-`-PversionName=<label>` sets the APK's internal version (the release
-workflow passes the tag or the nightly label); without it the build falls
-back to `0.1.0`. `versionCode` is derived from a `vX.Y.Z` name
-(`v1.2.3` → `10203`) and stays `1` for nightlies and local builds;
-`-PversionCode=<int>` overrides it.
+### Release signing
+
+An installable production APK must use a long-lived private key. The Gradle
+build reads signing material only from the environment:
+
+```bash
+export ANDROID_KEYSTORE_PATH=/secure/path/remotex-release.jks
+export ANDROID_KEYSTORE_PASSWORD='...'
+export ANDROID_KEY_ALIAS='...'
+export ANDROID_KEY_PASSWORD='...'
+./gradlew assembleRelease -PversionName=v0.2.0 -PrelayUrl=
+```
+
+Keep that keystore and its passwords out of the repository and back them up
+securely. Losing the key means later APKs cannot upgrade existing installs.
+The GitHub release workflow restores the same four values from repository
+secrets, requires the release certificate's pinned SHA-256 fingerprint,
+verifies APK Signature Scheme v2, and scans the artifact for the maintainer's
+relay hostname before upload. The current release certificate fingerprint is
+`CE:05:63:93:15:3F:7E:AA:66:69:BC:0E:8C:9B:C8:35:E0:D7:B6:2F:81:73:AA:F8:4B:EC:A6:9B:AE:AA:51:37`.
+Forks must set the `ANDROID_RELEASE_CERT_SHA256` repository variable to their
+own long-lived release certificate fingerprint instead of copying this value.
 
 ### Cleartext HTTP is debug-only
 
-The app ships a network security config instead of a blanket
-`usesCleartextTraffic`: release builds refuse plaintext HTTP entirely
-(`src/main/res/xml/network_security_config.xml`), and the debug build type
-overrides it (`src/debug/res/xml/network_security_config.xml`) so the
-`http://<LAN-IP>:<PORT>` and `10.0.2.2` workflows above keep working.
-Android's config matches literal hosts only — it has no CIDR syntax — so
-the debug override permits cleartext broadly rather than trying to
-enumerate RFC1918 ranges. A relay reachable over `https://` needs no
-exception in either build type.
+The release network-security config rejects plaintext HTTP. The debug build
+overrides it so emulator and private-LAN development remain possible. Use
+HTTPS for anything public; the bearer token, prompts, and output otherwise
+travel in cleartext.
 
-Find the pieces by hand if you need them:
+### Wireless ADB
 
 ```bash
-ip -4 addr show scope global | awk '/inet / {print $2}' | cut -d/ -f1
-grep RELAY_HOST_PORT deploy/.env      # if you've set one; otherwise 8080
-```
-
-### Connecting ADB to a phone over Wi-Fi
-
-```bash
-adb connect 192.168.x.y:PORT     # PORT is shown in Wireless debugging on the phone
-adb devices                      # confirm the device shows up
+adb connect 192.168.x.y:PORT
+adb devices
 ./build.sh install
 ```
 
-## Project layout
+## Architecture
 
-```
-android/
-├── build.sh                    relay-URL-aware build wrapper — prefer this
-├── settings.gradle.kts
-├── build.gradle.kts            root (plugin versions only)
-├── gradle.properties
-├── gradle/wrapper/
-└── app/
-    ├── build.gradle.kts
-    ├── proguard-rules.pro
-    └── src/
-        ├── debug/res/xml/             debug-only network security config
-        ├── test/java/app/remotex/     JVM tests: RelayClient, SessionSocket,
-        │                              PromptQueue, Markdown
-        └── main/
-            ├── AndroidManifest.xml
-            ├── res/                    values (strings, colors, themes), xml, mipmaps
-            └── java/app/remotex/
-                ├── MainActivity.kt
-                ├── model/              Models, Thread, SessionEvent, FsEntry, Telemetry
-                ├── net/
-                │   ├── RelayClient.kt      REST
-                │   └── SessionSocket.kt    WebSocket → Flow<SocketEvent>
-                ├── service/
-                │   ├── SessionForegroundService.kt   keeps turns alive in background
-                │   ├── SessionNotifier.kt            turn + approval notifications
-                │   ├── CancelTurnReceiver.kt         notification action
-                │   └── RemotexEvents.kt
-                └── ui/
-                    ├── RemotexApp.kt          nav shell
-                    ├── RemotexViewModel.kt    mirrors apps/web useRemotex.js
-                    ├── Markdown.kt
-                    ├── app/                   RemotexBar, StatusBadge
-                    ├── components/            token field, status bar, formatters
-                    ├── theme/Theme.kt
-                    └── screens/
-                        ├── hosts/             HostsScreen, HostRow
-                        ├── threads/           ThreadsScreen, ThreadRow
-                        ├── files/             FilesScreen, Breadcrumbs, NewFolderRow
-                        └── session/
-                            ├── SessionScreen.kt, MetaBar, ResumingBanner
-                            ├── ApprovalDialog.kt, UserInputDialog.kt
-                            ├── composer/      ComposerBar, CompactPickers, SendOrStopButton
-                            ├── events/        EventList, AgentGroup, Renderers, UserBubble
-                            └── files/         WorkspaceFilesPanel
+```text
+MainActivity                         provider + theme preferences, deep links
+└── RemotexApp                       screen navigation and app shell
+    ├── HostsScreen                  relay/token setup + live inventory
+    ├── ThreadsScreen                saved chats
+    ├── FilesScreen                  working-directory picker
+    └── SessionScreen                events, prompts, files, composer
+         │
+         ▼
+    RemotexViewModel                 session state machine and reducer
+    ├── RelayClient                  REST
+    ├── InventorySocket              `/ws/inventory` invalidations
+    ├── SessionSocket                `/ws/client` event stream
+    ├── SecureTokenStore             relay-scoped Android Keystore storage
+    ├── ActiveSessionStore           scoped session id/thread/replay cursor
+    └── SessionForegroundService     running-turn lifecycle + notifications
 ```
 
-`RemotexViewModel.kt` is a deliberate mirror of
-`apps/web/src/hooks/useRemotex.js` — same event reducer, same state
-shape. Changing frame handling in one usually means changing it in both.
-That includes the pending-prompt queues (`pendingApprovals` /
-`pendingUserInputs`: every unanswered prompt is kept in arrival order and
-only the head is rendered) and the `replay-gap` marker the relay sends
-when its replay buffer no longer covers a reconnecting client's cursor.
+`RemotexViewModel.kt` deliberately mirrors
+`apps/web/src/hooks/useRemotex.js`: frame semantics, pending-prompt queues,
+replay cursors, and turn state must remain compatible across clients.
 
-## CI
+## Tests and CI
 
-`.github/workflows/ci.yml` has an `android` job on every push / PR to
-`main`:
+The smallest complete local check is:
 
-1. `actions/setup-java@v4` with Temurin 17.
-2. `android-actions/setup-android@v3`, then `sdkmanager` installs
-   `platforms;android-35`, `build-tools;34.0.0`, `platform-tools`.
-3. `~/.gradle` cache keyed on the wrapper + gradle file hashes.
-4. `./gradlew assembleDebug --no-daemon --stacktrace`.
-5. Uploads `app-debug.apk` as a workflow artifact — grab it from the
-   Actions run summary without a local toolchain.
-6. `./gradlew test` (JVM unit tests) and `./gradlew lint`. A lint failure
-   uploads `android/app/build/reports/` as an artifact, since the summary
-   line alone never says which file.
+```bash
+cd android
+./gradlew test lint assembleDebug
+```
 
-Failing any of those fails the PR status check.
+JVM tests cover REST/WebSocket shapes, inventory invalidation, provider-scoped
+token behavior, content-size handling, prompt ordering, reducer parity, and
+composer behavior. `androidTest` contains release-critical Compose flows for a
+device or emulator.
+
+On pushes and pull requests, CI builds the debug APK, runs the JVM suite and
+lint, and uploads the APK or lint report as appropriate. Stable tags and
+nightly publishing run tests and lint again, restore the release key, build a
+provider-neutral signed APK, and publish it through the single atomic release
+job.
 
 ## Current limits
 
-- Authentication is still a compiled relay URL plus manually entered bearer
-  token; OIDC is not implemented.
-- Completion notifications are local. There is no FCM service for approval
-  requests while the app is fully offline.
-- The client presents one active session at a time.
-- Relay changes require rebuilding and reinstalling the APK.
+- Authentication is still a long-lived relay bearer token; OIDC is not
+  implemented.
+- There is no FCM delivery for approvals while the app is fully stopped.
+- One native session is presented at a time, and its local follow-up queue is
+  not shared with other attached clients.
+- Releases currently publish a universal sideload APK, not a Play Store AAB.

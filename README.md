@@ -5,7 +5,7 @@
 # Remotex
 
 Remotex lets you control Codex sessions running on your own machines from
-a browser, Android app, or iPhone app. The machine running Codex can sit
+a browser, Android app, iPhone app, or Windows desktop app. The machine running Codex can sit
 behind NAT, CGNAT, VPNs, or firewalls because it never needs an inbound
 port: both the client and the host daemon dial out to a relay you control.
 
@@ -15,6 +15,7 @@ port: both the client and the host daemon dial out to a relay you control.
 flowchart TB
     subgraph clients["clients"]
         W["Web client<br/><code>apps/web/</code>"]
+        E["Windows desktop<br/><code>apps/desktop/</code>"]
         A["Android app<br/><code>android/</code>"]
         I["iPhone app<br/><code>apple/</code>"]
     end
@@ -24,6 +25,7 @@ flowchart TB
     P["Postgres<br/><code>deploy/docker-compose.yml</code>"]
 
     W -- "HTTPS + WSS<br/>user bearer token" --> R
+    E -- "HTTPS + WSS<br/>user bearer token" --> R
     A -- "HTTPS + WSS<br/>user bearer token" --> R
     I -- "HTTPS + WSS<br/>user bearer token" --> R
     D == "outbound WSS<br/>bridge token" ==> R
@@ -34,7 +36,7 @@ flowchart TB
     classDef relayNode fill:#14171d,stroke:#7dc87d,color:#e8dfd0;
     classDef daemonNode fill:#14171d,stroke:#5f8fb0,color:#e8dfd0;
     classDef codexNode fill:#0d0f13,stroke:#9a958a,color:#9a958a;
-    class W,A,I clientNode;
+    class W,E,A,I clientNode;
     class R,P relayNode;
     class D daemonNode;
     class X codexNode;
@@ -68,7 +70,7 @@ different need:
 
 - You operate the relay and Postgres database.
 - Linux workstations are first-class daemon hosts.
-- The web, Android, and iPhone clients are part of this repository and can be
+- The web, Windows, Android, and iPhone clients are part of this repository and can be
   changed with the protocol.
 - Host telemetry, direct workspace-file operations, normalized event fan-out,
   and custom session controls belong to the Remotex product surface.
@@ -116,8 +118,9 @@ The three surfaces side-by-side (click to view full size):
   </tr>
 </table>
 
-Build Android with the wrapper so the APK receives a relay URL reachable from
-the target device:
+Public Android releases start without an operator URL and ask for the user's
+relay. For local development, the wrapper supplies a reachable starting URL;
+it remains editable in the app:
 
 ```bash
 cd android
@@ -131,7 +134,7 @@ cd android
    token, hostname, platform, and nickname.
 2. The relay validates the bridge token, marks that host online, and
    replies with `welcome`.
-3. A web, Android, or iPhone client calls `GET /api/hosts` with a user
+3. A web, Windows, Android, or iPhone client calls `GET /api/hosts` with a user
    token and chooses an online host. Picking a host also fetches
    `GET /api/hosts/{host_id}/models`, which asks that host's Codex what it
    actually offers; if the host cannot supply it, the fallback entry leaves
@@ -160,7 +163,9 @@ sent later as an ordinary `turn-start`, after the active turn completes.
 
 ```text
 remotex/
-├── apps/web/              React + Vite control-plane web client
+├── apps/
+│   ├── web/               React + Vite control-plane web client
+│   └── desktop/           secure Electron shell for Windows
 ├── android/               Kotlin + Jetpack Compose native client
 ├── apple/                 SwiftUI iPhone client
 ├── services/
@@ -173,20 +178,42 @@ remotex/
 │   ├── docker-compose.yml
 │   └── Caddyfile          optional TLS reverse proxy
 ├── docs/                  logo and real product screenshots
-└── .github/workflows/     CI for web, Python, Android, and iPhone
+└── .github/workflows/     CI and multi-platform release automation
 ```
 
 More detail lives in the subproject READMEs:
 
 - [`apps/web/README.md`](apps/web/README.md)
+- [`apps/desktop/README.md`](apps/desktop/README.md)
 - [`android/README.md`](android/README.md)
 - [`apple/README.md`](apple/README.md)
 - [`services/README.md`](services/README.md)
 - [`deploy/README.md`](deploy/README.md)
 
+## Client releases
+
+[GitHub Releases](https://github.com/CesarPetrescu/remotex/releases) provides
+stable semver builds and a rolling `nightly`:
+
+| Platform | Assets | Trust / signing note |
+| --- | --- | --- |
+| Android | Signed universal APK | Release-key signed. Builds before `v0.2.0` used the Android debug key, so uninstall one of those old APKs once before installing the new signing line. |
+| Windows x64 | NSIS setup and portable `.exe` | Not Authenticode-signed yet; SmartScreen may show an unknown publisher. |
+| iPhone | Unsigned `.ipa` | Must be re-signed with the user's Apple identity before installation. It is not an App Store build. |
+
+Every release also includes `SHA256SUMS.txt`, and the workflow creates GitHub
+build-provenance attestations for the published files. Public mobile and
+desktop builds are provider-neutral: they contain no maintainer relay URL and
+no demo token. Enter the HTTPS URL and bearer token supplied by the operator
+of the relay you intend to use.
+
+The Android release key is the app's upgrade identity. A relay operator who
+forks the release workflow must back up their own keystore and credentials;
+losing that key means future APKs cannot upgrade its installed builds.
+
 ## Quick Start
 
-### 1. Start the Relay and Postgres
+### 1. Start the Relay and Postgres for loopback development
 
 The relay stores its inventory in Postgres and **will not start without
 `RELAY_DATABASE_URL`**. For local development, run one:
@@ -305,7 +332,27 @@ npm run dev
 Open <http://localhost:5174>. The Vite dev server proxies `/api/*` and
 `/ws/*` to the relay on `127.0.0.1:8080`.
 
-### 4. Build the Android App
+### 4. Run the Windows App
+
+The simplest path is the NSIS installer or portable executable from
+[GitHub Releases](https://github.com/CesarPetrescu/remotex/releases). On first
+launch, enter the HTTPS base URL serving your Remotex web app. The shell
+persists that origin and can switch it later through **Relay -> Change Relay**.
+
+For development:
+
+```bash
+cd apps/desktop
+npm ci
+npx electron .
+```
+
+The shell loads the selected relay's web UI with Chromium sandboxing, context
+isolation, no Node integration, and an exact-origin navigation allowlist. See
+[`apps/desktop/README.md`](apps/desktop/README.md) for the security model and
+Windows packaging commands.
+
+### 5. Build the Android App
 
 ```bash
 cd android
@@ -313,23 +360,24 @@ cp local.properties.example local.properties
 ./build.sh install
 ```
 
-`build.sh` is the supported path: it detects your LAN IP and relay port
-and bakes the right URL into the APK. Bare Gradle defaults to
+`build.sh` is the supported local-development path: it detects your LAN IP and
+relay port and supplies a useful initial URL. Bare Gradle debug builds default to
 `http://10.0.2.2:8080`, which only works from an emulator — a real phone
-built that way will hang on "connecting…".
+built that way starts with the wrong address. The relay URL is editable at
+runtime, so changing providers no longer requires a reinstall.
 
 ```bash
 ./gradlew assembleDebug                                    # emulator only
 ./gradlew assembleDebug -PrelayUrl=https://relay.example.com   # explicit URL
 ```
 
-Plain `http://` relay URLs only work in **debug** builds: the app ships a
-network security config, and the release build type refuses cleartext
-outright. A release APK needs an `https://` relay.
+Public release APKs contain an empty initial URL and ask for the user's relay
+and token. Plain `http://` relay URLs only work in **debug** builds: the release
+network policy requires HTTPS.
 
 See [`android/README.md`](android/README.md) for the details.
 
-### 5. Run the iPhone App
+### 6. Run the iPhone App
 
 Open the Xcode project and run it on an iPhone simulator:
 
@@ -337,15 +385,19 @@ Open the Xcode project and run it on an iPhone simulator:
 open apple/Remotex.xcodeproj
 ```
 
-The iOS simulator can reach a relay running on the same Mac at
-`http://localhost:8080` (the app's default). For a real iPhone, enter a
-LAN or public relay URL in the app. App Transport Security is not
+The app starts without a provider URL or demo token. The iOS simulator can
+reach a relay running on the same Mac after you enter
+`http://localhost:8080`; for a real iPhone, enter a LAN or public relay URL.
+App Transport Security is not
 globally disabled: `NSAllowsLocalNetworking` plus a `localhost` exception
 allow plain `http://` to a relay on the same Mac, a `.local` name, or a
 private LAN address, while a plaintext relay on a *public* address stays
 blocked — put that behind HTTPS.
 
-### 6. Add TLS for a Public Relay
+The bearer token is stored in the Keychain under a relay-scoped account, so
+switching providers cannot silently reuse the previous relay's credential.
+
+### 7. Add TLS for a Public Relay
 
 ```bash
 cd deploy
@@ -376,10 +428,34 @@ docker compose --profile tls up -d --build
 | Real Codex bridge | Working through isolated app-server stdio or opt-in shared WebSocket-over-UDS |
 | Mock adapter | Working for tests and offline demos |
 | Web client | Live host/thread inventory, open/resume, text/images, FIFO queue or active-turn steer, streamed events, approvals/input prompts, Codex-resolved settings, slash commands, goals, files, all NVIDIA GPUs, and Dark/White/High Contrast themes |
-| Android client | At parity with web apart from push: hosts, thread resume, events, turns, images, model/effort/permissions, approvals, user-input, slash commands, goals, files, interrupt, reconnect, background notifications |
-| iPhone client | Starter SwiftUI app; lists hosts, opens sessions, sends text turns, streams events, answers queued approval/user-input prompts, keeps its token in the Keychain |
+| Windows client | Secure Electron shell around the selected relay's web UI; same product surface as web, provider-selectable on first launch |
+| Android client | Native host/thread inventory, open/resume and paged history, text/images, FIFO queue or active-turn steer, settings, approvals/input, slash commands/goals, files, telemetry, process/session restore, interrupt, local notifications, and Dark/Light/High Contrast themes |
+| iPhone client | Live host/thread inventory, cwd selection, resume and paged history, text/images, FIFO queue or steer, model/effort/permissions, approvals/input, slash commands/goals, writable workspace files, telemetry, provider-scoped process/session restore, interrupt/reconnect, local completion notifications, relay-scoped Keychain credentials, and Dark/Light/High Contrast themes |
 | Docker Compose | Working relay + web bundle, Postgres inventory store, optional Caddy TLS or outbound SparkTunnel ingress |
-| CI | ESLint, Vite build, vitest, npm audit, Ruff, pytest, relay↔daemon e2e, Android debug APK + JVM tests + lint, iPhone simulator build |
+| CI | Web lint/build/vitest/audit, Electron tests/audit + Windows packaging, Ruff/pytest/dependency audit/relay↔daemon e2e, Android APK/JVM/lint/emulator UI tests, and iPhone simulator build + XCTest |
+
+## What local Codex still does that Remotex does not
+
+Remotex covers the core remote session path: new/resumed chats, model and
+effort, permissions, plan/default modes, goals, cwd changes, compaction,
+images, approvals, user-input prompts, steering, stopping, history, files, and
+host telemetry. It is not yet a complete replacement for every control in the
+local Codex TUI. An audit against the host's installed Codex `0.147.0` found
+these important remaining differences (plugins and skills intentionally
+excluded):
+
+| Local Codex feature | Remotex today |
+| --- | --- |
+| Structured `/review` targets and aggregate `/diff` | You can ask for a review in chat and see individual file-change items, but there is no branch/commit/uncommitted review picker or cumulative turn diff view. |
+| `/rename`, `/archive`, `/delete`, `/fork`, `/side`/`/btw`, and `/agent` | Remotex can create and resume sessions and renders sub-agent activity, but it cannot manage thread metadata, make ephemeral side forks, or switch the active agent thread. (`thread/delete` also has an upstream Codex 0.147 bug tracked as `I-019`.) |
+| `@` file mention and `/ide` context | Remotex has images, a cwd picker, and workspace files, but no fuzzy file-mention autocomplete or current IDE selection/open-file context. |
+| `/ps` and `/stop` background-terminal management | Agent-started command output streams remotely, but there is no separate remote terminal/process list or stop-all-background-terminals control. |
+| Full `/status` and `/usage` | Remotex shows resolved session settings, per-thread token totals, goal budget, and host hardware telemetry; it does not show account quota/reset/credits or the complete layered Codex configuration. |
+| `/copy`, `/export`, and raw scrollback | Tool output can be copied, but there is no one-action copy-last-response, Markdown transcript export, or copy-friendly raw transcript mode. |
+| Host-side `/mcp`, hooks, memories, personality, and experimental settings | The host's configured capabilities still work inside Codex turns, but Remotex has no remote management UI for them. Authentication/logout and global Codex configuration intentionally remain host-local. |
+
+The app-server already exposes much of this protocol surface, so these are
+product backlog items rather than reasons to reimplement Codex.
 
 ## Protocol Surface
 
@@ -399,10 +475,11 @@ with `session_id` and `client_id` stamped on by the relay.
 | `turn-start` | client -> daemon | Send user input (text, images, model, effort, permissions) |
 | `turn-steer` | client -> daemon | Add input to the active Codex turn |
 | `turn-interrupt` | client -> daemon | Interrupt the active Codex turn |
+| `history-more` | client -> daemon | Request an older page of rollout turns |
 | `approval-response` | client -> daemon | Resolve a Codex approval request |
 | `user-input-response` | client -> daemon | Answer a Codex user-input prompt |
 | `slash-command` | client -> daemon | `/plan`, `/default`, `/cd`, `/pwd`, `/compact`, `/goal`, `/collab` |
-| `goal-get` / `goal-set` / `goal-clear` | client -> daemon | Thread goal control |
+| `goal-get` / `goal-set` / `goal-clear` | client -> daemon | Direct thread-goal control from native clients |
 | `session-event` | daemon -> client | Stream a normalized Codex event (sequenced) |
 | `approval-resolved` / `user-input-resolved` | relay -> client | Tell other peers a prompt was answered |
 | `host-telemetry` | daemon -> relay -> client | CPU / memory / GPU / network samples |
@@ -411,10 +488,12 @@ with `session_id` and `client_id` stamped on by the relay.
 | `session-closed` | daemon -> client | End the session |
 | `ping` / `pong` | either way | Keepalive; also marks the session active |
 
-The web client's follow-up queue is intentionally not a wire frame. Codex has
-no queue RPC: the browser retains FIFO items locally, then sends one ordinary
+The clients' follow-up queues are intentionally not wire frames. Codex has no
+queue RPC: a client retains FIFO items locally, then sends one ordinary
 `turn-start` after `turn-completed`. Use **Steer** to affect the running turn
-immediately, or **Queue** to start a separate turn afterward.
+immediately, or **Queue** to start a separate turn afterward. Local queues do
+not synchronize between devices and are discarded when their client closes
+the session.
 
 `session-event` kinds: `session-started`, `turn-started`, `turn-completed`,
 `item-started`, `item-delta`, `item-patch`, `item-completed`, `steer-failed`,
@@ -441,12 +520,15 @@ These are the main items before exposing Remotex to untrusted users:
    revoke exist now; provenance and lifetime don't.
 3. Add audit retention and metrics dashboards (audit lines are emitted
    on `logger=audit`; nothing ships them anywhere durable).
-4. Bring the iPhone app to Android feature parity: thread resume, images,
-   model/effort controls, permissions, interrupt, and reconnect backoff.
-5. Add mobile push notifications for approval requests.
-6. Add end-to-end fault tests for a real slow consumer being closed with 1013
-   and a client starting a turn while its selected host is offline. Daemon
-   disconnect and shared-session recovery paths already have focused coverage.
+4. Add mobile push notifications for approvals that arrive while an app is
+   fully closed. Android's foreground-service notifications and iPhone's
+   app-alive completion notification are local; no relay-to-FCM/APNs path
+   exists.
+5. Code-sign the Windows executables with Authenticode and provision the
+   iPhone app for normal installation or App Store/TestFlight distribution.
+6. Add an end-to-end test that drives a genuinely slow network consumer to a
+   1013 close. Daemon disconnect and host-offline turn recovery already have
+   focused coverage.
 7. Decide whether to keep pursuing custom remote-control features now that
    official Codex Remote Connections covers the mainstream hosted path.
 
@@ -462,6 +544,9 @@ client is its own npm project under `apps/web`.
 # Web
 (cd apps/web && npm ci && npm run lint && npm run test:run && npm run build)
 
+# Windows desktop shell (pack:win is canonical on Windows/CI)
+(cd apps/desktop && npm ci && npm run lint && npm test && npm audit)
+
 # Python — lint + unit tests need no database
 (cd services && pip install -r requirements-dev.txt && ruff check . && pytest tests -v)
 
@@ -472,8 +557,9 @@ client is its own npm project under `apps/web`.
 # Android
 (cd android && ./gradlew assembleDebug && ./gradlew test && ./gradlew lint)
 
-# iPhone
+# iPhone build + XCTest (use an installed simulator name for test)
 (xcodebuild -project apple/Remotex.xcodeproj -scheme Remotex -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build)
+(xcodebuild -project apple/Remotex.xcodeproj -scheme Remotex -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' CODE_SIGNING_ALLOWED=NO test)
 ```
 
 The screenshots under `docs/screenshots/` were captured by hand against a
@@ -485,11 +571,12 @@ disposable database.
 
 ## Status
 
-`v0.1` - the relay, daemon, real Codex bridge, web client, Android client,
-iPhone starter, Docker deployment, and CI all have working vertical slices.
-The project is usable for self-hosted development, but it still needs
-production authentication, durable live relay state, audit retention, and
-broader failure coverage before public use.
+The `v0.2` line adds provider-neutral native clients, a Windows Electron app,
+release-signed Android APKs, multi-platform release automation, and a much
+closer mobile feature match to the web client. The project is usable for
+self-hosted development and trusted small deployments, but it still needs
+production authentication, durable live relay state, audit retention, signed
+Windows/iPhone distribution, and broader failure coverage before public use.
 
 ## License
 
@@ -515,7 +602,9 @@ docker compose -f docker-compose.yml -f docker-compose.sparktunnel.yml \
   --profile sparktunnel up -d --build
 ```
 
-The default target is the private `http://relay:8080` Compose address. See the
+The default target is the private `http://relay:8080` Compose address. The
+override also retains a loopback-only `127.0.0.1:19080` endpoint so a daemon on
+the relay host does not hairpin through the public tunnel. See the
 [deployment guide](deploy/README.md#publish-through-sparktunnel) for the full
 setup and security notes. The profile forces `RELAY_TRUST_PROXY=0` because
 SparkTunnel 0.2.0 preserves spoofable forwarding headers instead of supplying

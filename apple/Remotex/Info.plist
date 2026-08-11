@@ -38,6 +38,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Remotex connects to a relay you run on your local network.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>
@@ -48,4 +50,3 @@
 	</array>
 </dict>
 </plist>
-

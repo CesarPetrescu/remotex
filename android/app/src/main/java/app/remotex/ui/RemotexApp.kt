@@ -29,6 +29,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,7 +56,9 @@ fun RemotexApp(
     relayUrl: String,
     onRelayUrlChange: (String) -> Unit = {},
     darkTheme: Boolean = true,
+    highContrast: Boolean = false,
     onToggleTheme: () -> Unit = {},
+    onSessionOpened: () -> Unit = {},
 ) {
     val context = LocalContext.current
     // Keyed on the URL: changing it in settings builds a fresh ViewModel
@@ -66,7 +71,9 @@ fun RemotexApp(
     val state by vm.state.collectAsState()
     var telemetryOpen by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { vm.refresh() }
+    LaunchedEffect(state.session?.sessionId) {
+        if (state.session != null) onSessionOpened()
+    }
 
     BackHandler(enabled = state.screen == Screen.Session) { vm.goToThreads() }
     BackHandler(enabled = state.screen == Screen.Files) { vm.goToThreads() }
@@ -76,6 +83,7 @@ fun RemotexApp(
     val currentState by rememberUpdatedState(state)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) vm.reconnectInventoryNow()
             if (event == Lifecycle.Event.ON_START &&
                 currentState.screen == Screen.Session &&
                 currentState.status != Status.Connected &&
@@ -106,6 +114,7 @@ fun RemotexApp(
                     onModelChange = vm::setModel,
                     onEffortChange = vm::setEffort,
                     darkTheme = darkTheme,
+                    highContrast = highContrast,
                     onToggleTheme = onToggleTheme,
                     onOpenTelemetry = { telemetryOpen = true },
                 )
@@ -118,7 +127,10 @@ fun RemotexApp(
                         state = state,
                         onTokenChange = vm::setToken,
                         relayUrl = relayUrl,
-                        onRelayUrlChange = onRelayUrlChange,
+                        onRelayUrlChange = { next ->
+                            if (next != relayUrl) vm.releaseForRelayChange()
+                            onRelayUrlChange(next)
+                        },
                         onRefresh = vm::refresh,
                         onHostTap = vm::openHost,
                         onModelChange = vm::setModel,
@@ -145,6 +157,8 @@ fun RemotexApp(
                         onSend = vm::sendTurn,
                         onStop = vm::interruptTurn,
                         onSteer = vm::steerTurn,
+                        onQueue = vm::queueTurn,
+                        onRemoveQueued = vm::removeQueuedTurn,
                         onLoadOlder = vm::loadOlderHistory,
                         onAttachImage = vm::attachImage,
                         onRemoveImage = vm::removeImage,
@@ -185,7 +199,8 @@ fun RemotexApp(
                         shape = RectangleShape,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(bottom = 140.dp, start = 12.dp, end = 12.dp),
+                            .padding(bottom = 140.dp, start = 12.dp, end = 12.dp)
+                            .semantics { liveRegion = LiveRegionMode.Polite },
                     ) {
                         Text(
                             msg,
@@ -203,7 +218,8 @@ fun RemotexApp(
                         shape = RectangleShape,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(12.dp),
+                            .padding(12.dp)
+                            .semantics { liveRegion = LiveRegionMode.Assertive },
                     ) {
                         Text(
                             err,

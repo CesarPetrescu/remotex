@@ -25,6 +25,16 @@ export const STATUS = {
   Error: 'error',
 };
 
+// Codex omits `decisions` when every approval response is allowed. Keep the
+// fallback in one web-client constant so normalization and rendering cannot
+// drift apart.
+export const DEFAULT_APPROVAL_DECISIONS = [
+  'accept',
+  'acceptForSession',
+  'decline',
+  'cancel',
+];
+
 // Single client-side ceiling for anything that travels as bytes — image
 // attachments (base64 inside a turn-start frame) and workspace uploads.
 // Mirrors the relay/daemon REMOTEX_MAX_FILE_BYTES default (25 MB); the

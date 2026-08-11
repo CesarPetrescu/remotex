@@ -3,6 +3,7 @@ package app.remotex.ui
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import app.remotex.BuildConfig
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -11,13 +12,21 @@ import app.remotex.model.FsEntry
 import app.remotex.model.Host
 import app.remotex.model.HostTelemetryData
 import app.remotex.model.HostTelemetrySnapshot
+import app.remotex.model.HostTelemetrySample
 import app.remotex.model.ModelInfo
 import app.remotex.model.TelemetryHistory
 import app.remotex.model.ThreadInfo
 import app.remotex.model.UiEvent
+import app.remotex.persistence.ActiveSession
+import app.remotex.persistence.ActiveSessionStore
 import app.remotex.net.RelayClient
+import app.remotex.net.InventorySocket
+import app.remotex.net.normalizeRelayBaseUrl
 import app.remotex.net.SessionSocket
 import app.remotex.net.SocketEvent
+import app.remotex.security.SecureTokenStore
+import app.remotex.security.TokenStore
+import app.remotex.security.relayScopeKey
 import app.remotex.service.RemotexEvents
 import app.remotex.service.SessionForegroundService
 import app.remotex.service.SessionNotifier
@@ -25,6 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -79,6 +89,7 @@ internal fun attachedStatus(msg: JsonObject): Status =
 data class SessionInfo(
     val sessionId: String,
     val hostId: String,
+    val threadId: String? = null,
     val model: String? = null,
     val cwd: String? = null,
     val kind: String = "codex",
@@ -91,6 +102,19 @@ data class PendingImage(
     val label: String,    // short filename for display
     val bytes: Long = 0L, // decoded size, for the attachment ceiling
 )
+
+data class QueuedTurn(
+    val id: String,
+    val clientMessageId: String,
+    val text: String,
+    val model: String,
+    val effort: String,
+    val permissions: PermissionsMode,
+    val images: List<PendingImage> = emptyList(),
+    val sending: Boolean = false,
+) {
+    val imageCount: Int get() = images.size
+}
 
 data class ApprovalPrompt(
     val approvalId: String,
@@ -146,7 +170,7 @@ enum class PermissionsMode(val wire: String, val label: String, val hint: String
 
 data class UiState(
     val screen: Screen = Screen.Hosts,
-    val userToken: String = "demo-user-token",
+    val userToken: String = "",
     val hosts: List<Host> = emptyList(),
     val selectedHostId: String? = null,
     val loading: Boolean = false,
@@ -176,6 +200,7 @@ data class UiState(
     val favorites: List<String> = emptyList(),  // pinned cwd paths (per host)
     val recents: List<String> = emptyList(),    // recently-used cwd paths (per host)
     val pendingImages: List<PendingImage> = emptyList(),
+    val queuedTurns: List<QueuedTurn> = emptyList(),
     val permissions: PermissionsMode = PermissionsMode.Default,
     /** Every unanswered approval, in arrival order (contract F). A second
      *  concurrent prompt queues behind the first instead of replacing it. */
@@ -380,11 +405,108 @@ fun parseUserInputPrompt(data: JsonObject): UserInputPrompt? {
     )
 }
 
-class RemotexViewModel(
+internal fun applyResolvedSettings(state: UiState, settings: JsonObject?): UiState {
+    if (settings == null) return state
+    val permissions = settings.string("permissions")?.let { wire ->
+        PermissionsMode.entries.firstOrNull { it.wire == wire }
+    }
+    return state.copy(
+        model = settings.string("model")?.takeIf { it.isNotBlank() } ?: state.model,
+        effort = settings.string("effort")?.takeIf { it.isNotBlank() } ?: state.effort,
+        permissions = permissions ?: state.permissions,
+    )
+}
+
+internal fun applySessionDetails(state: UiState, data: JsonObject): UiState {
+    val base = state.copy(
+        session = state.session?.copy(
+            threadId = data.string("thread_id") ?: state.session.threadId,
+            model = data.string("model") ?: state.session.model,
+            cwd = data.string("cwd") ?: state.session.cwd,
+            kind = data.string("kind") ?: state.session.kind,
+        ),
+    )
+    val settings = data.obj("settings")
+    val resolved = applyResolvedSettings(base, settings)
+    if (!settings?.string("model").isNullOrBlank()) return resolved
+    return data.string("model")?.takeIf { it.isNotBlank() }
+        ?.let { resolved.copy(model = it) } ?: resolved
+}
+
+internal fun applyTurnCompletion(state: UiState, data: JsonObject): UiState = state.copy(
+    pending = false,
+    pendingApprovals = emptyList(),
+    pendingUserInputs = emptyList(),
+    error = data.string("error") ?: state.error,
+)
+
+internal fun applyFatalSessionError(state: UiState, error: String): UiState = state.copy(
+    status = Status.Disconnected,
+    pending = false,
+    error = error,
+    queuedTurns = emptyList(),
+)
+
+internal fun previewEventId(threadId: String, index: Int): String = "preview_${threadId}_$index"
+
+internal fun reconcileSharedTurn(state: UiState, active: Boolean?): UiState = when (active) {
+    true -> state.copy(pending = true)
+    false -> state.copy(
+        pending = false,
+        pendingApprovals = emptyList(),
+        pendingUserInputs = emptyList(),
+    )
+    null -> state
+}
+
+internal fun markQueuedTurnSending(queue: List<QueuedTurn>, id: String): List<QueuedTurn> =
+    queue.map { if (it.id == id) it.copy(sending = true) else it }
+
+internal fun resetSendingQueuedTurn(queue: List<QueuedTurn>): List<QueuedTurn> =
+    queue.mapIndexed { index, turn ->
+        if (index == 0 && turn.sending) turn.copy(sending = false) else turn
+    }
+
+internal fun acknowledgeQueuedTurn(
+    queue: List<QueuedTurn>,
+    clientMessageId: String,
+): List<QueuedTurn> = queue.filterNot { it.clientMessageId == clientMessageId }
+
+internal fun buildTurnStartFrame(turn: QueuedTurn): String = Json.encodeToString(
+    JsonObject.serializer(),
+    buildJsonObject {
+        put("type", "turn-start")
+        put("input", turn.text)
+        put("client_message_id", turn.clientMessageId)
+        if (turn.model.isNotEmpty()) put("model", turn.model)
+        if (turn.effort.isNotEmpty() && turn.effort != "none") put("effort", turn.effort)
+        put("permissions", turn.permissions.wire)
+        if (turn.images.isNotEmpty()) {
+            put("images", buildJsonArray {
+                turn.images.forEach { image ->
+                    addJsonObject {
+                        put("mime", image.mime)
+                        put("data", image.base64)
+                    }
+                }
+            })
+        }
+    },
+)
+
+class RemotexViewModel internal constructor(
     application: Application,
     private val relayUrl: String,
+    private val tokenStore: TokenStore = SecureTokenStore(application, relayScopeKey(relayUrl)),
+    private val activeSessionStore: ActiveSessionStore = ActiveSessionStore(
+        application,
+        relayScopeKey(relayUrl),
+    ),
 ) : AndroidViewModel(application) {
-    private val client = RelayClient(baseUrl = relayUrl)
+    private val client = RelayClient(
+        baseUrl = relayUrl,
+        allowInsecureHttp = BuildConfig.DEBUG,
+    )
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -427,22 +549,114 @@ class RemotexViewModel(
     private var telemetryJob: Job? = null
     private var telemetryHostId: String? = null
     private var modelFetchJob: Job? = null
+    private var tokenSaveJob: Job? = null
+    private var activeSessionSaveJob: Job? = null
+    private var tokenEdited = false
+    private var inventorySocket: InventorySocket? = null
+    private var inventorySocketJob: Job? = null
+    private var inventoryReconnectJob: Job? = null
+    private var inventoryHostRefreshJob: Job? = null
+    private var inventoryThreadRefreshJob: Job? = null
+    private var inventoryReconnectAttempt = 0
+    private var inventoryClosed = true
     // Host whose model list is currently in state; keeps repeated host
     // selections from re-fetching the same list.
     private var modelOptionsHostId: String? = null
     private val clientId: String = "android-${UUID.randomUUID().toString().take(12)}"
+    private val inventoryClientId: String = "inventory-$clientId"
     private val lastSeqBySession: MutableMap<String, Long> = mutableMapOf()
+    private val sentImagesByMessageId: MutableMap<String, List<String>> = mutableMapOf()
 
     fun setToken(token: String) {
+        tokenEdited = true
+        stopInventory()
         _state.update { it.copy(userToken = token) }
+        tokenSaveJob?.cancel()
+        tokenSaveJob = viewModelScope.launch {
+            if (token.isNotBlank()) delay(350L)
+            persistToken(token)
+        }
     }
 
     init {
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) { tokenStore.load() }
+            if (!tokenEdited && saved.isNotBlank()) {
+                _state.update { it.copy(userToken = saved) }
+                if (normalizeRelayBaseUrl(relayUrl, BuildConfig.DEBUG).isSuccess) {
+                    val active = withContext(Dispatchers.IO) { activeSessionStore.load() }
+                    if (active != null) restoreActiveSession(active)
+                }
+                refresh()
+            }
+        }
         // No host picked yet, so this can only reach the hostless default
         // list; selecting a host re-asks that host (see [refreshModelOptions]).
-        refreshModelOptions(null)
+        if (normalizeRelayBaseUrl(relayUrl, BuildConfig.DEBUG).isSuccess) refreshModelOptions(null)
         observePendingForNotifications()
         observeNotificationActions()
+    }
+
+    private fun restoreActiveSession(active: ActiveSession) {
+        userClosed = false
+        _lastResumeThreadId = active.threadId
+        lastSeqBySession[active.sessionId] = active.lastSeq
+        _state.update {
+            it.copy(
+                screen = Screen.Session,
+                selectedHostId = active.hostId,
+                session = SessionInfo(
+                    sessionId = active.sessionId,
+                    hostId = active.hostId,
+                    threadId = active.threadId,
+                ),
+                status = Status.Connecting,
+                pending = false,
+                error = null,
+            )
+        }
+        onHostSelected(active.hostId)
+        attachSocket(active.sessionId)
+    }
+
+    /** Throttle cursor writes during token-delta bursts. A slightly stale
+     * cursor is safe (event ids are deduplicated); an absent cursor is not,
+     * because it makes process recreation depend on the relay's full tail. */
+    private fun persistActiveSessionSoon() {
+        if (activeSessionSaveJob?.isActive == true) return
+        activeSessionSaveJob = viewModelScope.launch {
+            delay(250L)
+            saveActiveSessionNow()
+        }
+    }
+
+    private fun saveActiveSessionNow() {
+        val session = _state.value.session ?: return
+        activeSessionStore.save(
+            ActiveSession(
+                sessionId = session.sessionId,
+                hostId = session.hostId,
+                threadId = session.threadId ?: _lastResumeThreadId,
+                lastSeq = lastSeqBySession[session.sessionId] ?: 0L,
+            ),
+        )
+    }
+
+    private fun clearActiveSession() {
+        activeSessionSaveJob?.cancel()
+        activeSessionSaveJob = null
+        activeSessionStore.clear()
+    }
+
+    private suspend fun persistToken(token: String): Boolean = try {
+        withContext(Dispatchers.IO) {
+            if (token.isBlank()) tokenStore.clear() else tokenStore.save(token)
+        }
+        true
+    } catch (cause: Throwable) {
+        if (cause is CancellationException) throw cause
+        _state.update { it.copy(error = "Could not save the access token securely.") }
+        false
     }
 
     /**
@@ -525,7 +739,7 @@ class RemotexViewModel(
                         chatTitle = title,
                         hostNickname = hostNick,
                         hostId = s.session?.hostId,
-                        threadId = s.session?.let { extractThreadId(it.sessionId, s) },
+                        threadId = extractThreadId(s),
                     )
                 } else if (!nowPending && prevPending) {
                     SessionForegroundService.stop(getApplication())
@@ -536,7 +750,7 @@ class RemotexViewModel(
                             chatTitle = title,
                             hostNickname = hostNick,
                             hostId = s.session?.hostId,
-                            threadId = s.session?.let { extractThreadId(it.sessionId, s) },
+                            threadId = extractThreadId(s),
                             tokensIn = s.tokensInput + s.tokensCached,
                             tokensOut = s.tokensOutput + s.tokensReasoning,
                         )
@@ -571,7 +785,7 @@ class RemotexViewModel(
         val hostNick = s.hosts.firstOrNull { it.id == s.session?.hostId }?.nickname
             ?: s.session?.hostId?.take(12) ?: "host"
         // Match thread by best-known id; otherwise show the session prefix.
-        val threadId = s.session?.let { extractThreadId(it.sessionId, s) }
+        val threadId = extractThreadId(s)
         val chatTitle = threadId?.let { tid ->
             s.threads.firstOrNull { it.id == tid }?.let { thread ->
                 thread.title?.takeIf { it.isNotBlank() } ?: thread.preview.take(40)
@@ -580,18 +794,8 @@ class RemotexViewModel(
         return chatTitle to hostNick
     }
 
-    /**
-     * The current SessionInfo doesn't carry the codex thread id directly,
-     * so we infer it from the threads list (most-recently opened thread
-     * for this host). If we have no match, return null and notification
-     * deep-links fall back to "open the app at last screen".
-     */
-    private fun extractThreadId(sessionId: String, s: UiState): String? {
-        // openSession stashes the resume_thread_id into our local
-        // resumingTarget; we don't currently track it on SessionInfo,
-        // so fall back to whatever thread we last resumed.
-        return _lastResumeThreadId
-    }
+    private fun extractThreadId(s: UiState): String? =
+        s.session?.threadId ?: _lastResumeThreadId
 
     private var _lastResumeThreadId: String? = null
 
@@ -684,6 +888,7 @@ class RemotexViewModel(
      *  snapshot, which puts the prompt back. */
     fun resolveApproval(decision: String) {
         val pending = _state.value.pendingApproval ?: return
+        if (decision !in pending.decisions) return
         val sock = socket ?: return
         val frame = Json.encodeToString(
             JsonObject.serializer(),
@@ -776,7 +981,7 @@ class RemotexViewModel(
                 try {
                     val snap = client.getHostTelemetry(_state.value.userToken, targetHost)
                     val data = snap.data
-                    if (data != null) applyTelemetry(targetHost, data)
+                    if (data != null) applyTelemetry(targetHost, data, snap.history)
                 } catch (_: Throwable) {
                     // Transient failures are benign; next tick retries.
                 }
@@ -785,10 +990,18 @@ class RemotexViewModel(
         }
     }
 
-    private fun applyTelemetry(hostId: String, data: HostTelemetryData) {
+    private fun applyTelemetry(
+        hostId: String,
+        data: HostTelemetryData,
+        relayHistory: List<HostTelemetrySample> = emptyList(),
+    ) {
         _state.update { s ->
             val prev = s.hostTelemetry[hostId]
-            val history = (prev?.history ?: TelemetryHistory()).push(data)
+            val history = if (relayHistory.isNotEmpty()) {
+                TelemetryHistory.fromRelay(relayHistory)
+            } else {
+                (prev?.history ?: TelemetryHistory()).push(data)
+            }
             val snapshot = HostTelemetrySnapshot(
                 data = data,
                 history = history,
@@ -911,11 +1124,43 @@ class RemotexViewModel(
     }
 
     fun refresh() {
+        val relayError = normalizeRelayBaseUrl(relayUrl, BuildConfig.DEBUG).exceptionOrNull()
+        if (relayError != null) {
+            _state.update {
+                it.copy(
+                    loading = false,
+                    hosts = emptyList(),
+                    error = relayError.message ?: "Invalid relay URL.",
+                )
+            }
+            return
+        }
+        val token = _state.value.userToken.trim()
+        if (token.isEmpty()) {
+            tokenSaveJob?.cancel()
+            viewModelScope.launch { persistToken("") }
+            _state.update {
+                it.copy(
+                    userToken = "",
+                    hosts = emptyList(),
+                    loading = false,
+                    error = "Enter an access token.",
+                )
+            }
+            return
+        }
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
+            tokenSaveJob?.cancel()
+            if (!persistToken(token)) {
+                _state.update { it.copy(loading = false) }
+                return@launch
+            }
+            _state.update { it.copy(userToken = token) }
             try {
-                val hosts = client.listHosts(_state.value.userToken)
+                val hosts = client.listHosts(token)
                 _state.update { it.copy(hosts = hosts, loading = false) }
+                ensureInventoryConnected()
                 // Auto-select first online host so the telemetry panel
                 // populates without an extra tap.
                 if (_state.value.selectedHostId == null) {
@@ -930,6 +1175,122 @@ class RemotexViewModel(
                 _state.update { it.copy(loading = false, error = t.message ?: "refresh failed") }
             }
         }
+    }
+
+    private fun ensureInventoryConnected() {
+        if (relayUrl.isBlank() || _state.value.userToken.isBlank() || inventorySocket != null) return
+        inventoryClosed = false
+        connectInventory()
+    }
+
+    private fun connectInventory() {
+        if (inventoryClosed || inventorySocket != null) return
+        val sock = InventorySocket(
+            baseUrl = relayUrl,
+            userToken = _state.value.userToken,
+            clientId = inventoryClientId,
+            allowInsecureHttp = BuildConfig.DEBUG,
+        )
+        inventorySocket = sock
+        inventorySocketJob = viewModelScope.launch {
+            sock.events.collect { event ->
+                if (inventorySocket !== sock) return@collect
+                when (event) {
+                    is SocketEvent.Frame -> handleInventoryFrame(event.text)
+                    is SocketEvent.Closed -> inventoryDropped(sock)
+                    is SocketEvent.Failure -> inventoryDropped(sock)
+                }
+            }
+        }
+    }
+
+    private fun handleInventoryFrame(raw: String) {
+        val frame = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return
+        when (frame.string("type")) {
+            "inventory-ready" -> {
+                inventoryReconnectAttempt = 0
+                scheduleInventoryHostRefresh()
+                scheduleInventoryThreadRefresh(frame.string("host_id"))
+            }
+            "hosts-changed" -> {
+                scheduleInventoryHostRefresh()
+                val selected = _state.value.selectedHostId
+                if (frame.string("reason") == "daemon-online" && frame.string("host_id") == selected) {
+                    scheduleInventoryThreadRefresh(selected)
+                }
+            }
+            "threads-changed" -> {
+                val selected = _state.value.selectedHostId
+                if (selected != null && (frame.string("host_id") == null || frame.string("host_id") == selected)) {
+                    scheduleInventoryThreadRefresh(selected)
+                }
+            }
+            "error" -> {
+                val fatal = frame.bool("fatal") == true
+                _state.update { it.copy(error = frame.string("error") ?: "inventory connection failed") }
+                if (fatal) stopInventory()
+            }
+        }
+    }
+
+    private fun inventoryDropped(sock: InventorySocket) {
+        if (inventorySocket !== sock) return
+        inventorySocket = null
+        inventorySocketJob = null
+        if (inventoryClosed) return
+        scheduleInventoryReconnect()
+    }
+
+    private fun scheduleInventoryReconnect() {
+        if (inventoryClosed || inventoryReconnectJob?.isActive == true) return
+        val delayMs = min(30_000L, 1_000L shl min(inventoryReconnectAttempt, 5))
+        inventoryReconnectAttempt += 1
+        inventoryReconnectJob = viewModelScope.launch {
+            delay(delayMs)
+            inventoryReconnectJob = null
+            connectInventory()
+        }
+    }
+
+    private fun scheduleInventoryHostRefresh() {
+        inventoryHostRefreshJob?.cancel()
+        inventoryHostRefreshJob = viewModelScope.launch {
+            delay(100L)
+            refresh()
+        }
+    }
+
+    private fun scheduleInventoryThreadRefresh(hostId: String?) {
+        val selected = _state.value.selectedHostId ?: return
+        if (hostId != null && hostId != selected) return
+        inventoryThreadRefreshJob?.cancel()
+        inventoryThreadRefreshJob = viewModelScope.launch {
+            delay(150L)
+            if (_state.value.selectedHostId == selected) refreshThreads()
+        }
+    }
+
+    fun reconnectInventoryNow() {
+        if (inventoryClosed || inventorySocket != null) return
+        inventoryReconnectJob?.cancel()
+        inventoryReconnectJob = null
+        inventoryReconnectAttempt = 0
+        connectInventory()
+    }
+
+    private fun stopInventory() {
+        inventoryClosed = true
+        inventoryReconnectJob?.cancel()
+        inventoryReconnectJob = null
+        inventoryHostRefreshJob?.cancel()
+        inventoryHostRefreshJob = null
+        inventoryThreadRefreshJob?.cancel()
+        inventoryThreadRefreshJob = null
+        inventorySocketJob?.cancel()
+        inventorySocketJob = null
+        inventorySocket?.close()
+        inventorySocket = null
+        inventoryReconnectAttempt = 0
     }
 
     /** Tap on a host → show threads screen, load its prior sessions. */
@@ -984,6 +1345,7 @@ class RemotexViewModel(
         // Track for the foreground service / done notification — they
         // need the thread id to look up the title and deep-link back.
         _lastResumeThreadId = resumeThreadId
+        sentImagesByMessageId.clear()
         if (resumeThreadId != null) {
             paintPreview(target, resumeThreadId)
         }
@@ -991,6 +1353,7 @@ class RemotexViewModel(
             it.copy(
                 screen = Screen.Session,
                 status = Status.Opening,
+                pending = false,
                 error = null,
                 events = emptyList(),
                 historyHasMore = false,
@@ -1008,6 +1371,7 @@ class RemotexViewModel(
                 pendingUserInputs = emptyList(),
                 slashFeedback = null,
                 pendingImages = emptyList(),
+                queuedTurns = emptyList(),
                 resuming = false,
                 resumingSinceMs = 0L,
                 tokensInput = 0L,
@@ -1036,10 +1400,13 @@ class RemotexViewModel(
                     session = SessionInfo(
                         sessionId = sid,
                         hostId = target,
+                        threadId = resumeThreadId,
                     ),
                     status = Status.Connecting,
                 )
             }
+            lastSeqBySession[sid] = 0L
+            saveActiveSessionNow()
             // State above deliberately cleared the transcript. A reused live
             // session id must therefore replay from zero; transport-only
             // reconnects keep their cursor in attachSocket's default path.
@@ -1056,6 +1423,7 @@ class RemotexViewModel(
             sid,
             clientId = clientId,
             lastSeq = prepareSessionReplayCursor(lastSeqBySession, sid, replayFromStart),
+            allowInsecureHttp = BuildConfig.DEBUG,
         )
         socket = sock
         socketJob = viewModelScope.launch {
@@ -1071,6 +1439,7 @@ class RemotexViewModel(
     }
 
     private fun handleDropped(sid: String, reason: String) {
+        _state.update { it.copy(queuedTurns = resetSendingQueuedTurn(it.queuedTurns)) }
         if (userClosed) {
             _state.update { it.copy(status = Status.Disconnected, pending = false) }
             return
@@ -1157,39 +1526,72 @@ class RemotexViewModel(
                 return
             }
         }
-        val clientMessageId = "msg-${UUID.randomUUID().toString().take(8)}"
-        val model = _state.value.model.trim()
-        val effort = _state.value.effort.trim()
-        val perms = _state.value.permissions.wire
-        val frame = Json.encodeToString(
-            JsonObject.serializer(),
-            buildJsonObject {
-                put("type", "turn-start")
-                put("input", input)
-                put("client_message_id", clientMessageId)
-                if (model.isNotEmpty()) put("model", model)
-                if (effort.isNotEmpty() && effort != "none") put("effort", effort)
-                put("permissions", perms)
-                if (attachments.isNotEmpty()) {
-                    put("images", buildJsonArray {
-                        attachments.forEach { img ->
-                            addJsonObject {
-                                put("mime", img.mime)
-                                put("data", img.base64)
-                            }
-                        }
-                    })
-                }
-            },
-        )
-        if (!sock.sendJson(frame)) {
+        val turn = newTurn(input, attachments)
+        if (!sock.sendJson(buildTurnStartFrame(turn))) {
             _state.update { it.copy(error = "socket is not connected") }
             return
         }
+        rememberSentImages(turn)
         _state.update {
             it.copy(
                 pending = true,
                 pendingImages = emptyList(),
+            )
+        }
+    }
+
+    fun queueTurn(text: String) {
+        val state = _state.value
+        val input = text.trim()
+        val attachments = state.pendingImages
+        if (!state.pending || (input.isEmpty() && attachments.isEmpty())) return
+        if (attachments.isEmpty() && input.startsWith("/")) return
+        val turn = newTurn(input, attachments).copy(
+            id = "queued-${UUID.randomUUID().toString().take(8)}",
+        )
+        _state.update {
+            it.copy(
+                queuedTurns = it.queuedTurns + turn,
+                pendingImages = emptyList(),
+            )
+        }
+    }
+
+    fun removeQueuedTurn(id: String) {
+        _state.update { state ->
+            state.copy(queuedTurns = state.queuedTurns.filterNot { it.id == id && !it.sending })
+        }
+    }
+
+    private fun newTurn(input: String, attachments: List<PendingImage>): QueuedTurn {
+        val state = _state.value
+        return QueuedTurn(
+            id = "turn-${UUID.randomUUID().toString().take(8)}",
+            clientMessageId = "msg-${UUID.randomUUID().toString().take(8)}",
+            text = input,
+            model = state.model.trim(),
+            effort = state.effort.trim(),
+            permissions = state.permissions,
+            images = attachments.toList(),
+        )
+    }
+
+    private fun rememberSentImages(turn: QueuedTurn) {
+        if (turn.images.isNotEmpty()) {
+            sentImagesByMessageId[turn.clientMessageId] = turn.images.map { it.uri }
+        }
+    }
+
+    private fun drainQueuedTurn() {
+        val turn = _state.value.queuedTurns.firstOrNull() ?: return
+        if (turn.sending) return
+        val sock = socket ?: return
+        if (!sock.sendJson(buildTurnStartFrame(turn))) return
+        rememberSentImages(turn)
+        _state.update {
+            it.copy(
+                queuedTurns = markQueuedTurnSending(it.queuedTurns, turn.id),
+                pending = true,
             )
         }
     }
@@ -1217,9 +1619,9 @@ class RemotexViewModel(
                 if (s.screen != Screen.Session || s.events.isNotEmpty()) return@update s
                 s.copy(events = preview.turns.mapIndexed { i, turn ->
                     if (turn.role == "user") {
-                        UiEvent.User(id = "preview_${'$'}threadId_${'$'}i", text = turn.text)
+                        UiEvent.User(id = previewEventId(threadId, i), text = turn.text)
                     } else {
-                        UiEvent.Agent(id = "preview_${'$'}threadId_${'$'}i", text = turn.text, completed = true)
+                        UiEvent.Agent(id = previewEventId(threadId, i), text = turn.text, completed = true)
                     }
                 })
             }
@@ -1250,12 +1652,13 @@ class RemotexViewModel(
         if (input.isEmpty() && attachments.isEmpty()) return
         if (!_state.value.pending) return
         val sock = socket ?: return
+        val clientMessageId = "msg-${UUID.randomUUID().toString().take(8)}"
         val frame = Json.encodeToString(
             JsonObject.serializer(),
             buildJsonObject {
                 put("type", "turn-steer")
                 put("input", input)
-                put("client_message_id", "msg-${UUID.randomUUID().toString().take(8)}")
+                put("client_message_id", clientMessageId)
                 if (attachments.isNotEmpty()) {
                     put("images", buildJsonArray {
                         attachments.forEach { img ->
@@ -1272,6 +1675,9 @@ class RemotexViewModel(
             _state.update { it.copy(error = "socket is not connected") }
             return
         }
+        if (attachments.isNotEmpty()) {
+            sentImagesByMessageId[clientMessageId] = attachments.map { it.uri }
+        }
         _state.update { it.copy(pendingImages = emptyList()) }
     }
 
@@ -1281,14 +1687,28 @@ class RemotexViewModel(
         val app = getApplication<Application>()
         viewModelScope.launch {
             try {
-                val (bytes, mime) = withContext(Dispatchers.IO) {
-                    val resolved = app.contentResolver.getType(uri) ?: "image/jpeg"
-                    val bytes = app.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: throw IllegalStateException("empty stream for $uri")
-                    bytes to resolved
-                }
                 val already = _state.value.pendingImages.sumOf { it.bytes }
-                if (already + bytes.size > MAX_FILE_BYTES) {
+                val remaining = (MAX_FILE_BYTES - already).coerceAtLeast(0L)
+                val (bytes, mime, label) = withContext(Dispatchers.IO) {
+                    val metadata = app.contentResolver.openableMetadata(uri)
+                    metadata.size?.let { knownSize ->
+                        if (knownSize > remaining) {
+                            throw ContentTooLargeException(already + knownSize, MAX_FILE_BYTES)
+                        }
+                    }
+                    val resolved = app.contentResolver.getType(uri) ?: "image/jpeg"
+                    val bytes = app.contentResolver.openInputStream(uri)?.use {
+                        readBounded(it, remaining)
+                    }
+                        ?: throw IllegalStateException("empty stream for $uri")
+                    Triple(
+                        bytes,
+                        resolved,
+                        metadata.displayName ?: uri.lastPathSegment?.substringAfterLast('/') ?: "image",
+                    )
+                }
+                val currentBytes = _state.value.pendingImages.sumOf { it.bytes }
+                if (currentBytes + bytes.size > MAX_FILE_BYTES) {
                     // Images ride inside a single turn-start frame, so the
                     // whole batch has to fit under the ceiling.
                     _state.update {
@@ -1300,7 +1720,6 @@ class RemotexViewModel(
                     return@launch
                 }
                 val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                val label = uri.lastPathSegment?.substringAfterLast('/') ?: "image"
                 _state.update {
                     it.copy(
                         pendingImages = it.pendingImages + PendingImage(
@@ -1334,6 +1753,8 @@ class RemotexViewModel(
         socket = null
         socketJob?.cancel()
         socketJob = null
+        sentImagesByMessageId.clear()
+        clearActiveSession()
         _state.update {
             it.copy(
                 status = Status.Idle,
@@ -1341,6 +1762,7 @@ class RemotexViewModel(
                 planMode = false,
                 pendingApprovals = emptyList(),
                 pendingUserInputs = emptyList(),
+                queuedTurns = emptyList(),
                 slashFeedback = null,
                 resuming = false,
                 resumingSinceMs = 0L,
@@ -1358,6 +1780,9 @@ class RemotexViewModel(
         socket = null
         socketJob?.cancel()
         socketJob = null
+        sentImagesByMessageId.clear()
+        clearActiveSession()
+        _state.update { it.copy(queuedTurns = emptyList()) }
     }
 
     // --- frame parsing ------------------------------------------------------
@@ -1376,6 +1801,7 @@ class RemotexViewModel(
             // hold the cursor above it forever and every later reconnect
             // would silently replay nothing.
             lastSeqBySession[sid] = seq
+            persistActiveSessionSoon()
         }
         when (msg.string("type")) {
             "attached" -> {
@@ -1390,6 +1816,7 @@ class RemotexViewModel(
                         pending = turnInFlight ?: it.pending,
                     )
                 }
+                if (turnInFlight == false) drainQueuedTurn()
             }
             "approval-resolved" -> {
                 // Answered here or by a peer client — either way this prompt
@@ -1429,14 +1856,19 @@ class RemotexViewModel(
                 )
             }
             "pong" -> Unit
-            "session-closed" -> _state.update {
-                // Codex is gone; nothing can answer these any more.
-                it.copy(
-                    status = Status.Disconnected,
-                    pending = false,
-                    pendingApprovals = emptyList(),
-                    pendingUserInputs = emptyList(),
-                )
+            "session-closed" -> {
+                sentImagesByMessageId.clear()
+                clearActiveSession()
+                _state.update {
+                    // Codex is gone; nothing can answer these any more.
+                    it.copy(
+                        status = Status.Disconnected,
+                        pending = false,
+                        pendingApprovals = emptyList(),
+                        pendingUserInputs = emptyList(),
+                        queuedTurns = emptyList(),
+                    )
+                }
             }
             "session-event" -> {
                 val ev = msg["event"]?.jsonObject ?: return
@@ -1455,18 +1887,23 @@ class RemotexViewModel(
                 applyTelemetry(hostId, data)
             }
             "error" -> {
-                if (msg["fatal"]?.jsonPrimitive?.contentOrNull == "true") {
+                val fatal = msg["fatal"]?.jsonPrimitive?.contentOrNull == "true"
+                _state.update { it.copy(queuedTurns = resetSendingQueuedTurn(it.queuedTurns)) }
+                if (fatal) {
                     // The relay will refuse this session id on every
                     // attempt (closed, gone, or not ours). Retrying is an
                     // endless reconnect loop; only a new session helps.
                     userClosed = true
                     reconnectJob?.cancel()
+                    sentImagesByMessageId.clear()
+                    clearActiveSession()
                 }
                 _state.update {
-                    it.copy(
-                        error = msg.string("error") ?: "relay error",
-                        pending = false,
-                    )
+                    if (fatal) {
+                        applyFatalSessionError(it, msg.string("error") ?: "relay error")
+                    } else {
+                        it.copy(error = msg.string("error") ?: "relay error")
+                    }
                 }
             }
         }
@@ -1502,8 +1939,11 @@ class RemotexViewModel(
                 val transport = data.string("transport") ?: "stdio"
                 val resuming = data["resuming"]?.jsonPrimitive?.contentOrNull == "true"
                 val readOnlyHistory = transport == "history"
-                _state.update {
-                    it.copy(
+                val threadId = data.string("thread_id")
+                val sharedTurn = data.bool("shared_turn_in_flight")
+                if (!threadId.isNullOrBlank()) _lastResumeThreadId = threadId
+                _state.update { state ->
+                    val base = state.copy(
                         status = when {
                             readOnlyHistory -> Status.Error
                             resuming -> Status.Connecting
@@ -1514,13 +1954,11 @@ class RemotexViewModel(
                             resuming -> "Resuming saved chat…"
                             else -> null
                         },
-                        session = it.session?.copy(
-                            model = data.string("model") ?: it.session.model,
-                            cwd = data.string("cwd") ?: it.session.cwd,
-                            kind = data.string("kind") ?: it.session.kind,
-                        ),
                     )
+                    reconcileSharedTurn(applySessionDetails(base, data), sharedTurn)
                 }
+                persistActiveSessionSoon()
+                if (sharedTurn == false) drainQueuedTurn()
             }
 
             "turn-started" -> {
@@ -1539,10 +1977,27 @@ class RemotexViewModel(
                 val replayed = data["replayed"]?.let {
                     (it as? JsonPrimitive)?.contentOrNull == "true" || it.toString() == "true"
                 } ?: false
-                val next = buildUiEvent(data, itemId, itemType, replayed)
+                val queuedMatch = itemType == "user_message" &&
+                    _state.value.queuedTurns.any { it.clientMessageId == itemId }
+                val imageUris = if (itemType == "user_message") {
+                    sentImagesByMessageId.remove(itemId).orEmpty()
+                } else {
+                    emptyList()
+                }
+                val built = buildUiEvent(data, itemId, itemType, replayed)
+                val next = if (built is UiEvent.User && imageUris.isNotEmpty()) {
+                    built.copy(imageUris = imageUris)
+                } else {
+                    built
+                }
                 appendEventOnce(next)
-                if (itemType == "user_message" && !replayed) {
-                    _state.update { it.copy(pending = true) }
+                if (itemType == "user_message" && (!replayed || queuedMatch)) {
+                    _state.update {
+                        it.copy(
+                            pending = true,
+                            queuedTurns = acknowledgeQueuedTurn(it.queuedTurns, itemId),
+                        )
+                    }
                 }
             }
 
@@ -1621,12 +2076,9 @@ class RemotexViewModel(
 
             // The relay drops every outstanding prompt for the session when a
             // turn ends, so both queues empty together.
-            "turn-completed" -> _state.update {
-                it.copy(
-                    pending = false,
-                    pendingApprovals = emptyList(),
-                    pendingUserInputs = emptyList(),
-                )
+            "turn-completed" -> {
+                _state.update { applyTurnCompletion(it, data) }
+                drainQueuedTurn()
             }
 
             "thread-status" -> {
@@ -1641,20 +2093,23 @@ class RemotexViewModel(
                     }
                     "resumed" -> {
                         reconnectAttempt = 0
-                        _state.update {
-                            it.copy(
+                        val threadId = data.string("thread_id")
+                        if (!threadId.isNullOrBlank()) _lastResumeThreadId = threadId
+                        val sharedTurn = data.bool("shared_turn_in_flight")
+                        _state.update { state ->
+                            val base = state.copy(
                                 status = Status.Connected,
                                 error = null,
                                 resuming = false,
                                 resumingSinceMs = 0L,
-                                session = it.session?.copy(
-                                    model = data.string("model") ?: it.session.model,
-                                    cwd = data.string("cwd") ?: it.session.cwd,
-                                ),
                             )
+                            reconcileSharedTurn(applySessionDetails(base, data), sharedTurn)
                         }
+                        persistActiveSessionSoon()
+                        if (sharedTurn == false) drainQueuedTurn()
                     }
                     "resume-failed" -> {
+                        clearActiveSession()
                         _state.update {
                             it.copy(
                                 status = Status.Error,
@@ -1727,6 +2182,10 @@ class RemotexViewModel(
                 }
             }
 
+            "session-settings" -> {
+                _state.update { applyResolvedSettings(it, data) }
+            }
+
             "approval-request" -> {
                 val prompt = parseApprovalPrompt(data) ?: return
                 _state.update {
@@ -1781,9 +2240,22 @@ class RemotexViewModel(
 
     override fun onCleared() {
         closeSession()
+        stopInventory()
         telemetryJob?.cancel()
         telemetryJob = null
         super.onCleared()
+    }
+
+    /** Called before switching relay origins. ViewModels are keyed by URL and
+     * remain in the Activity's store, so explicitly release the old origin's
+     * sockets instead of leaving them alive until the Activity is destroyed. */
+    fun releaseForRelayChange() {
+        closeSession()
+        stopInventory()
+        telemetryJob?.cancel()
+        telemetryJob = null
+        modelFetchJob?.cancel()
+        modelFetchJob = null
     }
 
     companion object {
@@ -1802,6 +2274,9 @@ private fun JsonObject.string(key: String): String? =
 
 private fun JsonObject.long(key: String): Long? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+
+private fun JsonObject.bool(key: String): Boolean? =
+    (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
 
 private fun JsonObject.obj(key: String): JsonObject? =
     (this[key] as? JsonElement) as? JsonObject

@@ -14,6 +14,65 @@ function shortenCwdLeft(cwd, max = 36) {
   return '…' + (slash > 0 ? tail.slice(slash) : tail);
 }
 
+function compactTokens(value) {
+  const n = Number(value || 0);
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}m`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(Math.max(0, Math.round(n)));
+}
+
+function goalStatusLabel(status) {
+  return String(status || 'active')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[-_]/g, ' ')
+    .toLowerCase();
+}
+
+export function SessionUsage({
+  goal,
+  tokensInput = 0,
+  tokensOutput = 0,
+  tokensCached = 0,
+  tokensReasoning = 0,
+}) {
+  const hasTokens = [tokensInput, tokensOutput, tokensCached, tokensReasoning]
+    .some((value) => Number(value) > 0);
+  if (!goal && !hasTokens) return null;
+
+  const budget = Number(goal?.token_budget);
+  const used = Math.max(0, Number(goal?.tokens_used || 0));
+  const hasBudget = Number.isFinite(budget) && budget > 0;
+  const percent = hasBudget ? Math.round((used / budget) * 100) : null;
+
+  return (
+    <div className="session-usage" aria-label="Session usage">
+      {goal && (
+        <span className="session-goal-usage" title={goal.objective || 'Codex goal'}>
+          goal {goalStatusLabel(goal.status)}
+          {hasBudget && (
+            <>
+              <progress
+                max={budget}
+                value={Math.min(used, budget)}
+                aria-label="Goal token budget"
+              />
+              <span>{compactTokens(used)} / {compactTokens(budget)} ({percent}%)</span>
+            </>
+          )}
+          {!hasBudget && used > 0 && <span> · {compactTokens(used)} used</span>}
+        </span>
+      )}
+      {hasTokens && (
+        <span className="session-token-usage">
+          tokens {compactTokens(tokensInput)} in · {compactTokens(tokensOutput)} out
+          {Number(tokensCached) > 0 && <> · {compactTokens(tokensCached)} cached</>}
+          {Number(tokensReasoning) > 0 && <> · {compactTokens(tokensReasoning)} reasoning</>}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function SessionScreen({
   state,
   onSend,
@@ -108,6 +167,13 @@ export function SessionScreen({
           <span className="session-meta-sep">·</span>
           <span className="session-meta-cwd" title={cwd}>{shortenCwdLeft(cwd)}</span>
         </div>
+        <SessionUsage
+          goal={state.goal}
+          tokensInput={state.tokensInput}
+          tokensOutput={state.tokensOutput}
+          tokensCached={state.tokensCached}
+          tokensReasoning={state.tokensReasoning}
+        />
       </div>
       {state.resuming && <ResumingBanner sinceMs={state.resumingSinceMs} />}
       {/* PLAN moved to the right sidebar tab — see App.jsx → RightSidebar.

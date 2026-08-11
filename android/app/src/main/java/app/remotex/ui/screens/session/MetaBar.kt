@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -16,6 +17,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.ui.PermissionsMode
@@ -56,9 +59,9 @@ internal fun MetaBar(
                 onSelect = onPermissionsChange,
             )
             Spacer(Modifier.width(6.dp))
-            MetaButton("▤", InkDim, onOpenFiles)
+            MetaButton("▤", "Browse workspace files", InkDim, onOpenFiles)
             Spacer(Modifier.width(6.dp))
-            MetaButton("+", AccentDeep, onUpload)
+            MetaButton("+", "Upload workspace file", AccentDeep, onUpload)
         }
     }
 }
@@ -66,6 +69,7 @@ internal fun MetaBar(
 @Composable
 private fun MetaButton(
     label: String,
+    accessibilityLabel: String,
     accent: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
 ) {
@@ -74,6 +78,9 @@ private fun MetaButton(
         border = BorderStroke(1.dp, Line),
         shape = RectangleShape,
         onClick = onClick,
+        modifier = Modifier
+            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
+            .semantics { contentDescription = accessibilityLabel },
     ) {
         Text(
             label,

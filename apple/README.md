@@ -1,92 +1,98 @@
-# Remotex iPhone
+# Remotex for iPhone
 
-Native iPhone client for the Remotex relay. This starter app mirrors the
-core web and Android flow:
+The native iPhone client is built with SwiftUI, `URLSession`, and
+`URLSessionWebSocketTask`; it has no third-party runtime dependencies.
 
-1. Enter a relay URL and user token.
-2. Load online hosts from `/api/hosts`.
-3. Open a session with `POST /api/sessions`.
-4. Attach to `/ws/client`.
-5. Send `turn-start` frames and render streamed `session-event` frames.
+## Current coverage
 
-The app is intentionally dependency-free. It uses SwiftUI, `URLSession`
-for REST, and `URLSessionWebSocketTask` for WebSocket transport.
+The app supports the main remote Codex session workflow:
 
-## Requirements
+- Runtime relay setup, online hosts, host-scoped model options, a remote
+  working-directory picker, saved-thread preview/resume, and paged history.
+- Streamed user, reasoning, command/file-change, and agent items with
+  Markdown, progressive diffs, replay-gap markers, and a visible fallback row
+  for other normalized Codex item types.
+- Model, reasoning-effort, and permission controls; token usage and native
+  goal progress in the session header.
+- Text and Photos Picker image turns, active-turn steer or interrupt, and a
+  removable local FIFO follow-up queue that snapshots images and settings.
+- Ordered approval and user-input queues, authoritative decision choices,
+  secret response fields, and multi-client resolution handling.
+- `/plan`, `/default`, `/cd`, `/pwd`, `/compact`, `/goal`, and `/collab`, plus
+  goal inspect/set/pause/resume/clear controls.
+- Stable client identity, assigned replay cursors, heartbeat, bounded reconnect
+  backoff, foreground recovery, fatal-error handling, explicit session close,
+  and provider-scoped active-session restoration after process recreation. A
+  recreated process requests the available relay tail from sequence zero so
+  it can rebuild UI state without storing a plaintext transcript on-device;
+  the normal replay-gap marker remains visible if the 1000-frame buffer wrapped.
+- Live `/ws/inventory` invalidations backed by authoritative REST refreshes for
+  hosts and saved threads.
+- Host telemetry with history and all reported GPUs, system/light/dark/high-
+  contrast themes, and writable workspace browsing: upload, share/save,
+  create folder, rename, and confirmed file deletion.
+- A local turn-completion notification while the app remains alive in the
+  background. Permission is first requested only after a session connects.
 
-- Xcode 16 or newer
-- iOS 17 or newer target
-- A running Remotex relay and daemon
+The remaining differences from web and Android are listed below. In
+particular, there is no APNs delivery when an approval arrives after the app
+is suspended or fully stopped.
 
-## Run
+## Provider and token storage
+
+A fresh install starts with no relay URL and no demo token. Enter the base URL
+and bearer token supplied by the operator of the relay you intend to use.
+Public relays should use HTTPS.
+
+The relay URL is stored in `UserDefaults`; it is not a secret. The bearer token
+is a Keychain generic-password item under an account derived from the
+normalized relay URL. Switching providers therefore loads that provider's
+saved token or an empty field instead of sending the previous relay's token to
+a new server. **Sign out** deletes the current provider's token.
+
+An older plaintext `UserDefaults` value is moved out immediately. Legacy
+unscoped Keychain data is moved into a provider account only after a valid
+relay scope exists, and an unscoped value is never sent.
+
+## Run from Xcode
+
+Requirements:
+
+- Xcode 16 or newer.
+- iOS 17 or newer.
+- A running Remotex relay and at least one connected daemon.
 
 ```bash
 open apple/Remotex.xcodeproj
 ```
 
-Pick an iPhone simulator and press Run.
+Pick an iPhone simulator or a signing team/device and press Run. For a relay on
+the simulator's Mac, enter `http://localhost:8080`. A physical iPhone can use
+the Mac's LAN URL after granting the local-network permission, or an HTTPS
+public URL.
 
-The default relay URL is `http://localhost:8080`, which works for the iOS
-simulator when the relay is running on the same Mac. For a real iPhone,
-use a LAN or public relay URL from inside the app.
+App Transport Security is not globally disabled. `NSAllowsLocalNetworking`, a
+`localhost` exception, and `NSLocalNetworkUsageDescription` cover loopback,
+`.local`, and private-LAN development. Plain HTTP to a public address remains
+blocked; put that relay behind TLS.
 
-App Transport Security is **not** globally disabled. The app sets
-`NSAllowsLocalNetworking` plus an exception for `localhost`, which is what
-lets plain `http://` reach a relay on the same Mac, on a `.local` name, or
-on a private LAN address (`10.x`, `172.16-31.x`, `192.168.x`). A plain-http
-relay on a *public* address is blocked by design — put it behind HTTPS.
-That is also why the default is the `localhost` host name rather than the
-`127.0.0.1` literal: unqualified host names are unambiguously covered by
-`NSAllowsLocalNetworking`.
+Demo credentials exist only for an explicitly loopback-only development relay
+started with `RELAY_SEED_DEMO=1`; public app builds do not contain them.
 
-For a real iPhone on your LAN, start the relay on a reachable interface.
-The relay needs a Postgres DSN — it refuses to start without one:
+## Install the release IPA
 
-```bash
-cd services
-export RELAY_DATABASE_URL=postgresql://remotex:remotex-dev@127.0.0.1:5432/remotex
-python3 relay/app.py --host 0.0.0.0 --port 8080
-```
+[GitHub Releases](https://github.com/CesarPetrescu/remotex/releases) publishes
+`remotex-<version>.ipa`. It is an unsigned build artifact, not an App Store or
+TestFlight package. Re-sign it with your own Apple identity and provisioning
+profile using a sideloading workflow that you trust before installation.
 
-See `services/README.md` for a one-liner that brings up the database.
-Then enter `http://<your-mac-lan-ip>:8080` in the app.
+Verify the IPA against `SHA256SUMS.txt` and the GitHub build-provenance
+attestation. The project does not currently ship an Apple distribution
+certificate, provisioning profile, or automatic update channel.
 
-The default user token is the prototype token:
+## Build and test from the command line
 
-```text
-demo-user-token
-```
-
-It only works against a relay started with `RELAY_SEED_DEMO=1`. The token
-you type is stored in the Keychain, not in UserDefaults; a value left over
-in UserDefaults by an older build is migrated across on first launch and
-then deleted.
-
-## Current Scope
-
-Working starter pieces:
-
-- Relay URL and user token fields (token kept in the Keychain)
-- Host list
-- Session open and WebSocket attach
-- Text prompt sending, with send disabled while a turn is in flight
-- Stream rendering for user, reasoning, tool, agent, and system events
-- Approval and user-input prompts, queued so a second prompt never hides
-  an unanswered one
-- Replay-gap markers when the relay's buffer no longer covers a reconnect
-- Basic error handling
-
-Still to add for Android parity:
-
-- Thread list and resume
-- Image attachments
-- Model and reasoning effort controls
-- Permissions controls
-- Turn interrupt
-- Reconnect backoff
-- Push notifications for approval requests
-
-## Build from the command line
+Build without code signing:
 
 ```bash
 xcodebuild \
@@ -99,28 +105,59 @@ xcodebuild \
   build
 ```
 
-## CI
+Run the XCTest target on an installed simulator:
 
-The `ios` job in `.github/workflows/ci.yml` builds against an iPhone
-simulator on `macos-15`. Because those minutes are expensive it's gated
-by a paths filter — it only runs when `apple/**` or the workflow file
-itself changed — and caches DerivedData between runs.
+```bash
+xcodebuild \
+  -project apple/Remotex.xcodeproj \
+  -scheme Remotex \
+  -configuration Debug \
+  -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
+  CODE_SIGNING_ALLOWED=NO \
+  test
+```
+
+The tests drive URL/query construction, relay-scoped credential helpers,
+WebSocket frames and retry rules, reducer replay/prompt/settings behavior,
+inventory URL/hello behavior, file size/name/multipart boundaries, persisted
+session metadata, completion-notification gating, theme cycling, queue
+acknowledgement, images, slash commands, goals, and resolved session state. CI
+runs both simulator build and XCTest whenever `apple/**` or the iOS workflow
+changes. Stable tags and nightly publishing repeat the tests before packaging
+the unsigned device app as an IPA.
 
 ## Layout
 
 ```text
 apple/
-|-- Remotex.xcodeproj/
-`-- Remotex/
-    |-- RemotexApp.swift
-    |-- ContentView.swift
-    |-- PendingPromptsView.swift
-    |-- RemotexViewModel.swift
-    |-- RelayClient.swift
-    |-- SessionSocket.swift
-    |-- Keychain.swift
-    |-- Models.swift
-    |-- Theme.swift
-    |-- Info.plist
-    `-- Assets.xcassets/
+├── Remotex.xcodeproj/
+├── RemotexTests/              reliability + frame/reducer tests
+└── Remotex/
+    ├── RemotexApp.swift
+    ├── ContentView.swift      provider, hosts, session, composer
+    ├── RemotexViewModel.swift session state machine and reducer
+    ├── RelayClient.swift      REST
+    ├── SessionSocket.swift    reconnecting `/ws/client`
+    ├── InventorySocket.swift  reconnecting `/ws/inventory`
+    ├── Keychain.swift         provider-scoped token storage
+    ├── PendingPromptsView.swift
+    ├── WorkspaceFilesView.swift
+    ├── TelemetryView.swift
+    ├── Markdown.swift
+    ├── DiffView.swift
+    ├── Models.swift
+    ├── Theme.swift
+    └── Info.plist
 ```
+
+## Current limits
+
+- Authentication is still a long-lived relay bearer token; OIDC is not
+  implemented.
+- There is no APNs delivery. Local completion notification works only while
+  iOS keeps the app and WebSocket alive; suspension or termination prevents
+  the completion event from reaching the phone.
+- Workspace deletion intentionally covers files only because the relay refuses
+  directory deletion. Start-directory selection remains browse-only.
+- One native session is presented at a time, and its local follow-up queue is
+  not shared with other attached clients.

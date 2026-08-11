@@ -5,13 +5,14 @@
 # loopback) which is wrong for any real device on the LAN.
 #
 # Usage:
-#   ./build.sh                           # detect LAN IP + relay port, build only
+#   ./build.sh                           # detect deployed tunnel or LAN relay
 #   ./build.sh install                   # also `adb install -r` to the connected device
 #   ./build.sh install 192.168.10.50     # override the auto-detected IP
 #   RELAY_URL=https://relay.example.com ./build.sh   # full override
 #
-# IP auto-detection picks the first non-loopback, non-docker IPv4 address.
-# Port comes from deploy/.env (RELAY_HOST_PORT) or defaults to 8080.
+# A SparkTunnel Compose deployment uses https://REMOTEX_HOSTNAME. Otherwise
+# IP auto-detection picks the first non-loopback, non-docker IPv4 address and
+# the port comes from deploy/.env (RELAY_HOST_PORT) or defaults to 8080.
 #
 # Run from android/.
 set -euo pipefail
@@ -26,21 +27,30 @@ if [[ -n "${RELAY_URL:-}" ]]; then
 else
   if [[ -n "$explicit_ip" ]]; then
     ip="$explicit_ip"
+    port="$(awk -F= '/^RELAY_HOST_PORT=/ {print $2}' ../deploy/.env 2>/dev/null | tr -d '\r' || true)"
+    port="${port:-8080}"
+    relay_url="http://${ip}:${port}"
   else
-    ip="$(ip -4 addr show scope global 2>/dev/null \
-            | awk '/inet / {print $2}' \
-            | cut -d/ -f1 \
-            | grep -vE '^(127\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.)' \
-            | head -1)"
-    if [[ -z "$ip" ]]; then
-      echo "could not auto-detect LAN IP; pass it explicitly:"
-      echo "  ./build.sh install 192.168.x.y"
-      exit 1
+    compose_file="${COMPOSE_FILE:-$(awk -F= '/^COMPOSE_FILE=/ {print $2}' ../deploy/.env 2>/dev/null | tr -d '\r' || true)}"
+    hostname="${REMOTEX_HOSTNAME:-$(awk -F= '/^REMOTEX_HOSTNAME=/ {print $2}' ../deploy/.env 2>/dev/null | tr -d '\r' || true)}"
+    if [[ "$compose_file" == *docker-compose.sparktunnel.yml* && -n "$hostname" ]]; then
+      relay_url="https://${hostname}"
+    else
+      ip="$(ip -4 addr show scope global 2>/dev/null \
+              | awk '/inet / {print $2}' \
+              | cut -d/ -f1 \
+              | grep -vE '^(127\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.)' \
+              | head -1)"
+      if [[ -z "$ip" ]]; then
+        echo "could not auto-detect LAN IP; pass it explicitly:"
+        echo "  ./build.sh install 192.168.x.y"
+        exit 1
+      fi
+      port="$(awk -F= '/^RELAY_HOST_PORT=/ {print $2}' ../deploy/.env 2>/dev/null | tr -d '\r' || true)"
+      port="${port:-8080}"
+      relay_url="http://${ip}:${port}"
     fi
   fi
-  port="$(awk -F= '/^RELAY_HOST_PORT=/ {print $2}' ../deploy/.env 2>/dev/null | tr -d '\r' || true)"
-  port="${port:-8080}"
-  relay_url="http://${ip}:${port}"
 fi
 
 echo "→ building with RELAY_URL=$relay_url"

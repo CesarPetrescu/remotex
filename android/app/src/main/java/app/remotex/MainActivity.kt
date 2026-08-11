@@ -19,6 +19,8 @@ import app.remotex.service.RemotexEvents
 import app.remotex.service.SessionNotifier
 import app.remotex.ui.RemotexApp
 import app.remotex.ui.theme.RemotexTheme
+import app.remotex.ui.theme.RemotexThemeMode
+import app.remotex.net.normalizeRelayBaseUrl
 
 class MainActivity : ComponentActivity() {
     private val notificationsPermLauncher = registerForActivityResult(
@@ -29,41 +31,59 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         SessionNotifier.ensureChannels(this)
-        maybeRequestNotificationsPermission()
         // Relay URL: user preference wins, the build-time default is only a
-        // starting point. Released APKs bake the public relay; local
-        // builds bake the LAN IP via android/build.sh — either way the
-        // user can repoint the app without reinstalling.
+        // starting point. Release builds are provider-neutral; local builds
+        // may bake a development relay via android/build.sh.
         val prefs = getSharedPreferences("remotex.settings", MODE_PRIVATE)
         setContent {
             var relayUrl by remember {
+                val configured = prefs.getString(PREF_RELAY_URL, null)?.takeIf { it.isNotBlank() }
+                    ?: BuildConfig.RELAY_URL
                 mutableStateOf(
-                    prefs.getString(PREF_RELAY_URL, null)?.takeIf { it.isNotBlank() }
-                        ?: BuildConfig.RELAY_URL,
+                    normalizeRelayBaseUrl(configured, BuildConfig.DEBUG).getOrNull()
+                        ?: configured.trim(),
                 )
             }
-            // null = follow the system; true/false = explicit override.
-            var darkOverride by remember {
+            // No stored mode follows the system. The old boolean preference
+            // is migrated in-memory so upgrades keep their chosen theme.
+            var themeSetting by remember {
                 mutableStateOf(
-                    if (prefs.contains(PREF_DARK)) prefs.getBoolean(PREF_DARK, true) else null,
+                    prefs.getString(PREF_THEME_MODE, null)
+                        ?: if (prefs.contains(PREF_DARK)) {
+                            if (prefs.getBoolean(PREF_DARK, true)) {
+                                RemotexThemeMode.Dark.name
+                            } else {
+                                RemotexThemeMode.Light.name
+                            }
+                        } else {
+                            null
+                        },
                 )
             }
             val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
-            val dark = darkOverride ?: systemDark
-            RemotexTheme(darkTheme = dark) {
+            val themeMode = RemotexThemeMode.fromStored(themeSetting, systemDark)
+            val dark = themeMode != RemotexThemeMode.Light
+            val highContrast = themeMode == RemotexThemeMode.HighContrast
+            RemotexTheme(darkTheme = dark, highContrast = highContrast) {
                 RemotexApp(
                     relayUrl = relayUrl,
                     onRelayUrlChange = { raw ->
-                        val next = raw.trim().trimEnd('/')
-                        prefs.edit { putString(PREF_RELAY_URL, next) }
-                        if (next.isNotBlank()) relayUrl = next
+                        normalizeRelayBaseUrl(raw, BuildConfig.DEBUG).onSuccess { next ->
+                            prefs.edit { putString(PREF_RELAY_URL, next) }
+                            relayUrl = next
+                        }
                     },
                     darkTheme = dark,
+                    highContrast = highContrast,
                     onToggleTheme = {
-                        val next = !dark
-                        prefs.edit { putBoolean(PREF_DARK, next) }
-                        darkOverride = next
+                        val next = themeMode.next()
+                        prefs.edit {
+                            putString(PREF_THEME_MODE, next.name)
+                            remove(PREF_DARK)
+                        }
+                        themeSetting = next.name
                     },
+                    onSessionOpened = ::maybeRequestNotificationsPermission,
                 )
             }
         }
@@ -107,5 +127,6 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_THREAD_ID = "thread_id"
         private const val PREF_RELAY_URL = "relay_url"
         private const val PREF_DARK = "dark_theme"
+        private const val PREF_THEME_MODE = "theme_mode"
     }
 }

@@ -55,6 +55,25 @@ class SessionSocketTest {
     }
 
     @Test
+    fun helloFrameEscapesEveryStringField() {
+        val frame = Json.parseToJsonElement(
+            buildHelloFrame(
+                userToken = "token-\"\\\n",
+                sessionId = "session-\t1",
+                clientId = "client\\1",
+                clientName = "android\nphone",
+                lastSeq = 7,
+            ),
+        ).jsonObject
+
+        assertEquals("token-\"\\\n", frame["token"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("session-\t1", frame["session_id"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("client\\1", frame["client_id"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("android\nphone", frame["client_name"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(7L, frame["last_seq"]?.jsonPrimitive?.longOrNull)
+    }
+
+    @Test
     fun opensClientWebSocketAndSendsHelloFrame() = runBlocking {
         val firstMessage = CompletableDeferred<String>()
         val secondMessage = CompletableDeferred<String>()

@@ -259,8 +259,6 @@ nobody re-discovers them:
 - `turn/diff/updated` `{threadId, turnId, diff}` — free cumulative
   unified diff per turn. Cheapest path to a mobile "what changed" view;
   beats reassembling `fileChange` items.
-- `thread/compacted` — we *send* `thread/compact/start`
-  (`stdio.py:handle`) and ignore the completion notification.
 - `account/rateLimits/read` + `account/rateLimits/updated` +
   `account/usage/read` — probed working: `usedPercent`, `resetsAt`,
   credits, streaks. Quota widget.
@@ -382,13 +380,12 @@ Tests: `test_stdio_dispatch.py` — tail emits exactly last-2-turns items;
    real tail on `history-end`. In-flight dedupe so hovering 20 rows ≠ 20
    parallel requests (cap ~3 concurrent, drop stale).
 
-## Phase 4 — Android/iOS (follow-up)
+## ~~Phase 4 — Android/iOS (follow-up)~~ — DONE 2026-08-11
 
-The wire protocol (tail + `history-more` + preview endpoint) is
-client-agnostic by design. Android: same buffering in `RemotexViewModel`
-(`history-begin/end` are currently no-op markers) + `LazyColumn`
-`prependedItems` scroll anchoring; press-prefetch via the same REST
-endpoint. iOS after Android.
+Both native clients now consume tail history, request older pages, and use
+thread previews through the same client-agnostic protocol. Their reducer and
+transport behavior is covered by JVM/XCTest suites; see the 2026-08-11
+WorkLog entry.
 
 ## Order & size
 

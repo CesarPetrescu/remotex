@@ -1,8 +1,21 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { TelemetrySidebar } from './TelemetrySidebar';
+import { TelemetrySidebar, telemetryFreshness } from './TelemetrySidebar';
 
 describe('TelemetrySidebar', () => {
+  it('ages a silent online host from live to stale', () => {
+    expect(telemetryFreshness(1_000, true, 11_000)).toMatchObject({
+      live: true,
+      label: 'Live',
+    });
+    expect(telemetryFreshness(1_000, true, 12_001)).toMatchObject({
+      live: false,
+      label: 'Stale',
+    });
+    expect(telemetryFreshness(1_000, false, 12_001).label).toBe('Offline');
+    expect(telemetryFreshness(1_000, false, 2_000).label).toBe('Offline');
+  });
+
   it('renders every reported GPU', () => {
     const gpu = (name, percent) => ({
       name,

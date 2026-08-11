@@ -140,9 +140,8 @@ fun TelemetryPanel(
                         }
                     },
                 ).joinToString(" · "),
-                // Only the first GPU has client-side history (the ring
-                // buffer tracks data.gpu); others show current value only.
-                series = if (index == 0) history?.gpu ?: emptyList() else emptyList(),
+                series = history?.gpus?.getOrNull(index)
+                    ?: if (index == 0) history?.gpu.orEmpty() else emptyList(),
                 max = 100f,
                 color = Ok,
                 unit = "%",

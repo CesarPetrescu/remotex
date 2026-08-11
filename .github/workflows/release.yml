@@ -1,20 +1,8 @@
 name: Release
 
-# Runs on two triggers:
-#   - push to main  → updates a rolling `nightly` prerelease so
-#                     anyone can grab the bleeding binaries without login
-#   - push of a tag → creates a stable release with the tagged binaries
-# The stable release is the one people should normally install.
-#
-# Publishes two artifacts per release:
-#   - remotex-<label>.apk      Android debug APK
-#   - remotex-<label>.ipa      Unsigned iOS IPA (no Apple signing)
-#
-# The .ipa is *unsigned*: it can't be installed on a regular iPhone
-# through stock iOS. Use a re-signing sideloader (AltStore, Sideloadly
-# with a free Apple ID, TrollStore on supported iOS versions) to land
-# it on a real device.
-
+# Main updates the rolling nightly. Semver tags create stable releases.
+# Every platform uploads a build artifact; one final job publishes the release
+# atomically so parallel jobs cannot overwrite each other's release notes.
 on:
   push:
     branches: [main]
@@ -22,24 +10,49 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Release mutation is not safely cancellable halfway through. Queue newer
+  # main pushes so each publisher either finishes or fails visibly.
+  cancel-in-progress: false
 
 jobs:
-  # Decide per-platform whether this push/PR actually changed code.
-  # Tag pushes skip the filter and rebuild both — a stable release
-  # should always ship every platform.
   changes:
-    name: Detect changes
+    name: Detect release targets
     runs-on: ubuntu-latest
     outputs:
       android: ${{ steps.filter.outputs.android }}
       ios: ${{ steps.filter.outputs.ios }}
-      is_tag: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      windows: ${{ steps.filter.outputs.windows }}
+      force_all: ${{ steps.meta.outputs.force_all }}
+      label: ${{ steps.meta.outputs.label }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The rolling nightly tag is the last successfully published release
+          # baseline. Full history also makes the tag available without a
+          # best-effort fetch that could hide a network failure.
+          fetch-depth: 0
+      - id: baseline
+        shell: bash
+        run: |
+          if git show-ref --verify --quiet refs/tags/nightly; then
+            echo "ref=nightly" >> "$GITHUB_OUTPUT"
+            echo "initial=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=HEAD" >> "$GITHUB_OUTPUT"
+            echo "initial=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
+          # Compare cumulatively with the last *successful* nightly, not only
+          # the previous main commit. GitHub may replace a queued run even when
+          # cancel-in-progress is false; this keeps skipped commits in scope.
+          base: ${{ steps.baseline.outputs.ref }}
           filters: |
             android:
               - 'android/**'
@@ -47,153 +60,171 @@ jobs:
             ios:
               - 'apple/**'
               - '.github/workflows/release.yml'
+            windows:
+              - 'apps/desktop/**'
+              - '.github/workflows/release.yml'
+      - id: meta
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "force_all=true" >> "$GITHUB_OUTPUT"
+            echo "label=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "${{ steps.baseline.outputs.initial }}" == "true" ]]; then
+            echo "force_all=true" >> "$GITHUB_OUTPUT"
+            echo "label=nightly" >> "$GITHUB_OUTPUT"
+          else
+            echo "force_all=false" >> "$GITHUB_OUTPUT"
+            echo "label=nightly" >> "$GITHUB_OUTPUT"
+          fi
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
   android:
-    name: Android · build + publish APK
+    name: Android · signed release APK
     runs-on: ubuntu-latest
     needs: changes
-    if: |
-      needs.changes.outputs.is_tag == 'true' ||
-      needs.changes.outputs.android == 'true'
+    if: needs.changes.outputs.force_all == 'true' || needs.changes.outputs.android == 'true'
+    env:
+      # Public release identity, not a secret. Pinning it prevents an accidental
+      # keystore swap from publishing an APK that cannot upgrade existing installs.
+      ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "17"
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: latest
+          verify-signature: true
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
       - name: Install Android SDK packages
+        shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager \
-            "platforms;android-35" \
-            "build-tools;34.0.0" \
-            "platform-tools"
-      - name: Cache Gradle
-        uses: actions/cache@v4
+          sdkmanager "platforms;android-35" "build-tools;34.0.0" "platform-tools"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
-
-      - name: Derive release label
-        id: label
-        run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            label="${GITHUB_REF_NAME}"
-          else
-            label="nightly-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
-          fi
-          echo "label=$label" >> "$GITHUB_OUTPUT"
-          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Build debug APK
+      - name: Test and lint
+        working-directory: android
+        run: ./gradlew test lint --no-daemon --stacktrace
+      - name: Build signed provider-neutral APK
         working-directory: android
         env:
-          # Repo variable RELEASE_RELAY_URL — the relay this APK should talk
-          # to out of the box. The app can be repointed at runtime (Hosts
-          # screen → RELAY URL), so this is a default, not a lock-in.
-          RELEASE_RELAY_URL: ${{ vars.RELEASE_RELAY_URL }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
         run: |
-          chmod +x ./gradlew
-          EXTRA=()
-          if [[ -n "$RELEASE_RELAY_URL" ]]; then
-            EXTRA+=("-PrelayUrl=$RELEASE_RELAY_URL")
-          fi
-          ./gradlew assembleDebug --no-daemon --stacktrace \
-            -PversionName="${{ steps.label.outputs.label }}" "${EXTRA[@]}"
-      - name: Rename APK with version label
-        run: |
-          src=android/app/build/outputs/apk/debug/app-debug.apk
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            # Stable releases keep the version in the filename.
-            dst="android/app/build/outputs/apk/debug/remotex-${{ steps.label.outputs.label }}.apk"
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            [[ -n "${!name}" ]] || { echo "missing required secret: $name"; exit 1; }
+          done
+          key_path="$RUNNER_TEMP/remotex-release.jks"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$key_path"
+          chmod 600 "$key_path"
+          export ANDROID_KEYSTORE_PATH="$key_path"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version_name="$GITHUB_REF_NAME"
           else
-            # The nightly keeps ONE stable name and clobbers it, so the
-            # prerelease page doesn't accumulate an APK per push and the
-            # download URL never changes. The commit is in the release body.
-            dst="android/app/build/outputs/apk/debug/remotex-nightly.apk"
+            version_name="nightly-${GITHUB_RUN_NUMBER}-${{ needs.changes.outputs.short_sha }}"
           fi
-          cp "$src" "$dst"
-          echo "artifact=$dst" >> "$GITHUB_ENV"
-
-      - name: Publish nightly (main branch)
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PversionName="$version_name" \
+            -PrelayUrl=
+      - name: Verify and name APK
+        shell: bash
+        run: |
+          src=android/app/build/outputs/apk/release/app-release.apk
+          test -f "$src"
+          grep -F 'public static final String RELAY_URL = "";' \
+            android/app/build/generated/source/buildConfig/release/app/remotex/BuildConfig.java
+          if unzip -p "$src" 'classes*.dex' | strings \
+            | grep -E 'remotex\.photonspark\.ro|demo-user-token|demo-bridge-token'; then
+            echo "refusing to publish an APK containing an operator URL or demo credential"
+            exit 1
+          fi
+          certs="$(apksigner verify --verbose --print-certs "$src")"
+          printf '%s\n' "$certs"
+          grep -q 'Verified using v2 scheme.*true' <<<"$certs"
+          actual_digest="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs" \
+            | head -n 1 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          [[ -n "$ANDROID_RELEASE_CERT_SHA256" ]] || {
+            echo "missing required repository variable: ANDROID_RELEASE_CERT_SHA256"
+            exit 1
+          }
+          expected_digest="$(tr -d ':' <<<"$ANDROID_RELEASE_CERT_SHA256" \
+            | tr '[:lower:]' '[:upper:]')"
+          if [[ -z "$actual_digest" || "$actual_digest" != "$expected_digest" ]]; then
+            echo "refusing to publish an APK signed by an unexpected certificate"
+            echo "expected: $ANDROID_RELEASE_CERT_SHA256"
+            echo "actual:   ${actual_digest:-missing}"
+            exit 1
+          fi
+          mkdir -p release
+          cp "$src" "release/remotex-${{ needs.changes.outputs.label }}.apk"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          tag_name: nightly
-          name: Nightly (latest main)
-          body: |
-            Latest debug builds from `main`.
-
-            - Android APK: debug-signed, sideload via `adb install` or
-              tap the file after transferring it to the device.
-            - iOS IPA: *unsigned*. Sideload with AltStore, Sideloadly
-              (free Apple ID), or TrollStore on supported iOS versions.
-            - Use the tagged releases for anything stable.
-
-            Built from commit `${{ steps.label.outputs.short_sha }}`.
-          prerelease: true
-          files: ${{ env.artifact }}
-
-      - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
-          files: ${{ env.artifact }}
+          name: release-android
+          path: release/*.apk
+          if-no-files-found: error
 
   ios:
-    name: iOS · build + publish unsigned IPA
+    name: iPhone · tested unsigned IPA
     runs-on: macos-15
     needs: changes
-    if: |
-      needs.changes.outputs.is_tag == 'true' ||
-      needs.changes.outputs.ios == 'true'
+    if: needs.changes.outputs.force_all == 'true' || needs.changes.outputs.ios == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Show Xcode version
         run: xcodebuild -version
-
-      - name: Derive release label
-        id: label
-        run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            label="${GITHUB_REF_NAME}"
-          else
-            label="nightly-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
-          fi
-          echo "label=$label" >> "$GITHUB_OUTPUT"
-          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache DerivedData
-        uses: actions/cache@v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          key: ios-release-deriveddata-${{ runner.os }}-${{ hashFiles('apple/Remotex.xcodeproj/project.pbxproj', 'apple/Remotex/**/*.swift', 'apple/Remotex/Info.plist', 'apple/Remotex/Assets.xcassets/**') }}
+          key: ios-release-deriveddata-${{ runner.os }}-${{ hashFiles('apple/Remotex.xcodeproj/project.pbxproj', 'apple/Remotex.xcodeproj/xcshareddata/xcschemes/Remotex.xcscheme', 'apple/Remotex/**/*.swift', 'apple/RemotexTests/**/*.swift', 'apple/Remotex/Info.plist', 'apple/Remotex/Assets.xcassets/**') }}
           restore-keys: ios-release-deriveddata-${{ runner.os }}-
-
-      - name: Build unsigned device .app
-        # Release config + iphoneos SDK so it's a real-device slice
-        # (arm64, not simulator). No Apple team / cert is needed
-        # because every signing setting is wiped; Xcode skips the
-        # codesign + entitlements phases entirely.
+      - name: Run iPhone unit tests
         run: |
           set -o pipefail
           xcodebuild \
             -project apple/Remotex.xcodeproj \
             -scheme Remotex \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+      - name: Build unsigned device app
+        env:
+          PROJECT_PATH: apple/Remotex.xcodeproj
+          SCHEME_NAME: Remotex
+        run: |
+          set -o pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            marketing_version="${GITHUB_REF_NAME#v}"
+          else
+            marketing_version="$(xcodebuild \
+              -project "$PROJECT_PATH" \
+              -scheme "$SCHEME_NAME" \
+              -configuration Release \
+              -showBuildSettings \
+              | awk '/ MARKETING_VERSION = / && !found { value = $3; found = 1 } END { print value }')"
+          fi
+          if [[ ! "$marketing_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "invalid iPhone marketing version: $marketing_version"
+            exit 1
+          fi
+          build_number="$GITHUB_RUN_NUMBER"
+          xcodebuild \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME_NAME" \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
+            MARKETING_VERSION="$marketing_version" \
+            CURRENT_PROJECT_VERSION="$build_number" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -201,48 +232,194 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             build
-
+          echo "IOS_MARKETING_VERSION=$marketing_version" >> "$GITHUB_ENV"
+          echo "IOS_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
       - name: Package unsigned IPA
-        # An .ipa is just a zip of Payload/<app>. No codesign step.
+        shell: bash
         run: |
           app_dir="build/Build/Products/Release-iphoneos/Remotex.app"
-          test -d "$app_dir" || { echo "missing $app_dir"; exit 1; }
-          staging="$(mktemp -d)"
-          mkdir -p "$staging/Payload"
-          cp -R "$app_dir" "$staging/Payload/"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            out="build/remotex-${{ steps.label.outputs.label }}.ipa"
-          else
-            # Stable nightly filename — see the Android job for why.
-            out="build/remotex-nightly.ipa"
+          test -d "$app_dir"
+          actual_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_dir/Info.plist")"
+          actual_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_dir/Info.plist")"
+          [[ "$actual_version" == "$IOS_MARKETING_VERSION" ]]
+          [[ "$actual_build" == "$IOS_BUILD_NUMBER" ]]
+          if LC_ALL=C grep -R -a -E \
+            'remotex\.photonspark\.ro|demo-user-token|demo-bridge-token' "$app_dir"; then
+            echo "refusing to publish an iPhone app containing an operator URL or demo credential"
+            exit 1
           fi
-          (cd "$staging" && zip -qry "$GITHUB_WORKSPACE/$out" Payload)
-          echo "artifact=$out" >> "$GITHUB_ENV"
-          ls -lh "$out"
+          staging="$(mktemp -d)"
+          mkdir -p "$staging/Payload" release
+          cp -R "$app_dir" "$staging/Payload/"
+          (cd "$staging" && zip -qry "$GITHUB_WORKSPACE/release/remotex-${{ needs.changes.outputs.label }}.ipa" Payload)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-ios
+          path: release/*.ipa
+          if-no-files-found: error
 
-      - name: Publish nightly (main branch)
+  windows:
+    name: Windows · Electron installer
+    runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.force_all == 'true' || needs.changes.outputs.windows == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Check desktop sources
+        working-directory: apps/desktop
+        run: npm run lint
+      - name: Run desktop tests
+        working-directory: apps/desktop
+        run: npm test
+      - name: Audit desktop dependencies
+        working-directory: apps/desktop
+        run: npm audit
+      - name: Set package version
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          if ("$env:GITHUB_REF_TYPE" -eq "tag") {
+            $version = "$env:GITHUB_REF_NAME".TrimStart("v")
+          } else {
+            $base = (Get-Content package.json | ConvertFrom-Json).version.Split("-")[0]
+            $version = "$base-nightly.$env:GITHUB_RUN_NUMBER"
+          }
+          npm version $version --no-git-tag-version --allow-same-version
+      - name: Build Windows x64 installer and portable app
+        working-directory: apps/desktop
+        run: npm run pack:win -- --publish never
+      - name: Name Windows artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          $setup = Get-ChildItem apps/desktop/dist -Filter "*Setup*.exe" | Select-Object -First 1
+          $portable = Get-ChildItem apps/desktop/dist -Filter "*Portable*.exe" | Select-Object -First 1
+          if (-not $setup -or -not $portable) { throw "missing NSIS or portable Windows artifact" }
+          $asar = Get-Item apps/desktop/dist/win-unpacked/resources/app.asar
+          $asarCli = (Resolve-Path apps/desktop/node_modules/.bin/asar.cmd).Path
+          $auditDir = Join-Path $env:RUNNER_TEMP "remotex-desktop-asar"
+          & $asarCli extract $asar.FullName $auditDir
+          if ($LASTEXITCODE -ne 0) { throw "could not inspect packaged app.asar" }
+          $forbidden = Get-ChildItem $auditDir -Recurse -File -Include *.js,*.json,*.html,*.css,*.md |
+            Select-String -Pattern 'remotex\.photonspark\.ro|demo-user-token|demo-bridge-token'
+          if ($forbidden) { throw "packaged desktop app contains an operator URL or demo credential" }
+          Copy-Item $setup.FullName "release/remotex-windows-${{ needs.changes.outputs.label }}-setup.exe"
+          Copy-Item $portable.FullName "release/remotex-windows-${{ needs.changes.outputs.label }}-portable.exe"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-windows
+          path: release/*.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish verified release
+    runs-on: ubuntu-latest
+    needs: [changes, android, ios, windows]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    if: |
+      always() &&
+      needs.changes.result == 'success' &&
+      (needs.android.result == 'success' || needs.android.result == 'skipped') &&
+      (needs.ios.result == 'success' || needs.ios.result == 'skipped') &&
+      (needs.windows.result == 'success' || needs.windows.result == 'skipped') &&
+      (needs.android.result == 'success' || needs.ios.result == 'success' || needs.windows.result == 'success')
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Retain unchanged nightly binaries
         if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p release
+          release_tags="$(gh release list --limit 100 --json tagName --jq '.[].tagName')"
+          if grep -Fxq nightly <<<"$release_tags"; then
+            gh release download nightly --dir release --clobber \
+              --pattern 'remotex-nightly.apk' \
+              --pattern 'remotex-nightly.ipa' \
+              --pattern 'remotex-windows-nightly-*.exe'
+          else
+            echo "No prior nightly release; nothing to retain."
+          fi
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: build-artifacts
+          merge-multiple: true
+      - name: Assemble release assets
+        shell: bash
+        run: |
+          mkdir -p release
+          find build-artifacts -maxdepth 1 -type f -exec cp -f {} release/ \;
+          test -n "$(find build-artifacts -maxdepth 1 -type f -print -quit)"
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          find release -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
+            | sort -z \
+            | xargs -0 -r -I{} sha256sum "release/{}" \
+            | sed 's#release/##' > release/SHA256SUMS.txt
+          test -s release/SHA256SUMS.txt
+          cat release/SHA256SUMS.txt
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          # Only attest binaries built by this workflow invocation. A partial
+          # nightly may retain unchanged platform assets from the previous
+          # nightly, and claiming fresh provenance for those would be false.
+          subject-path: build-artifacts/*
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          Remotex clients are provider-neutral: enter the HTTPS URL of your own
+          Remotex relay on first launch. No public build contains the maintainer's
+          relay URL or demo credentials.
+
+          - **Android:** signed universal release APK; sideload it, then enter your relay URL and user token. Builds before v0.2.0 used Android's debug key, so those users must uninstall the old APK once before installing the new release-signed app.
+          - **Windows:** x64 NSIS installer plus portable Electron app. These binaries are not yet Authenticode-signed, so Windows SmartScreen may show an unknown-publisher warning; verify `SHA256SUMS.txt` and the GitHub build attestation.
+          - **iPhone:** unsigned IPA for re-signing with AltStore/Sideloadly or another sideloading workflow.
+
+          Updated from commit `${{ needs.changes.outputs.short_sha }}`. On a
+          partial nightly update, unchanged platform assets retain their original
+          build provenance and are not re-attested as fresh outputs.
+          EOF
+      - name: Publish nightly
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: nightly
           name: Nightly (latest main)
-          body: |
-            Latest builds from `main`.
-
-            - Android APK: debug-signed, sideload via `adb install`.
-            - iOS IPA: *unsigned*. Sideload with AltStore, Sideloadly
-              (free Apple ID), or TrollStore on supported iOS versions.
-            - Use the tagged releases for anything stable.
-
-            Built from commit `${{ steps.label.outputs.short_sha }}`.
+          body_path: ${{ runner.temp }}/release-notes.md
           prerelease: true
-          files: ${{ env.artifact }}
-
-      - name: Publish tagged release
+          make_latest: false
+          fail_on_unmatched_files: true
+          files: release/*
+      - name: Point rolling nightly tag at the published build
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          git tag --force nightly "$GITHUB_SHA"
+          git push --force origin refs/tags/nightly
+      - name: Publish stable tag
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/release-notes.md
           generate_release_notes: true
-          files: ${{ env.artifact }}
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: release/*
