@@ -32,6 +32,34 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-11 — publish and independently verify stable v0.2.0
+**Agent:** Codex · **Branch:** agent/release-final-record · **Status:** done
+
+- **Why:** close the release gate only after the exact CI-verified commit and
+  the binaries downloadable by users both passed independent checks.
+- **Changed:** no product code; annotated tag `v0.2.0` points to
+  `afbd0ca164fb447d35c6f61ccea4e3c64a295084`, and GitHub Release
+  `v0.2.0` is the published latest stable release with signed Android,
+  tested unsigned iPhone, Windows installer/portable, checksums, and build
+  provenance.
+- **Verified:** GitHub Release run `31516075218` passed all five jobs. Freshly
+  downloaded public assets pass `SHA256SUMS.txt` and `gh attestation verify`
+  while pinning the repository, release workflow, tag ref, and source commit.
+  The APK is `app.remotex` version `v0.2.0` / code `200`, uses APK Signature
+  Scheme v2, has exactly one signer, and matches certificate SHA-256
+  `ce056393153f7eaa6669bc0e8c9bc835e0d7b62f8173aaf84beca69baeaa5137`.
+  The IPA is `app.remotex.ios` version `0.2.0` / build `125` and contains no
+  signature payload, as documented. Both Windows downloads identify as valid
+  NSIS PE executables. Raw and extracted provider scans found no maintainer
+  relay URL or demo credentials. The live Remotex relay/Postgres remain
+  healthy, the daemon is active, the loopback publish remains restricted to
+  `127.0.0.1:19080`, and the public page serves the deployed v0.2 web bundle.
+- **Left open:** distribution limitations remain explicit in `I-022` through
+  `I-024` (Windows Authenticode, signed iPhone distribution, and terminated-app
+  mobile push). Back up `/root/.remotex/release`; losing the Android signing
+  key breaks upgrade continuity.
+- **Restart needed:** none.
+
 ## 2026-08-11 — accept both official apksigner certificate labels
 **Agent:** Codex · **Branch:** agent/release-cert-parser-hotfix · **Status:** fixed locally; release rerun pending
 
