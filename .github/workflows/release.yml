@@ -185,6 +185,20 @@ jobs:
           path: ~/Library/Developer/Xcode/DerivedData
           key: ios-release-deriveddata-${{ runner.os }}-${{ hashFiles('apple/Remotex.xcodeproj/project.pbxproj', 'apple/Remotex.xcodeproj/xcshareddata/xcschemes/Remotex.xcscheme', 'apple/Remotex/**/*.swift', 'apple/RemotexTests/**/*.swift', 'apple/Remotex/Info.plist', 'apple/Remotex/Assets.xcassets/**') }}
           restore-keys: ios-release-deriveddata-${{ runner.os }}-
+      - name: Build iPhone simulator app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project apple/Remotex.xcodeproj \
+            -scheme Remotex \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Select iPhone simulator
+        id: simulator
+        run: echo "device_id=$(apple/ci-select-simulator.sh)" >> "$GITHUB_OUTPUT"
       - name: Run iPhone unit tests
         run: |
           set -o pipefail
@@ -192,7 +206,7 @@ jobs:
             -project apple/Remotex.xcodeproj \
             -scheme Remotex \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
+            -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.device_id }}' \
             CODE_SIGNING_ALLOWED=NO \
             test
       - name: Build unsigned device app
