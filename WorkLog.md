@@ -32,6 +32,20 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-11 — resolve Android release verifier from the SDK
+**Agent:** Codex · **Branch:** agent/release-apksigner-hotfix · **Status:** fixed locally; release rerun pending
+
+- **Why:** the signed nightly APK built successfully, but the current hosted
+  runner no longer exports its installed `apksigner` binary on `PATH`.
+- **Changed:** `.github/workflows/release.yml` — select the newest executable
+  `apksigner` from `$ANDROID_SDK_ROOT/build-tools`, fail clearly if it is
+  absent, then retain the exact certificate and v2-signature gates.
+- **Verified:** the resolver selects the newest tool from the local SDK;
+  `actionlint` and `git diff --check` pass. The hosted release rerun is pending
+  at this entry's commit.
+- **Left open:** none specific to this fix.
+- **Restart needed:** none.
+
 ## 2026-08-11 — make release runners provision an iPhone simulator
 **Agent:** Codex · **Branch:** agent/release-simulator-hotfix · **Status:** fixed locally; macOS release rerun pending
 

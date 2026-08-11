@@ -146,7 +146,16 @@ jobs:
             echo "refusing to publish an APK containing an operator URL or demo credential"
             exit 1
           fi
-          certs="$(apksigner verify --verbose --print-certs "$src")"
+          apksigner_bin="$(
+            find "$ANDROID_SDK_ROOT/build-tools" -maxdepth 2 -type f -name apksigner -print |
+              sort -V |
+              tail -n 1
+          )"
+          if [[ -z "$apksigner_bin" || ! -x "$apksigner_bin" ]]; then
+            echo "could not find apksigner in Android SDK build-tools"
+            exit 1
+          fi
+          certs="$("$apksigner_bin" verify --verbose --print-certs "$src")"
           printf '%s\n' "$certs"
           grep -q 'Verified using v2 scheme.*true' <<<"$certs"
           actual_digest="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs" \
