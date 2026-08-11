@@ -158,8 +158,15 @@ jobs:
           certs="$("$apksigner_bin" verify --verbose --print-certs "$src")"
           printf '%s\n' "$certs"
           grep -q 'Verified using v2 scheme.*true' <<<"$certs"
-          actual_digest="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs" \
-            | head -n 1 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          grep -q '^Number of signers: 1$' <<<"$certs"
+          actual_digest="$(
+            sed -nE \
+              's/^(Signer #[0-9]+|V[0-9]+ Signer):? certificate SHA-256 digest: //p' \
+              <<<"$certs" |
+              sed -n '1p' |
+              tr -d ':' |
+              tr '[:lower:]' '[:upper:]'
+          )"
           [[ -n "$ANDROID_RELEASE_CERT_SHA256" ]] || {
             echo "missing required repository variable: ANDROID_RELEASE_CERT_SHA256"
             exit 1
