@@ -27,19 +27,25 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 class RelayClient(
-    private val baseUrl: String,
+    baseUrl: String,
+    allowInsecureHttp: Boolean = true,
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build(),
 ) {
+    private val baseUrlResult = normalizeRelayBaseUrl(baseUrl, allowInsecureHttp)
     private val json = Json { ignoreUnknownKeys = true }
     private val jsonMedia = "application/json".toMediaType()
+
+    private fun endpoint(path: String): String = baseUrlResult.getOrElse { cause ->
+        throw IllegalArgumentException(cause.message ?: "Invalid relay URL.", cause)
+    } + path
 
     /** GET /api/models — relay-provided model picker list. Unauthenticated. */
     suspend fun listModels(): List<ModelInfo> = withContext(Dispatchers.IO) {
         val req = Request.Builder()
-            .url("$baseUrl/api/models")
+            .url(endpoint("/api/models"))
             .get()
             .build()
         http.newCall(req).execute().use { resp ->
@@ -58,7 +64,7 @@ class RelayClient(
         hostId: String,
     ): List<ModelInfo> = withContext(Dispatchers.IO) {
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/models")
+            .url(endpoint("/api/hosts/$hostId/models"))
             .header("Authorization", "Bearer $userToken")
             .get()
             .build()
@@ -71,7 +77,7 @@ class RelayClient(
 
     suspend fun listHosts(userToken: String): List<Host> = withContext(Dispatchers.IO) {
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts")
+            .url(endpoint("/api/hosts"))
             .header("Authorization", "Bearer $userToken")
             .get()
             .build()
@@ -97,7 +103,7 @@ class RelayClient(
             putIfSet("cwd", cwd)
         }
         val req = Request.Builder()
-            .url("$baseUrl/api/sessions")
+            .url(endpoint("/api/sessions"))
             .header("Authorization", "Bearer $userToken")
             .post(body.toString().toRequestBody(jsonMedia))
             .build()
@@ -119,7 +125,7 @@ class RelayClient(
         threadId: String,
     ): PreviewResponse = withContext(Dispatchers.IO) {
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/threads/$threadId/preview?turns=2")
+            .url(endpoint("/api/hosts/$hostId/threads/$threadId/preview?turns=2"))
             .header("Authorization", "Bearer $userToken")
             .get()
             .build()
@@ -135,7 +141,7 @@ class RelayClient(
         limit: Int = 20,
     ): List<ThreadInfo> = withContext(Dispatchers.IO) {
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/threads?limit=$limit")
+            .url(endpoint("/api/hosts/$hostId/threads?limit=$limit"))
             .header("Authorization", "Bearer $userToken")
             .get()
             .build()
@@ -153,7 +159,7 @@ class RelayClient(
     ): FsListResponse = withContext(Dispatchers.IO) {
         val encoded = java.net.URLEncoder.encode(path, "UTF-8")
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/fs?path=$encoded")
+            .url(endpoint("/api/hosts/$hostId/fs?path=$encoded"))
             .header("Authorization", "Bearer $userToken")
             .get()
             .build()
@@ -171,7 +177,7 @@ class RelayClient(
     ): WorkspaceFile = withContext(Dispatchers.IO) {
         val encoded = java.net.URLEncoder.encode(path, "UTF-8")
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/fs/read?path=$encoded")
+            .url(endpoint("/api/hosts/$hostId/fs/read?path=$encoded"))
             .header("Authorization", "Bearer $userToken")
             .get()
             .build()
@@ -196,7 +202,7 @@ class RelayClient(
     ): Unit = withContext(Dispatchers.IO) {
         val body = """{"path":"${path.replace("\\", "\\\\").replace("\"", "\\\"")}"}"""
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/fs/delete")
+            .url(endpoint("/api/hosts/$hostId/fs/delete"))
             .header("Authorization", "Bearer $userToken")
             .post(body.toRequestBody(jsonMedia))
             .build()
@@ -216,7 +222,7 @@ class RelayClient(
         val esc = { s: String -> s.replace("\\", "\\\\").replace("\"", "\\\"") }
         val body = """{"from":"${esc(from)}","to":"${esc(to)}"}"""
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/fs/rename")
+            .url(endpoint("/api/hosts/$hostId/fs/rename"))
             .header("Authorization", "Bearer $userToken")
             .post(body.toRequestBody(jsonMedia))
             .build()
@@ -245,7 +251,7 @@ class RelayClient(
             )
             .build()
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/fs/upload")
+            .url(endpoint("/api/hosts/$hostId/fs/upload"))
             .header("Authorization", "Bearer $userToken")
             .post(multipart)
             .build()
@@ -277,7 +283,7 @@ class RelayClient(
             append('}')
         }
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/fs/mkdir")
+            .url(endpoint("/api/hosts/$hostId/fs/mkdir"))
             .header("Authorization", "Bearer $userToken")
             .post(body.toRequestBody(jsonMedia))
             .build()
@@ -294,7 +300,7 @@ class RelayClient(
         hostId: String,
     ): HostTelemetryResponse = withContext(Dispatchers.IO) {
         val req = Request.Builder()
-            .url("$baseUrl/api/hosts/$hostId/telemetry")
+            .url(endpoint("/api/hosts/$hostId/telemetry"))
             .header("Authorization", "Bearer $userToken")
             .get()
             .build()

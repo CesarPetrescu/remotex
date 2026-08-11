@@ -9,7 +9,7 @@ plugins {
 // -PversionName=nightly-<date>-<sha> on main; local builds pass nothing.
 // See .github/workflows/release.yml.
 val versionNameProperty: String = (findProperty("versionName") as String?)?.trim().orEmpty()
-val resolvedVersionName: String = versionNameProperty.ifEmpty { "0.1.0" }
+val resolvedVersionName: String = versionNameProperty.ifEmpty { "0.2.0" }
 
 // v1.2.3 → 10203, so a newer tag always compares greater. Anything that
 // isn't a semver tag (nightlies, local builds) stays at 1 — those are
@@ -24,6 +24,21 @@ val resolvedVersionCode: Int =
     (findProperty("versionCode") as String?)?.trim()?.toIntOrNull()
         ?: versionCodeFor(resolvedVersionName)
 
+val relayUrlProperty = (findProperty("relayUrl") as String?)?.trim()?.takeIf { it.isNotEmpty() }
+fun buildConfigString(value: String): String =
+    "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+val hasReleaseSigning = listOf(
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it != null }
+
 android {
     namespace = "app.remotex"
     compileSdk = 35
@@ -34,18 +49,24 @@ android {
         targetSdk = 35
         versionCode = resolvedVersionCode
         versionName = resolvedVersionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Inject the relay URL at build time. Defaults to 10.0.2.2 so the
-        // debug build talks to a relay running on the host machine when
-        // launched in the Android emulator; override with -PrelayUrl=...
-        val relayUrl = (findProperty("relayUrl") as String?)
-            ?: "http://10.0.2.2:8080"
-        buildConfigField("String", "RELAY_URL", "\"$relayUrl\"")
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("envRelease") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     compileOptions {
@@ -60,9 +81,23 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
+            buildConfigField(
+                "String",
+                "RELAY_URL",
+                buildConfigString(relayUrlProperty ?: "http://10.0.2.2:8080"),
+            )
         }
         release {
             isMinifyEnabled = true
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("envRelease")
+            }
+            // Public artifacts must not endorse or leak any operator's relay.
+            buildConfigField(
+                "String",
+                "RELAY_URL",
+                buildConfigString(relayUrlProperty.orEmpty()),
+            )
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -81,6 +116,8 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

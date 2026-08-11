@@ -78,11 +78,11 @@ export function useBackgroundCompletionAlert(state) {
   }
 }
 
-function chatLabelFor(state) {
+export function chatLabelFor(state) {
   const tid = state.session?.threadId || state.session?.thread_id;
   if (tid) {
     const thread = state.threads?.find((t) => t.id === tid);
-    if (thread?.title && !thread.titleIsGeneric) return ellipsize(thread.title, 28);
+    if (thread?.title && thread.title_is_generic === false) return ellipsize(thread.title, 28);
     if (thread?.preview) return ellipsize(thread.preview, 28);
   }
   if (state.session?.sessionId) return state.session.sessionId.slice(0, 10) + '…';

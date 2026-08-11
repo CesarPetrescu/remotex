@@ -1430,7 +1430,7 @@ main.screen-host {
 }
 @media (max-width: 640px) {
   /* Thumb-sized on phones, where it is the only way to abort a turn. */
-  .working-stop { min-height: 34px; padding: 6px 12px; font-size: 12px; }
+  .working-stop { min-height: 44px; padding: 6px 12px; font-size: 12px; }
 }
 
 /* --- modal --- */
@@ -1469,18 +1469,29 @@ main.screen-host {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  padding: 10px 14px;
+  padding: 8px 8px 8px 14px;
   background: var(--panel-2);
   border: 1px solid var(--line);
   color: var(--ink);
   font-family: var(--mono);
   font-size: 12px;
   max-width: 360px;
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   z-index: 40;
 }
 .toast.error { border-color: var(--warn); color: var(--warn); }
 .toast.info { border-color: var(--amber); color: var(--amber); }
+.toast-message { flex: 1; min-width: 0; }
+.toast-dismiss {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  background: transparent;
+  border-color: transparent;
+  color: currentColor;
+  line-height: 1;
+}
 
 /* --- responsive tweaks --- */
 
@@ -3643,6 +3654,27 @@ main.screen-host {
   overflow: hidden;
   white-space: nowrap;
 }
+.session-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  margin-top: 3px;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.session-goal-usage,
+.session-token-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.session-goal-usage { color: var(--amber); }
+.session-goal-usage progress {
+  width: 64px;
+  height: 5px;
+  accent-color: var(--amber);
+}
 .session-meta-host { color: var(--ink); }
 .session-meta-host::before { content: '◇ '; color: var(--ink-dim); }
 .session-meta-model { color: var(--amber); }
@@ -4480,10 +4512,20 @@ html, body { overscroll-behavior-y: none; }
 
 /* A2: compact session header once the transcript scrolls. */
 @media (max-width: 640px) {
-  .session-meta.compact .session-meta-row2 { display: none; }
+  .session-meta.compact .session-meta-row2,
+  .session-meta.compact .session-usage { display: none; }
   .session-meta.compact { padding-top: 6px; padding-bottom: 6px; }
 }
 .session-meta { transition: padding 140ms ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
 
 /* Bottom sheets opt out of the global square-off — rounded top corners
    are the affordance that says "this pulls down". */

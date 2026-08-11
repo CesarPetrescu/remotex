@@ -3,19 +3,29 @@ import { ModelPicker, EffortPicker, PermissionsPicker } from './Pickers';
 import { SendOrStopButton } from './SendOrStopButton';
 
 // Daemon-supported slash commands. Wire matches services/daemon/adapters/stdio.py.
-const KNOWN_SLASHES = [
+export const KNOWN_SLASHES = [
   { id: 'goal', hint: 'set or inspect the native Codex goal', takesArg: true, argHint: '<objective|pause|resume|clear>' },
   { id: 'plan', hint: 'plan-then-act for the next turn (codex plan mode)', takesArg: false },
   { id: 'default', hint: 'clear plan mode', takesArg: false },
   { id: 'cd', hint: 'change cwd for next turns', takesArg: true, argHint: '<path>' },
   { id: 'pwd', hint: 'show current cwd', takesArg: false },
   { id: 'compact', hint: 'have codex summarise + compact the thread', takesArg: false },
+  { id: 'collab', hint: 'list collaboration modes available from codex', takesArg: false },
 ];
 
-function matchSlashes(text) {
+export function matchSlashes(text) {
   const q = text.slice(1).toLowerCase();
   if (!q) return KNOWN_SLASHES;
   return KNOWN_SLASHES.filter((s) => s.id.startsWith(q));
+}
+
+export function parseKnownSlash(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed.startsWith('/')) return null;
+  const space = trimmed.indexOf(' ');
+  const cmd = (space === -1 ? trimmed.slice(1) : trimmed.slice(1, space)).toLowerCase();
+  if (!KNOWN_SLASHES.some((slash) => slash.id === cmd)) return null;
+  return { cmd, args: space === -1 ? '' : trimmed.slice(space + 1).trim() };
 }
 
 function isGoalCommand(text) {
@@ -122,16 +132,11 @@ export function Composer({
       return;
     }
     // Bare `/cmd args` — fire as a slash command, not a turn.
-    if (text.startsWith('/')) {
-      const trimmed = text.trim();
-      const space = trimmed.indexOf(' ');
-      const cmd = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space);
-      const args = space === -1 ? '' : trimmed.slice(space + 1);
-      if (KNOWN_SLASHES.some((s) => s.id === cmd)) {
-        setTextSized('');
-        onSlashCommand?.(cmd, args);
-        return;
-      }
+    const slash = parseKnownSlash(text);
+    if (slash) {
+      setTextSized('');
+      onSlashCommand?.(slash.cmd, slash.args);
+      return;
     }
     if (canSteer) {
       onSteer(text);

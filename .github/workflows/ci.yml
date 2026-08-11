@@ -19,10 +19,10 @@ jobs:
         workspace:
           - { name: client, dir: "apps/web" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: ${{ matrix.workspace.dir }}/package-lock.json
       - working-directory: ${{ matrix.workspace.dir }}
@@ -39,10 +39,10 @@ jobs:
         workspace:
           - { name: client, dir: "apps/web" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: ${{ matrix.workspace.dir }}/package-lock.json
       - working-directory: ${{ matrix.workspace.dir }}
@@ -60,10 +60,10 @@ jobs:
         workspace:
           - { name: client, dir: "apps/web" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: ${{ matrix.workspace.dir }}/package-lock.json
       - working-directory: ${{ matrix.workspace.dir }}
@@ -72,30 +72,75 @@ jobs:
         run: npm run test:run
 
   web-audit:
-    name: Web · npm audit (prod)
+    name: Web · npm audit
     runs-on: ubuntu-latest
     strategy:
       matrix:
         workspace:
           - { name: client, dir: "apps/web" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: ${{ matrix.workspace.dir }}/package-lock.json
       - working-directory: ${{ matrix.workspace.dir }}
         run: npm ci
       - working-directory: ${{ matrix.workspace.dir }}
-        run: npm audit --omit=dev
+        run: npm audit
+
+  desktop-windows:
+    name: Windows desktop · test + package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Check desktop sources
+        working-directory: apps/desktop
+        run: npm run lint
+      - name: Run desktop tests
+        working-directory: apps/desktop
+        run: npm test
+      - name: Audit desktop dependencies
+        working-directory: apps/desktop
+        run: npm audit
+      - name: Build NSIS installer and portable executable
+        working-directory: apps/desktop
+        run: npm run pack:win -- --publish never
+      - name: Verify Windows artifacts
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem apps/desktop/dist -Filter "*Setup*.exe" | Select-Object -First 1
+          $portable = Get-ChildItem apps/desktop/dist -Filter "*Portable*.exe" | Select-Object -First 1
+          if (-not $setup -or -not $portable) { throw "missing NSIS or portable Windows artifact" }
+          $asar = Get-Item apps/desktop/dist/win-unpacked/resources/app.asar
+          $asarCli = (Resolve-Path apps/desktop/node_modules/.bin/asar.cmd).Path
+          $auditDir = Join-Path $env:RUNNER_TEMP "remotex-desktop-asar"
+          & $asarCli extract $asar.FullName $auditDir
+          if ($LASTEXITCODE -ne 0) { throw "could not inspect packaged app.asar" }
+          $forbidden = Get-ChildItem $auditDir -Recurse -File -Include *.js,*.json,*.html,*.css,*.md |
+            Select-String -Pattern 'remotex\.photonspark\.ro|demo-user-token|demo-bridge-token'
+          if ($forbidden) { throw "packaged desktop app contains an operator URL or demo credential" }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-desktop-pr-build
+          path: apps/desktop/dist/*.exe
+          if-no-files-found: error
 
   backend-lint:
     name: Backend · ruff
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -106,13 +151,28 @@ jobs:
         working-directory: services
         run: ruff check .
 
+  backend-audit:
+    name: Backend · dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/requirements.txt
+      - name: Install pip-audit
+        run: python -m pip install pip-audit==2.10.1
+      - name: Audit runtime requirements
+        run: pip-audit -r services/requirements.txt
+
   backend-tests:
     name: Backend · pytest
     runs-on: ubuntu-latest
     needs: backend-lint
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -149,8 +209,8 @@ jobs:
       # by default everywhere else.
       RELAY_SEED_DEMO: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -165,15 +225,14 @@ jobs:
     name: Android · Gradle
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "17"
+          verify-signature: true
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: latest
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
       - name: Install Android SDK packages
         # The `packages:` input on setup-android@v3 passes the whole
         # newline-separated list to sdkmanager as one argv string, which
@@ -182,13 +241,12 @@ jobs:
         # Call sdkmanager ourselves with each package as a separate
         # quoted argument instead.
         run: |
-          yes | sdkmanager --licenses >/dev/null
           sdkmanager \
             "platforms;android-35" \
             "build-tools;34.0.0" \
             "platform-tools"
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -201,7 +259,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: app-debug.apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
@@ -216,11 +274,33 @@ jobs:
         # Lint failures print a summary but the actionable detail (file,
         # line, explanation) only lives in the generated report.
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-lint-report
           path: android/app/build/reports/
           if-no-files-found: ignore
+
+  android-instrumentation:
+    name: Android · emulator UI tests
+    runs-on: ubuntu-latest
+    needs: android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          verify-signature: true
+      - name: Enable KVM for the emulator
+        run: sudo chmod 666 /dev/kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: cd android && ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace
 
   # iPhone build runs on expensive macos-15 minutes, so (1) gate it on
   # paths that actually affect the build, and (2) cache DerivedData so
@@ -231,9 +311,9 @@ jobs:
     outputs:
       touched: ${{ steps.filter.outputs.touched }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
             touched:
@@ -241,12 +321,12 @@ jobs:
               - '.github/workflows/ci.yml'
 
   ios:
-    name: iPhone · Xcode build
+    name: iPhone · tests + Xcode build
     runs-on: macos-15
     needs: ios-changes
     if: needs.ios-changes.outputs.touched == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Show Xcode version
         run: |
           xcodebuild -version
@@ -254,10 +334,10 @@ jobs:
       - name: Cache DerivedData
         # Key on the project file + every Swift source + Info.plist +
         # asset catalog, so an identical tree restores a warm build.
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          key: ios-deriveddata-${{ runner.os }}-${{ hashFiles('apple/Remotex.xcodeproj/project.pbxproj', 'apple/Remotex/**/*.swift', 'apple/Remotex/Info.plist', 'apple/Remotex/Assets.xcassets/**') }}
+          key: ios-deriveddata-${{ runner.os }}-${{ hashFiles('apple/Remotex.xcodeproj/project.pbxproj', 'apple/Remotex.xcodeproj/xcshareddata/xcschemes/Remotex.xcscheme', 'apple/Remotex/**/*.swift', 'apple/RemotexTests/**/*.swift', 'apple/Remotex/Info.plist', 'apple/Remotex/Assets.xcassets/**') }}
           restore-keys: ios-deriveddata-${{ runner.os }}-
       - name: Build iPhone simulator app
         run: |
@@ -270,3 +350,29 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
+      - name: Run iPhone tests
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project apple/Remotex.xcodeproj \
+            -scheme Remotex \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+      - name: Capture provider-neutral setup screen
+        run: |
+          app_path="$(find "$HOME/Library/Developer/Xcode/DerivedData" -path '*/Build/Products/Debug-iphonesimulator/Remotex.app' -print -quit)"
+          test -d "$app_path"
+          xcrun simctl boot 'iPhone 16 Pro' 2>/dev/null || true
+          xcrun simctl bootstatus 'iPhone 16 Pro' -b
+          xcrun simctl install booted "$app_path"
+          xcrun simctl launch booted app.remotex.ios
+          sleep 3
+          mkdir -p artifacts
+          xcrun simctl io booted screenshot artifacts/iphone-setup.png
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: iphone-setup-screenshot
+          path: artifacts/iphone-setup.png
+          if-no-files-found: error

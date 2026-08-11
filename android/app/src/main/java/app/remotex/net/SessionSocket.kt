@@ -3,6 +3,10 @@ package app.remotex.net
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -17,6 +21,24 @@ sealed interface SocketEvent {
     data class Failure(val throwable: Throwable) : SocketEvent
 }
 
+internal fun buildHelloFrame(
+    userToken: String,
+    sessionId: String,
+    clientId: String,
+    clientName: String,
+    lastSeq: Long,
+): String = Json.encodeToString(
+    JsonObject.serializer(),
+    buildJsonObject {
+        put("type", "hello")
+        put("token", userToken)
+        put("session_id", sessionId)
+        put("client_id", clientId)
+        put("client_name", clientName)
+        put("last_seq", lastSeq)
+    },
+)
+
 /**
  * Thin wrapper over OkHttp's WebSocket. Exposes incoming traffic as a
  * [Flow] and lets callers push frames back through [sendJson].
@@ -29,6 +51,7 @@ class SessionSocket(
     clientId: String,
     lastSeq: Long = 0L,
     clientName: String = "android",
+    allowInsecureHttp: Boolean = true,
     http: OkHttpClient = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
@@ -48,15 +71,13 @@ class SessionSocket(
     private val socket: WebSocket
 
     init {
-        val wsUrl = baseUrl
+        val wsUrl = requireRelayBaseUrl(baseUrl, allowInsecureHttp)
             .replaceFirst("https://", "wss://")
             .replaceFirst("http://", "ws://") + "/ws/client"
         val req = Request.Builder().url(wsUrl).build()
         socket = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send(
-                    """{"type":"hello","token":"$userToken","session_id":"$sessionId","client_id":"$clientId","client_name":"$clientName","last_seq":$lastSeq}"""
-                )
+                webSocket.send(buildHelloFrame(userToken, sessionId, clientId, clientName, lastSeq))
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 _events.trySend(SocketEvent.Frame(text))

@@ -44,7 +44,9 @@ fun ApprovalDialog(
         ?.takeIf { it.isNotBlank() && it != "{}" && it != "null" }
 
     AlertDialog(
-        onDismissRequest = { onDecision("cancel") },
+        onDismissRequest = {
+            if ("cancel" in prompt.decisions) onDecision("cancel")
+        },
         containerColor = MaterialTheme.colorScheme.surface,
         shape = RectangleShape,
         title = {
@@ -125,24 +127,40 @@ fun ApprovalDialog(
                         )
                     }
                 }
-                TextButton(onClick = { onDecision("accept") }) {
-                    Text(
-                        "accept",
-                        color = Ok,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                    )
+                if ("accept" in prompt.decisions) {
+                    TextButton(onClick = { onDecision("accept") }) {
+                        Text(
+                            "accept",
+                            color = Ok,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                        )
+                    }
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = { onDecision("decline") }) {
-                Text(
-                    "decline",
-                    color = Warn,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if ("cancel" in prompt.decisions) {
+                    TextButton(onClick = { onDecision("cancel") }) {
+                        Text(
+                            "cancel",
+                            color = InkDim,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                if ("decline" in prompt.decisions) {
+                    TextButton(onClick = { onDecision("decline") }) {
+                        Text(
+                            "decline",
+                            color = Warn,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
             }
         },
     )

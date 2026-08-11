@@ -71,7 +71,7 @@ class Config:
 
     @property
     def os_user(self) -> str:
-        # Reported to the relay so clients can show "host (cesar5514)"
+        # Reported to the relay so clients can show "host (alice)"
         # — matters when one box runs daemons under multiple Linux
         # accounts (each with its own ~/.codex/auth.json).
         try:

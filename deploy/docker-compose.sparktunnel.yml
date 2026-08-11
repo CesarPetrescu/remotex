@@ -1,8 +1,11 @@
 services:
   relay:
-    # SparkTunnel reaches relay:8080 on the private Compose network.
-    # Do not publish the relay on the host in this deployment.
-    ports: !reset []
+    # SparkTunnel reaches relay:8080 on the private Compose network. Keep a
+    # separate loopback-only publish for a daemon running on this same host;
+    # otherwise that daemon needlessly hairpins through public DNS and the
+    # tunnel and drops whenever the connector has a transient outage.
+    ports: !override
+      - "127.0.0.1:${RELAY_LOCAL_HOST_PORT:-19080}:8080"
     environment:
       # SparkTunnel 0.2.0 preserves caller-supplied forwarding headers and
       # does not provide a trustworthy visitor IP. Key limits on its TCP peer.

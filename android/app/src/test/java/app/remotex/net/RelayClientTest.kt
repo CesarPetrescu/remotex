@@ -10,6 +10,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -89,6 +90,21 @@ class RelayClientTest {
         assertEquals("GET", request.method)
         assertEquals("/api/hosts/host_1/models", request.path)
         assertEquals("Bearer user-token", request.getHeader("Authorization"))
+    }
+
+    @Test
+    fun invalidBaseIsRejectedBeforeBearerRequest() = runTest {
+        val badBase = server.url("/").newBuilder()
+            .username("embedded")
+            .password("secret")
+            .build()
+            .toString()
+        val result = runCatching {
+            RelayClient(badBase).listHosts("must-not-leak")
+        }
+
+        assertTrue(result.exceptionOrNull() is IllegalArgumentException)
+        assertEquals(0, server.requestCount)
     }
 
     @Test

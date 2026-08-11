@@ -34,7 +34,7 @@ deploy/
 ├── Dockerfile.relay          builds React, then the Python relay image
 ├── Dockerfile.sparktunnel    pinned PhotonSpark connector image
 ├── docker-compose.yml        relay, Postgres, optional ingress profiles
-├── docker-compose.sparktunnel.yml removes host ports for SparkTunnel
+├── docker-compose.sparktunnel.yml keeps a loopback daemon endpoint
 ├── Caddyfile                 HTTPS/WSS reverse proxy
 ├── .env.example              deployment settings
 ├── entrypoint.sh             unprivileged relay startup
@@ -233,9 +233,11 @@ PhotonSpark, which provides the public hostname, TLS, HTTP routing, and
 WebSocket upgrades. A PhotonSpark account and a site configured with the
 SparkTunnel deployment method are required.
 
-This mode is opt-in: `docker-compose.sparktunnel.yml` removes the relay's host
-port only when it is explicitly included. It does not change local or Caddy
-deployments that use `docker-compose.yml` by itself.
+This mode is opt-in: `docker-compose.sparktunnel.yml` replaces the base host
+publish with a loopback-only endpoint on `127.0.0.1:19080` (configurable with
+`RELAY_LOCAL_HOST_PORT`). SparkTunnel still reaches the relay over the private
+Compose network. It does not change local or Caddy deployments that use
+`docker-compose.yml` by itself.
 
 Create the tunnel in the PhotonSpark dashboard and copy its one-time connector
 token. Then configure the optional Compose profile:
@@ -258,6 +260,7 @@ defaults are normally correct:
 RELAY_SEED_DEMO=0
 SPARK_TUNNEL_SERVER=https://webhost.photonspark.com
 SPARK_TUNNEL_TARGET=http://relay:8080
+RELAY_LOCAL_HOST_PORT=19080
 ```
 
 The SparkTunnel override forces `RELAY_TRUST_PROXY=0`. SparkTunnel 0.2.0 does
@@ -267,9 +270,12 @@ would let a caller evade the per-address rate limit. With the safe setting,
 all public visitors share the connector's TCP-peer bucket; true per-visitor IP
 limits require a future PhotonSpark header contract that strips spoofed input.
 
-The target is deliberately the relay's private Compose address. The
-SparkTunnel override removes the relay's host port entirely; only containers
-on the private `remotex` network can reach it directly.
+The target is deliberately the relay's private Compose address. The override
+also publishes the relay at `127.0.0.1:${RELAY_LOCAL_HOST_PORT:-19080}` solely
+for a daemon installed on this same machine. Point that daemon at
+`ws://127.0.0.1:19080/ws/daemon`; phones and browsers continue to use the
+public TLS hostname. Because the publish is loopback-only, it creates no LAN
+or internet listener.
 Do not run the `tls` and `sparktunnel` profiles together unless you explicitly
 need two public ingress paths.
 
@@ -415,6 +421,7 @@ python3 -m daemon run --config ./demo-config.toml
 | `SPARK_TUNNEL_TOKEN` | none | PhotonSpark one-time connector bearer token |
 | `SPARK_TUNNEL_SERVER` | `https://webhost.photonspark.com` | PhotonSpark connector endpoint |
 | `SPARK_TUNNEL_TARGET` | `http://relay:8080` | Private HTTP/WebSocket target inside Compose |
+| `RELAY_LOCAL_HOST_PORT` | `19080` | Loopback-only relay port retained by the SparkTunnel override for a same-host daemon |
 | `SPARK_TUNNEL_DOWNLOAD_URL` | official Linux amd64 artifact | Connector image build source |
 | `SPARK_TUNNEL_SHA256` | pinned 0.2.0 digest | Connector artifact integrity check |
 

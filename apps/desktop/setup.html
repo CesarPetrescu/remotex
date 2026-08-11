@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; form-action 'none'; base-uri 'none'"
+    >
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect Remotex</title>
+    <link rel="stylesheet" href="setup.css">
+  </head>
+  <body>
+    <main class="setup-shell">
+      <section class="setup-card" aria-labelledby="setup-title">
+        <img class="brand-mark" src="assets/logo.png" alt="">
+        <p class="eyebrow">REMOTEX DESKTOP</p>
+        <h1 id="setup-title">Connect to your relay</h1>
+        <p class="intro">
+          Enter the address that serves your Remotex web app. HTTPS is required except for a relay running on this computer.
+        </p>
+
+        <form id="relay-form" novalidate>
+          <label for="relay-url">Relay URL</label>
+          <input
+            id="relay-url"
+            name="relay-url"
+            type="url"
+            inputmode="url"
+            autocomplete="url"
+            autocapitalize="none"
+            spellcheck="false"
+            placeholder="https://relay.example.com"
+            maxlength="2048"
+            required
+          >
+          <p class="hint">Examples: relay.example.com or http://localhost:8080</p>
+          <p id="error-message" class="error-message" role="alert" hidden></p>
+
+          <div class="actions">
+            <button id="cancel" class="secondary" type="button" hidden>Cancel</button>
+            <button id="submit" class="primary" type="submit">Open Remotex</button>
+          </div>
+        </form>
+      </section>
+    </main>
+    <script src="setup.js"></script>
+  </body>
+</html>

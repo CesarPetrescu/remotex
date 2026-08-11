@@ -23,6 +23,7 @@ import app.remotex.ui.Screen
 import app.remotex.ui.UiState
 import app.remotex.ui.screens.session.composer.CompactEffortPicker
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Speed
 import app.remotex.ui.screens.session.composer.CompactModelPicker
@@ -37,9 +38,11 @@ fun RemotexBar(
     onModelChange: (String) -> Unit,
     onEffortChange: (String) -> Unit,
     darkTheme: Boolean = true,
+    highContrast: Boolean = false,
     onToggleTheme: () -> Unit = {},
     onOpenTelemetry: () -> Unit = {},
 ) {
+    val hasConfiguredHost = state.selectedHostId != null
     TopAppBar(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -49,23 +52,25 @@ fun RemotexBar(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 14.sp,
                 )
-                Spacer(Modifier.width(10.dp))
-                StatusBadge(state)
-                Spacer(Modifier.width(8.dp))
-                CompactModelPicker(
-                    selected = state.model,
-                    options = state.modelOptions,
-                    onSelect = onModelChange,
-                    modifier = Modifier.widthIn(max = 94.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                CompactEffortPicker(
-                    model = state.model,
-                    selected = state.effort,
-                    options = state.modelOptions,
-                    onSelect = onEffortChange,
-                    modifier = Modifier.widthIn(max = 78.dp),
-                )
+                if (hasConfiguredHost) {
+                    Spacer(Modifier.width(10.dp))
+                    StatusBadge(state)
+                    Spacer(Modifier.width(8.dp))
+                    CompactModelPicker(
+                        selected = state.model,
+                        options = state.modelOptions,
+                        onSelect = onModelChange,
+                        modifier = Modifier.widthIn(max = 94.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    CompactEffortPicker(
+                        model = state.model,
+                        selected = state.effort,
+                        options = state.modelOptions,
+                        onSelect = onEffortChange,
+                        modifier = Modifier.widthIn(max = 78.dp),
+                    )
+                }
             }
         },
         navigationIcon = {
@@ -80,17 +85,29 @@ fun RemotexBar(
             }
         },
         actions = {
-            IconButton(onClick = onOpenTelemetry) {
-                Icon(
-                    Icons.Filled.Speed,
-                    contentDescription = "Host telemetry",
-                    tint = Ink,
-                )
+            if (hasConfiguredHost) {
+                IconButton(onClick = onOpenTelemetry) {
+                    Icon(
+                        Icons.Filled.Speed,
+                        contentDescription = "Host telemetry",
+                        tint = Ink,
+                    )
+                }
             }
             IconButton(onClick = onToggleTheme) {
+                val icon = when {
+                    highContrast -> Icons.Filled.DarkMode
+                    darkTheme -> Icons.Filled.LightMode
+                    else -> Icons.Filled.Contrast
+                }
+                val description = when {
+                    highContrast -> "Switch to dark theme"
+                    darkTheme -> "Switch to light theme"
+                    else -> "Switch to high contrast theme"
+                }
                 Icon(
-                    if (darkTheme) Icons.Filled.LightMode else Icons.Filled.DarkMode,
-                    contentDescription = if (darkTheme) "Switch to light theme" else "Switch to dark theme",
+                    icon,
+                    contentDescription = description,
                     tint = Ink,
                 )
             }

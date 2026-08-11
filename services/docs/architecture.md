@@ -9,17 +9,17 @@ multi-machine per user.
 ## Topology
 
 ```
-    Client (web / iOS / Android)
+    Client (web / Windows / iOS / Android)
               │
               │  HTTPS + WSS (user bearer token)
               ▼
     ┌────────────────────────┐           ┌────────────────────────┐
     │  Relay (aiohttp)       │◄── WSS ───│ Daemon (user's host)   │
     │  · bearer-token auth   │  outbound │ · reads bridge token   │
-    │  · routes session IDs  │   only    │ · spawns one           │
-    │  · replay + fan-out    │           │   `codex app-server`   │
-    └───────────┬────────────┘           │   per session          │
-                │                        │ · stdio JSON-RPC local │
+    │  · routes session IDs  │   only    │ · isolated app-server  │
+    │  · replay + fan-out    │           │   or shared control    │
+    └───────────┬────────────┘           │   socket               │
+                │                        │ · local JSON-RPC       │
                 ▼                        └────────────────────────┘
           Postgres                                   │
           (inventory)                                ▼
@@ -71,6 +71,20 @@ already look like a 64-char hex digest).
 
 Audit lines never carry a credential either: `logging.user_hash(token)`
 (first 12 chars of the digest) is what goes in the log.
+
+Native client credentials are provider-scoped as well. Android encrypts each
+normalized relay base URL's token with AES-GCM under a separate non-exportable Android
+Keystore key and excludes the ciphertext preferences from backup. iPhone
+stores the token as a Keychain generic-password item whose account is derived
+from the normalized relay URL. Changing relay providers therefore loads an
+empty or previously saved credential for that provider instead of reusing the
+token that belonged to another relay. The relay URL itself is not secret and
+is stored in ordinary app settings.
+
+The Windows app does not add a native token store: it loads the selected
+relay's web app in a persistent, sandboxed Chromium partition, so the web
+client's session-only/persistent token preference remains authoritative. The
+Electron setup stores only the normalized relay origin.
 
 The demo user/host/bridge key are **opt-in** — the relay only seeds them
 when `RELAY_SEED_DEMO` is truthy (`1`/`true`/`yes`), and it never logs the
@@ -167,8 +181,9 @@ attempt on `WSMsgType.ERROR` is best-effort and usually never leaves. So:
 Clients enforce the same ceiling before anything leaves the device:
 `MAX_FILE_BYTES` in `apps/web/src/config.js` (overridable at build time
 with `VITE_REMOTEX_MAX_FILE_BYTES`) and in
-`android/.../ui/RemotexViewModel.kt`. Image attachments are checked
-*cumulatively* on both, since the whole batch rides one `turn-start` frame.
+`android/.../ui/RemotexViewModel.kt`, plus `maxAttachmentBytes` in the iPhone
+ViewModel. Image attachments are checked *cumulatively*, since the whole batch
+rides one `turn-start` frame.
 
 ## WebSocket frames
 
@@ -210,11 +225,13 @@ and `client_id` stamped on by the relay.
 | relay → client | `pending-prompts`       | `{approvals[], user_inputs[]}` — unresolved prompts as **queues**, oldest first, not sequenced |
 | relay → client | `replay-gap`            | `{session_id, missed_from, missed_to}` — frames the replay buffer no longer holds; sent *before* the frames it precedes |
 | client → relay | `turn-start`            | `{input, model?, effort?, permissions?, approvalPolicy?, collaborationMode?, images?, client_message_id?}` |
+| client → relay | `turn-steer`            | `{input, images?, client_message_id?}` — add input to the active turn |
 | client → relay | `turn-interrupt`        | interrupt the live turn |
+| client → relay | `history-more`          | `{before, limit?}` — page older rollout turns into this session |
 | client → relay | `approval-response`     | `{approval_id, decision}` |
 | client → relay | `user-input-response`   | `{call_id, answers}` |
 | client → relay | `slash-command`         | `{command, args}` |
-| client → relay | `goal-get` / `goal-set` / `goal-clear` | direct goal control (Android; web routes `/goal` through `slash-command`) |
+| client → relay | `goal-get` / `goal-set` / `goal-clear` | direct native-client goal control; web can route `/goal` through `slash-command` |
 | client → relay | `session-close`         | close the backend session for every attached client |
 | client → relay | `ping` → `pong`         | keepalive; also counts as session activity |
 | relay → client | `session-event`         | same envelope as from the daemon, plus a `seq` |
@@ -230,21 +247,29 @@ Emitted by the daemon adapter, normalized from Codex notifications:
 |---|---|
 | `session-started` | `{model, cwd, thread_id, transport, kind, resuming?}` |
 | `turn-started` / `turn-completed` | `{turn_id, …}`; `turn-completed` carries `error` on failure |
-| `item-started` / `item-delta` / `item-completed` | `{turn_id, item_id, item_type, …}` |
+| `item-started` / `item-delta` / `item-patch` / `item-completed` | `{turn_id, item_id, item_type, …}`; patches replace the current progressive diff |
+| `steer-failed` | active-turn steer reached the daemon but Codex rejected it |
 | `approval-request` | `{approval_id, kind, decisions[], …}` — command / file_change / permissions |
 | `user-input-request` | `{call_id, turn_id, questions[]}` |
 | `thread-status` | resume progress: `resuming` / `resumed` / `resume-failed` |
+| `session-settings` | effective model/effort/permissions resolved by Codex |
 | `token-usage` | flattened `thread/tokenUsage/updated` totals + context window |
 | `goal-snapshot` / `goal-updated` / `goal-cleared` | Codex thread goals |
 | `slash-ack` | result of a `slash-command` |
 | `collab-modes` | reply to `/collab` |
-| `history-begin` / `history-end` | brackets a replayed transcript on resume |
+| `history-begin` / `history-end` | brackets the initial replayed transcript on resume |
+| `history-chunk-begin` / `history-chunk-end` | brackets an older page requested with `history-more` |
 
 `item_type` is the mapped snake_case form of the Codex item type
 (`adapters/items.py`): `agent_message`, `agent_reasoning`, `tool_call`
 (from Codex's `commandExecution`), `file_change`, `mcp_tool_call`,
 `dynamic_tool_call`, `collab_agent_tool_call`, `user_message`. Unmapped
 Codex types pass through unchanged.
+
+Web, Android, and iPhone also keep one owner-authenticated `/ws/inventory` connection
+outside any chat session. `inventory-ready`, `hosts-changed`, and
+`threads-changed` invalidate their REST-backed host/thread lists without
+polling.
 
 ## Connection lifecycle
 
@@ -281,9 +306,10 @@ Codex types pass through unchanged.
 4. **Client sends `turn-start`.** The relay reserves the session's single
    turn slot (a second concurrent turn gets `error`), echoes the user
    message to every attached peer, and forwards the frame to the daemon.
-5. **Daemon runs the adapter**, translating to `turn/start` over stdio;
-   events flow back and are sequenced, buffered, and fanned out to all
-   attached clients.
+5. **Daemon runs the adapter**, translating to `turn/start` over an isolated
+   stdio app-server or the opt-in shared WebSocket-over-UDS transport; events
+   flow back and are sequenced, buffered, and fanned out to all attached
+   clients.
 6. **Disconnect** — see the failure table below. Sessions are *not*
    dropped when the daemon socket closes; they are held so a reconnecting
    daemon can pick them back up. Any active turn is explicitly failed first
@@ -431,31 +457,30 @@ the end exists so finished work doesn't get re-proposed.
 
 ### Clients
 
-1. **iPhone parity.** The SwiftUI app now has approvals, user-input
-   prompts, prompt queues, replay-gap markers, and Keychain token storage;
-   still missing are thread resume, images, model/effort controls,
-   permissions, interrupt, and reconnect backoff. See `apple/README.md`.
-2. **Push notifications for approvals.** Android has a foreground service
-   and turn-complete notifications; no platform gets a push when an
-   approval lands while the app is closed. Needs FCM (Android) and APNs
-   (iOS), which needs the relay to hold device tokens.
-3. **Runtime relay picker on Android.** `BuildConfig.RELAY_URL` is baked in
-   at compile time, so pointing at a different relay means a rebuild. iOS
-   already does this at runtime.
+1. **Push notifications for approvals.** Android has a foreground service
+   and local turn-complete notifications; iPhone can notify while its app and
+   WebSocket remain alive. No platform receives a remote push after the app
+   is fully stopped or iOS suspends it. That needs FCM/APNs plus relay-held
+   device tokens.
+2. **Native session and queue scope.** Each native client presents one active
+   session at a time, and local follow-up queues do not synchronize across
+   attached clients. iPhone workspace deletion remains file-only because the
+   relay deliberately refuses directory deletion.
+3. **Store distribution and signing.** Android publishes a release-key-signed
+   universal sideload APK, not a Play Store AAB. Windows NSIS/portable builds
+   lack Authenticode, and the release IPA is unsigned rather than provisioned
+   for TestFlight or the App Store.
 
 ### Tests
 
-1. **Fault tests.** Missing: kill the daemon mid-stream and assert the
-   client sees a terminal frame; a slow client actually getting closed with
-   1013; host going offline mid-turn. (First-response-wins arbitration,
-   claim restore, and queue position are covered by `test_hub.py` and
-   `test_ws_client_prompts.py`.)
-2. **Adapter tests against captured frames.** `services/tests/` covers hub
-   routing, ws attach/binding, prompt queues, session reservations, rate
-   limiting, size limits + fs, logging, both model endpoints, store
-   helpers, and daemon config/helpers. The `stdio.py` dispatch table — the
-   most protocol-fragile code in the repo — is still only exercised
-   indirectly.
+1. **Real slow-consumer fault test.** Send-timeout behavior is unit-covered,
+   but CI does not yet drive a genuinely backpressured network client through
+   the 1013 close path. Daemon disconnect, shared-session recovery, and an
+   offline host during a turn have focused tests.
+2. **Installed-client end to end.** Client reducers and transports have
+   focused web/JVM/XCTest coverage and Android has release-critical Compose
+   instrumentation, but CI's relay-to-daemon e2e uses a protocol client rather
+   than driving every packaged native UI.
 
 ### Rollout
 
@@ -508,5 +533,14 @@ Kept so these don't get re-proposed:
 - **Daemon insecure-relay guard** (`allow_insecure`).
 - **systemd user unit** (`deploy/remotex-daemon.service` +
   `install-daemon.sh`).
-- **CI**: ruff, pytest, relay↔daemon e2e, web lint/build/audit/vitest,
-  Android APK + unit tests + lint, and an iPhone simulator build.
+- **Provider-selectable native clients.** Public Android, iPhone, and Windows
+  builds start without an operator URL or demo credential; Android/iPhone
+  tokens are scoped to the selected relay.
+- **Windows Electron shell.** First-run relay selection, exact-origin
+  navigation, sandbox/context isolation, and x64 NSIS + portable packaging.
+- **Atomic multi-platform releases.** Signed Android APK, unsigned iPhone IPA,
+  unsigned Windows NSIS/portable executables, `SHA256SUMS.txt`, and GitHub
+  build-provenance attestations are published by one final job.
+- **CI**: ruff, pytest, Python dependency audit, relay↔daemon e2e, web
+  lint/build/audit/vitest, Electron tests/audit + Windows packaging, Android
+  APK + unit/lint/emulator UI tests, and an iPhone simulator build + XCTest.

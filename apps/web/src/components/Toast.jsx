@@ -18,8 +18,21 @@ export function Toast({ message, onDismiss, tone = 'info', durationMs = 3500 }) 
 
   if (!message) return null;
   const node = (
-    <div className={`toast ${tone}`} onClick={onDismiss}>
-      {message}
+    <div
+      className={`toast ${tone}`}
+      role={tone === 'error' ? 'alert' : 'status'}
+      aria-live={tone === 'error' ? 'assertive' : 'polite'}
+      aria-atomic="true"
+    >
+      <span className="toast-message">{message}</span>
+      <button
+        type="button"
+        className="toast-dismiss"
+        onClick={onDismiss}
+        aria-label="Dismiss notification"
+      >
+        dismiss
+      </button>
     </div>
   );
   return typeof document !== 'undefined' ? createPortal(node, document.body) : node;

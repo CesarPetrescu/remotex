@@ -92,7 +92,7 @@ Persistent browser state is intentionally small:
 
 ## Development
 
-Requirements: Node.js 20+ and a relay listening on `127.0.0.1:8080`.
+Requirements: Node.js 24+ and a relay listening on `127.0.0.1:8080`.
 
 ```bash
 cd apps/web

@@ -15,7 +15,7 @@ fun relativeAge(epochSeconds: Long): String {
 /**
  * Shorten a path for display. A5: truncate from the LEFT so the
  * leaf folder (the most informative bit) stays visible.
- *   /home/cesar5514/remotex/services/daemon/adapters/stdio.py
+ *   /home/alice/remotex/services/daemon/adapters/stdio.py
  *   → …/daemon/adapters/stdio.py
  *
  * Tries to land on a clean slash boundary so we don't chop a

@@ -38,6 +38,20 @@ struct SessionInfo: Equatable {
     var threadId: String?
 }
 
+struct PersistedSession: Codable, Equatable {
+    let sessionId: String
+    let hostId: String
+    var cwd: String?
+    var threadId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sessionId = "session_id"
+        case hostId = "host_id"
+        case cwd
+        case threadId = "thread_id"
+    }
+}
+
 enum ConnectionStatus: String {
     case idle
     case loading
@@ -64,6 +78,49 @@ struct StreamItem: Identifiable, Equatable {
     var text: String
     var detail: String = ""
     var completed: Bool = false
+    var imageCount: Int = 0
+    var imageData: [Data] = []
+}
+
+struct PendingImage: Identifiable, Equatable {
+    let id: UUID
+    let data: Data
+    let mime: String
+    let label: String
+
+    init(id: UUID = UUID(), data: Data, mime: String, label: String) {
+        self.id = id
+        self.data = data
+        self.mime = mime
+        self.label = label
+    }
+
+    var bytes: Int { data.count }
+}
+
+struct QueuedTurn: Identifiable, Equatable {
+    let id: String
+    let clientMessageId: String
+    let text: String
+    let model: String
+    let effort: String
+    let permissions: String
+    let images: [PendingImage]
+    var sending: Bool = false
+}
+
+struct ParsedSlash: Equatable {
+    let command: String
+    let args: String
+}
+
+struct ThreadGoal: Equatable {
+    let threadId: String
+    let objective: String
+    let status: String
+    let tokenBudget: Int?
+    let tokensUsed: Int
+    let timeUsedSeconds: Int
 }
 
 struct ApprovalPrompt: Identifiable, Equatable {
@@ -72,6 +129,9 @@ struct ApprovalPrompt: Identifiable, Equatable {
     let reason: String?
     let command: String?
     let cwd: String?
+    /// Pretty-printed JSON because Codex permission requests are open-ended
+    /// objects, while the UI only needs to retain and show the exact payload.
+    let permissions: String?
     let decisions: [String]
 
     var id: String { approvalId }
@@ -88,6 +148,7 @@ struct UserInputQuestion: Identifiable, Equatable {
     let id: String
     let header: String
     let question: String
+    let isSecret: Bool
     let options: [UserInputOption]
 }
 
@@ -234,4 +295,17 @@ struct FsEntry: Decodable, Identifiable {
 struct FsListResponse: Decodable {
     let path: String?
     let entries: [FsEntry]
+}
+
+struct DownloadedFile: Equatable {
+    let name: String
+    let mime: String
+    let data: Data
+}
+
+struct FsReadResponse: Decodable {
+    let name: String?
+    let mime: String?
+    let size: Int?
+    let base64: String
 }

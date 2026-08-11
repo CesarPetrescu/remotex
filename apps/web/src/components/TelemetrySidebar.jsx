@@ -1,17 +1,33 @@
+import { useEffect, useState } from 'react';
 import { Sparkline } from './Sparkline';
 
 const EMPTY_HISTORY = { cpu: [], mem: [], gpus: [], gpu: [], up: [], down: [] };
+
+export function telemetryFreshness(lastUpdate, online, now = Date.now()) {
+  const ageSeconds = lastUpdate
+    ? Math.max(0, Math.floor((now - lastUpdate) / 1000))
+    : null;
+  const live = Boolean(online) && ageSeconds !== null && ageSeconds <= 10;
+  return {
+    ageSeconds,
+    live,
+    label: live ? 'Live' : online ? 'Stale' : 'Offline',
+  };
+}
 
 export function TelemetrySidebar({ telemetry, selectedHost }) {
   const current = telemetry?.current;
   const history = telemetry?.history || EMPTY_HISTORY;
   const vals = (a) => (a || []).map((p) => p.v);
   const tms = (a) => (a || []).map((p) => p.t);
-  const fresh = telemetry?.lastUpdate
-    ? Math.max(0, Math.floor((Date.now() - telemetry.lastUpdate) / 1000))
-    : null;
-  const live = fresh !== null && fresh <= 10;
   const online = !!selectedHost?.online;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!online || !telemetry?.lastUpdate) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [online, telemetry?.lastUpdate]);
+  const freshness = telemetryFreshness(telemetry?.lastUpdate, online, now);
   const gpus = Array.isArray(current?.gpus)
     ? current.gpus
     : current?.gpu
@@ -28,9 +44,9 @@ export function TelemetrySidebar({ telemetry, selectedHost }) {
           </div>
         </div>
         <div className="telemetry-tags">
-          <span className={`tag ${live ? 'tag-live' : ''}`}>
-            <span className={`tag-dot ${live ? 'ok' : ''}`} />
-            {live ? 'Live' : online ? 'Stale' : 'Offline'}
+          <span className={`tag ${freshness.live ? 'tag-live' : ''}`}>
+            <span className={`tag-dot ${freshness.live ? 'ok' : ''}`} />
+            {freshness.label}
           </span>
           <span className="tag-muted">3s</span>
         </div>

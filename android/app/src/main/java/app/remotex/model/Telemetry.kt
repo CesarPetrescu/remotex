@@ -13,6 +13,13 @@ data class HostTelemetryResponse(
     @SerialName("host_id") val hostId: String,
     val data: HostTelemetryData? = null,
     val ts: Double? = null,
+    val history: List<HostTelemetrySample> = emptyList(),
+)
+
+@Serializable
+data class HostTelemetrySample(
+    @SerialName("age_ms") val ageMs: Long = 0L,
+    val data: HostTelemetryData,
 )
 
 @Serializable
@@ -63,25 +70,54 @@ data class TelemetryHistory(
     val cpu: List<Float> = emptyList(),
     val mem: List<Float> = emptyList(),
     val gpu: List<Float> = emptyList(),
+    val gpus: List<List<Float>> = emptyList(),
     val up: List<Float> = emptyList(),
     val down: List<Float> = emptyList(),
 ) {
-    fun push(data: HostTelemetryData): TelemetryHistory = TelemetryHistory(
-        cpu = pushSample(cpu, (data.cpu?.percent ?: 0.0).toFloat()),
-        mem = pushSample(mem, (data.memory?.percent ?: 0.0).toFloat()),
-        gpu = pushSample(gpu, (data.gpu?.percent ?: 0.0).toFloat()),
-        up = pushSample(up, (data.network?.upBps ?: 0L).toFloat()),
-        down = pushSample(down, (data.network?.downBps ?: 0L).toFloat()),
-    )
+    fun push(data: HostTelemetryData): TelemetryHistory {
+        val currentGpus = telemetryGpus(data)
+        val previous = if (gpus.isNotEmpty()) gpus else listOfNotNull(gpu.takeIf { it.isNotEmpty() })
+        val gpuCount = maxOf(currentGpus.size, previous.size)
+        val nextGpus = List(gpuCount) { index ->
+            pushSample(previous.getOrElse(index) { emptyList() }, currentGpus.getOrNull(index)?.percent?.toFloat() ?: 0f)
+        }
+        return TelemetryHistory(
+            cpu = pushSample(cpu, (data.cpu?.percent ?: 0.0).toFloat()),
+            mem = pushSample(mem, (data.memory?.percent ?: 0.0).toFloat()),
+            gpu = nextGpus.firstOrNull().orEmpty(),
+            gpus = nextGpus,
+            up = pushSample(up, (data.network?.upBps ?: 0L).toFloat()),
+            down = pushSample(down, (data.network?.downBps ?: 0L).toFloat()),
+        )
+    }
 
     companion object {
-        private const val MAX = 60
+        private const val MAX = 11
         private fun pushSample(list: List<Float>, v: Float): List<Float> {
             val trimmed = if (list.size >= MAX) list.drop(list.size - MAX + 1) else list
             return trimmed + v
         }
+
+        fun fromRelay(samples: List<HostTelemetrySample>): TelemetryHistory {
+            val recent = samples.filter { it.ageMs <= 30_000L }.takeLast(MAX)
+            val gpuCount = recent.maxOfOrNull { telemetryGpus(it.data).size } ?: 0
+            val gpuSeries = List(gpuCount) { index ->
+                recent.map { telemetryGpus(it.data).getOrNull(index)?.percent?.toFloat() ?: 0f }
+            }
+            return TelemetryHistory(
+                cpu = recent.map { (it.data.cpu?.percent ?: 0.0).toFloat() },
+                mem = recent.map { (it.data.memory?.percent ?: 0.0).toFloat() },
+                gpu = gpuSeries.firstOrNull().orEmpty(),
+                gpus = gpuSeries,
+                up = recent.map { (it.data.network?.upBps ?: 0L).toFloat() },
+                down = recent.map { (it.data.network?.downBps ?: 0L).toFloat() },
+            )
+        }
     }
 }
+
+fun telemetryGpus(data: HostTelemetryData): List<GpuTelemetry> =
+    data.gpus.ifEmpty { listOfNotNull(data.gpu) }
 
 data class HostTelemetrySnapshot(
     val data: HostTelemetryData,

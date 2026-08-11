@@ -23,11 +23,16 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.Ink
 import app.remotex.ui.theme.InkDim
+import app.remotex.ui.theme.Warn
+import app.remotex.net.normalizeRelayBaseUrl
+import app.remotex.BuildConfig
 
 /**
  * Relay base URL, editable at runtime. Committing (IME Done or focus
@@ -37,9 +42,15 @@ import app.remotex.ui.theme.InkDim
 @Composable
 fun RelayUrlField(value: String, onCommit: (String) -> Unit) {
     var draft by rememberSaveable(value) { mutableStateOf(value) }
+    var validationError by rememberSaveable(value) { mutableStateOf<String?>(null) }
+    var wasFocused by rememberSaveable { mutableStateOf(false) }
     fun commit() {
-        val next = draft.trim()
-        if (next.isNotBlank() && next != value) onCommit(next)
+        normalizeRelayBaseUrl(draft, BuildConfig.DEBUG)
+            .onSuccess { next ->
+                validationError = null
+                if (next != value) onCommit(next)
+            }
+            .onFailure { validationError = it.message ?: "Invalid relay URL." }
     }
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -56,7 +67,10 @@ fun RelayUrlField(value: String, onCommit: (String) -> Unit) {
             Spacer(Modifier.height(4.dp))
             BasicTextField(
                 value = draft,
-                onValueChange = { draft = it },
+                onValueChange = {
+                    draft = it
+                    validationError = null
+                },
                 singleLine = true,
                 textStyle = TextStyle(
                     color = Ink,
@@ -68,8 +82,21 @@ fun RelayUrlField(value: String, onCommit: (String) -> Unit) {
                 keyboardActions = KeyboardActions(onDone = { commit() }),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .onFocusChanged { if (!it.isFocused) commit() },
+                    .semantics { contentDescription = "Relay URL" }
+                    .onFocusChanged {
+                        if (it.isFocused) wasFocused = true
+                        else if (wasFocused) commit()
+                    },
             )
+            validationError?.let { error ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    error,
+                    color = Warn,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+            }
         }
     }
 }

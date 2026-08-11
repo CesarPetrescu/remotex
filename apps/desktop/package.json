@@ -1,0 +1,68 @@
+{
+  "name": "remotex-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Secure desktop shell for a user-selected Remotex relay",
+  "author": "Remotex contributors",
+  "main": "main.js",
+  "scripts": {
+    "check": "node --check main.js && node --check setup-preload.js && node --check setup.js && node --check lib/relay-url.js && node --check lib/settings.js",
+    "lint": "npm run check",
+    "test": "node --test",
+    "pack:linux": "electron-builder --linux --x64 --dir",
+    "pack:win": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "43.3.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "app.remotex.desktop",
+    "productName": "Remotex",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "setup-preload.js",
+      "setup.html",
+      "setup.css",
+      "setup.js",
+      "lib/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/logo.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Remotex-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Remotex-Portable-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "assets/logo.png",
+      "category": "Network"
+    }
+  }
+}

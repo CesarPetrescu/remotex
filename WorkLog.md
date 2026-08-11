@@ -32,6 +32,93 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-11 — make iPhone share filenames platform-neutral
+**Agent:** Codex · **Branch:** agent/release-parity · **Status:** done; macOS rerun pending
+
+- **Why:** Xcode 16.4 CI proved that Darwin resolves `..` through
+  `URL(fileURLWithPath:)`, defeating the intended unsafe-basename fallback.
+- **Changed:** `apple/Remotex/RemotexViewModel.swift` — extract the last
+  relay-provided path component as an opaque string before stripping controls
+  and rejecting empty/dot basenames.
+- **Changed:** `apple/RemotexTests/CoreReliabilityTests.swift` — cover dot,
+  slash-only, and backslash-only untrusted names in the traversal regression.
+- **Verified:** the failing CI run compiled the app and all XCTest sources,
+  then passed 47/48 tests; static review confirms the string-only fix targets
+  the sole failure. The full macOS rerun is pending at this entry's commit.
+- **Left open:** none specific to this fix; release-wide platform limitations
+  remain tracked as I-022 through I-024.
+- **Restart needed:** none.
+
+## 2026-08-11 — v0.2 provider-neutral clients, mobile parity, Windows app, and releases
+**Agent:** Codex team · **Branch:** agent/release-parity · **Status:** done locally and deployed; GitHub artifact gates pending
+
+- **Why:** audit the browser/phone product in depth, close practical
+  Android/iPhone parity gaps, make public builds provider-selectable, add a
+  secure Windows client, and turn ad-hoc binaries into one tested release
+  pipeline.
+- **Changed:** `apps/web/` — made approval choices authoritative (with the
+  complete fallback), masked secret questions, added `/collab` routing, fixed
+  file deep-link timing, surfaced token/goal progress, improved transcript and
+  phone accessibility, and upgraded the Vite/Vitest toolchain to a clean
+  supported line.
+- **Changed:** `android/` — runtime relay selection, relay-scoped Android
+  Keystore credentials, live inventory/reconnect/replay, provider-scoped
+  session restore, image/FIFO queue/steer/stop flows, complete prompt handling,
+  writable files, all-GPU telemetry/history, high contrast, deferred local
+  notifications, transfer ceilings, release signing, and release-critical UI
+  tests. Public release defaults contain no operator URL or demo token.
+- **Changed:** `apple/` — matched the same native session surface: live
+  inventory, model/settings/history, images/FIFO/steer/interrupt, ordered
+  prompts, goals/slash commands, writable workspace, telemetry, high contrast,
+  provider-scoped Keychain/session restore, local completion notification, and
+  a derived ~37 MiB WebSocket ceiling. Added two XCTest files and wired their
+  target/scheme membership.
+- **Changed:** `apps/desktop/` — added the provider-selectable Electron shell,
+  first-run setup, exact-origin navigation/permission boundary, sandboxed
+  remote page, mode-0600 atomic settings, the existing Remotex brand asset,
+  tests, and x64 NSIS + portable build targets.
+- **Changed:** `.github/workflows/{ci,release}.yml` — pinned current Node-24
+  actions by commit SHA, added Windows/macOS/Android artifact gates, exact
+  Android signing-certificate continuity, provider scans, checksums, build
+  provenance, cumulative nightly change detection/asset retention, and one
+  atomic stable/nightly publisher. Android signing secrets and the public cert
+  fingerprint are configured in this repository.
+- **Changed:** `deploy/` + `services/daemon/config.py` — build the web app on
+  supported Node 24 and publish the SparkTunnel relay only on a dedicated
+  same-host loopback port, avoiding public DNS/tunnel hairpin for the daemon.
+  Documentation, `Issues.md`, and `ToDo.md` now reflect the actual parity and
+  audited Codex 0.147 surface.
+- **Verified:** backend Ruff and **202 pytest** tests pass; the disposable
+  Postgres relay↔daemon↔client e2e streamed a complete mock turn; `pip-audit`
+  reports no known runtime vulnerabilities. Web lint/build/full audit and
+  **106 Vitest** tests pass. Electron lint/full audit, **10 tests**, a current
+  Linux package, ASAR/provider scan, and loopback-DNS attack cases pass.
+  Android debug and release suites each pass **47 JVM tests**, lint is clean,
+  **7 emulator UI tests** pass, and the release APK is v2-signed by the pinned
+  certificate with version `v0.2.0` / code `200`. A live mock Android turn was
+  exercised on the emulator and its before/current states were visually
+  compared. Apple plist/scheme/PBX membership and changed Swift parse cleanly;
+  all **48 XCTest methods** are wired, with Xcode compilation intentionally
+  delegated to the macOS PR check. Both workflows pass `actionlint` and
+  `git diff --check`.
+- **Verified live:** rebuilt only the Remotex Compose stack; local and public
+  `/api/models` responses match, the public page serves the new web bundle,
+  relay/Postgres are healthy, SparkTunnel is up, the loopback publish is bound
+  only to `127.0.0.1:19080`, and `remotex-daemon` reattached over that endpoint.
+  The previous daemon config is preserved at
+  `/root/.remotex/config.toml.pre-v0.2.0`.
+- **Left open:** macOS Xcode and Windows NSIS/portable builds must pass on the
+  PR before tagging. No APNs/FCM after stop/suspension (`I-024`), no Windows
+  Authenticode (`I-022`), and no signed/TestFlight iPhone distribution
+  (`I-023`). Intel/AMD GPU telemetry (`I-017`) and Codex 0.147's upstream
+  `thread/delete` failure (`I-019`) remain outside this release. Current web
+  browser screenshots were not captured because browser automation permission
+  was not granted; existing reference captures plus live Android captures and
+  reducer/component tests were used instead.
+- **Restart needed:** none — relay/web and the host daemon are already live;
+  mobile/Windows artifacts are installed from the GitHub release after its
+  required CI gates pass.
+
 ## 2026-08-09 — composer submit controls: split primary, stop moved to the turn
 **Agent:** Claude Fable 5 · **Branch:** main · **Status:** done, deployed
 
