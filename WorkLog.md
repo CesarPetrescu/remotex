@@ -32,6 +32,21 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-11 — accept both official apksigner certificate labels
+**Agent:** Codex · **Branch:** agent/release-cert-parser-hotfix · **Status:** fixed locally; release rerun pending
+
+- **Why:** hosted build-tools prints `V2 Signer: certificate SHA-256 digest`
+  while the local SDK prints `Signer #1 certificate SHA-256 digest`; the APK
+  and pinned digest matched, but the label-specific parser produced no value.
+- **Changed:** `.github/workflows/release.yml` — require exactly one signer,
+  accept either versioned or numbered signer labels, and continue comparing a
+  normalized digest to the pinned repository variable.
+- **Verified:** parser fixtures for both observed formats, the real local APK,
+  `actionlint`, and `git diff --check` pass. The hosted release rerun is
+  pending at this entry's commit.
+- **Left open:** none specific to this fix.
+- **Restart needed:** none.
+
 ## 2026-08-11 — resolve Android release verifier from the SDK
 **Agent:** Codex · **Branch:** agent/release-apksigner-hotfix · **Status:** fixed locally; release rerun pending
 
