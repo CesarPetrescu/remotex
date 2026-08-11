@@ -32,6 +32,24 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-11 — make release runners provision an iPhone simulator
+**Agent:** Codex · **Branch:** agent/release-simulator-hotfix · **Status:** fixed locally; macOS release rerun pending
+
+- **Why:** the first post-merge nightly release runner had an installed iOS
+  runtime but no pre-created `iPhone 16 Pro`, so its otherwise-valid XCTest
+  command failed before compiling tests.
+- **Changed:** `apple/ci-select-simulator.sh` — select an available iPhone by
+  UUID, or create one from the newest installed iOS runtime and a compatible
+  device type when the runner image has none.
+- **Changed:** `.github/workflows/{ci,release}.yml` — warm the simulator build,
+  test against the resolved UUID, and use that exact device for screenshot
+  install/launch/capture rather than a fragile model name or `booted` alias.
+- **Verified:** `bash -n`, existing-device and create-device command fixtures,
+  `actionlint`, and `git diff --check` pass. The real macOS release rerun is
+  pending at this entry's commit.
+- **Left open:** none specific to this fix.
+- **Restart needed:** none.
+
 ## 2026-08-11 — make iPhone share filenames platform-neutral
 **Agent:** Codex · **Branch:** agent/release-parity · **Status:** done; macOS rerun pending
 
