@@ -9,7 +9,7 @@ plugins {
 // -PversionName=nightly-<date>-<sha> on main; local builds pass nothing.
 // See .github/workflows/release.yml.
 val versionNameProperty: String = (findProperty("versionName") as String?)?.trim().orEmpty()
-val resolvedVersionName: String = versionNameProperty.ifEmpty { "0.2.0" }
+val resolvedVersionName: String = versionNameProperty.ifEmpty { "0.2.1" }
 
 // v1.2.3 → 10203, so a newer tag always compares greater. Anything that
 // isn't a semver tag (nightlies, local builds) stays at 1 — those are
@@ -118,6 +118,7 @@ dependencies {
     androidTestImplementation(composeBom)
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

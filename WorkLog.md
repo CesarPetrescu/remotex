@@ -32,6 +32,40 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-11 — secure Android onboarding and adaptive tablet UI
+**Agent:** Codex team · **Branch:** agent/android-setup-tablet · **Status:** done locally; publication pending
+
+- **Why:** replace the debug-like relay/token form, stop rejected or half-typed
+  credentials from surviving, show actual host identity, and make the Android
+  client usable on tablets instead of stretching the phone layout.
+- **Changed:** `android/app/src/main/java/app/remotex/{net/RelayClient.kt,ui/RemotexViewModel.kt}`
+  — map host-auth HTTP failures to plain-language errors; clear drafts and
+  rejected tokens; persist only a relay-accepted token; serialize credential
+  storage; discard stale auth responses; and stop inventory, telemetry, and
+  model requests before a changed credential can be used.
+- **Changed:** `android/app/src/main/java/app/remotex/ui/{components,screens}/`
+  and `ui/{AdaptiveLayout.kt,RemotexApp.kt}` — use native labelled relay and
+  password fields with URL/password keyboards, helper/error semantics, and a
+  guarded Connect action; render hostname/platform; use two panes for hosts
+  and sessions from 600dp, cap file/chat reading width at 840dp, and keep
+  telemetry visible beside sessions from 1200dp while preserving compact
+  phone and short-height layouts.
+- **Changed:** Android JVM/emulator tests now cover HTTP status mapping,
+  adaptive breakpoints, disabled invalid/uncommitted addresses, password
+  semantics, hostname rendering, host/thread pane geometry, chat width, and a
+  blocking token-store race plus 401 rejection. The fallback version and
+  release examples are `v0.2.1`; MockWebServer remains androidTest-only.
+- **Verified:** `./gradlew test lint connectedDebugAndroidTest --no-daemon
+  --stacktrace` passed (50 debug + 50 release JVM tests, clean lint, 12 emulator
+  tests). Phone (411dp) and tablet-landscape (800×500dp) captures were inspected
+  individually and in same-viewport before/after comparisons. A provider-neutral
+  `v0.2.1` / code `201` release APK built with R8, installed and cold-launched,
+  uses v2 signing with one signer matching the pinned release certificate, and
+  contains neither the maintainer relay URL nor demo credentials.
+- **Left open:** merge the PR and publish/independently verify the GitHub
+  `v0.2.1` stable assets; no product defect was knowingly deferred.
+- **Restart needed:** install the new Android APK; relay and daemon unchanged.
+
 ## 2026-08-11 — publish and independently verify stable v0.2.0
 **Agent:** Codex · **Branch:** agent/release-final-record · **Status:** done
 

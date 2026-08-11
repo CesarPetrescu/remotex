@@ -1,22 +1,34 @@
 package app.remotex.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.remotex.model.Host
 import app.remotex.security.SecureTokenStore
 import app.remotex.persistence.ActiveSession
 import app.remotex.persistence.ActiveSessionStore
 import app.remotex.ui.components.TokenField
 import app.remotex.ui.app.RemotexBar
+import app.remotex.ui.screens.hosts.HostsScreen
 import app.remotex.ui.screens.session.ApprovalDialog
+import app.remotex.ui.screens.session.SessionScreen
 import app.remotex.ui.screens.session.UserInputDialog
 import app.remotex.ui.screens.session.composer.ComposerBar
+import app.remotex.ui.screens.threads.ThreadsScreen
 import app.remotex.ui.theme.RemotexTheme
 import org.junit.Rule
 import org.junit.Test
@@ -74,14 +86,144 @@ class ReleaseCriticalUiTest {
     fun accessTokenIsAPasswordField() {
         compose.setContent {
             RemotexTheme {
-                TokenField("relay-secret") {}
+                TokenField(value = "relay-secret", onChange = {})
             }
         }
 
         compose.onNode(hasSetTextAction()).assert(
             SemanticsMatcher.keyIsDefined(SemanticsProperties.Password),
         )
+        compose.onNodeWithText("Access token").assertExists()
+        compose.onNodeWithText(
+            "Issued by your relay administrator and encrypted on this device.",
+        ).assertExists()
         compose.onNodeWithContentDescription("Show access token").assertExists()
+    }
+
+    @Test
+    fun relayConnectionRequiresAnAddressAndAccessToken() {
+        compose.setContent {
+            RemotexTheme {
+                HostsScreen(
+                    state = UiState(),
+                    relayUrl = "https://relay.example.com",
+                    onRelayUrlChange = {},
+                    onTokenChange = {},
+                    onRefresh = {},
+                    onHostTap = {},
+                    onModelChange = {},
+                    onEffortChange = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText("Relay address").assertExists()
+        compose.onNodeWithText("Connect").assertIsNotEnabled()
+    }
+
+    @Test
+    fun tabletHostsScreenUsesSeparateConnectionAndInventoryPanes() {
+        compose.setContent {
+            RemotexTheme {
+                Box(Modifier.requiredSize(800.dp, 600.dp)) {
+                    HostsScreen(
+                        state = UiState(
+                            userToken = "relay-secret",
+                            hosts = listOf(
+                                Host(
+                                    id = "host-1",
+                                    nickname = "Workstation",
+                                    hostname = "studio-pc",
+                                    platform = "linux",
+                                    online = true,
+                                ),
+                            ),
+                        ),
+                        relayUrl = "https://relay.example.com",
+                        onRelayUrlChange = {},
+                        onTokenChange = {},
+                        onRefresh = {},
+                        onHostTap = {},
+                        onModelChange = {},
+                        onEffortChange = {},
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithText("Refresh hosts").assertIsEnabled()
+        compose.onNodeWithContentDescription("Relay address")
+            .performTextReplacement("not a relay address")
+        compose.onNodeWithText("Refresh hosts").assertIsNotEnabled()
+        val connection = compose.onNodeWithTag("connection-pane").fetchSemanticsNode().boundsInRoot
+        val inventory = compose.onNodeWithTag("hosts-pane").fetchSemanticsNode().boundsInRoot
+        org.junit.Assert.assertTrue(connection.right < inventory.right)
+        org.junit.Assert.assertTrue(connection.center.x < inventory.center.x)
+        compose.onNodeWithText("studio-pc · linux · online", substring = true).assertExists()
+    }
+
+    @Test
+    fun tabletThreadsScreenSeparatesActionsFromSavedSessions() {
+        compose.setContent {
+            RemotexTheme {
+                Box(Modifier.requiredSize(800.dp, 600.dp)) {
+                    ThreadsScreen(
+                        state = UiState(
+                            selectedHostId = "host-1",
+                            hosts = listOf(
+                                Host(
+                                    id = "host-1",
+                                    nickname = "Workstation",
+                                    hostname = "studio-pc",
+                                    online = true,
+                                ),
+                            ),
+                        ),
+                        onRefresh = {},
+                        onNewSession = {},
+                        onResumeThread = {},
+                    )
+                }
+            }
+        }
+
+        val actions = compose.onNodeWithTag("session-actions-pane").fetchSemanticsNode().boundsInRoot
+        val sessions = compose.onNodeWithTag("saved-sessions-pane").fetchSemanticsNode().boundsInRoot
+        org.junit.Assert.assertTrue(actions.center.x < sessions.center.x)
+        compose.onNodeWithText("New session").assertExists()
+        compose.onNodeWithText("Previous sessions").assertExists()
+    }
+
+    @Test
+    fun expandedSessionKeepsChatAtReadableWidth() {
+        compose.setContent {
+            RemotexTheme {
+                Box(Modifier.requiredSize(1200.dp, 700.dp)) {
+                    SessionScreen(
+                        state = UiState(),
+                        onSend = {},
+                        onStop = {},
+                        onSteer = {},
+                        onQueue = {},
+                        onRemoveQueued = {},
+                        onLoadOlder = {},
+                        onAttachImage = {},
+                        onRemoveImage = {},
+                        onPermissionsChange = {},
+                        onSlashCommand = { _, _ -> },
+                        onListWorkspace = { emptyList() },
+                        onDeleteWorkspaceFile = {},
+                        onRenameWorkspaceFile = { _, _ -> },
+                        onReadWorkspaceFile = { error("unused") },
+                        onUploadWorkspaceFile = { _, _, _, _ -> },
+                    )
+                }
+            }
+        }
+
+        val width = compose.onNodeWithTag("session-content").fetchSemanticsNode().boundsInRoot.width
+        val maxWidth = with(compose.density) { 840.dp.toPx() }
+        org.junit.Assert.assertTrue("session width was $width px", width <= maxWidth + 1f)
     }
 
     @Test

@@ -61,7 +61,7 @@ Download `remotex-<version>.apk` from
 install it with Android's package installer or ADB:
 
 ```bash
-adb install remotex-v0.2.0.apk
+adb install remotex-v0.2.1.apk
 ```
 
 Releases before `v0.2.0` were signed with Android's debug key. Android cannot
@@ -124,7 +124,7 @@ export ANDROID_KEYSTORE_PATH=/secure/path/remotex-release.jks
 export ANDROID_KEYSTORE_PASSWORD='...'
 export ANDROID_KEY_ALIAS='...'
 export ANDROID_KEY_PASSWORD='...'
-./gradlew assembleRelease -PversionName=v0.2.0 -PrelayUrl=
+./gradlew assembleRelease -PversionName=v0.2.1 -PrelayUrl=
 ```
 
 Keep that keystore and its passwords out of the repository and back them up

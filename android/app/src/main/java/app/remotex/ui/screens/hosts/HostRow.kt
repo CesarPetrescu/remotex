@@ -80,7 +80,7 @@ internal fun HostRow(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                summarize(host, data),
+                hostDetails(host, data),
                 color = InkDim,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
@@ -90,6 +90,14 @@ internal fun HostRow(
         }
     }
 }
+
+private fun hostDetails(host: Host, data: HostTelemetryData?): String = buildList {
+    host.hostname
+        ?.takeIf { it.isNotBlank() && !it.equals(host.nickname, ignoreCase = true) }
+        ?.let(::add)
+    host.platform?.takeIf { it.isNotBlank() }?.let(::add)
+    add(summarize(host, data))
+}.joinToString(" · ")
 
 private fun summarize(host: Host, data: HostTelemetryData?): String {
     val parts = mutableListOf<String>()

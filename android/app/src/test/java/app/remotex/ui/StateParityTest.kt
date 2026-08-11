@@ -1,5 +1,8 @@
 package app.remotex.ui
 
+import app.remotex.net.RelayHttpException
+import androidx.compose.ui.unit.dp
+import java.io.IOException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.contentOrNull
@@ -17,6 +20,31 @@ class StateParityTest {
     @Test
     fun defaultStateStartsSignedOut() {
         assertEquals("", UiState().userToken)
+    }
+
+    @Test
+    fun hostConnectionErrorsUseActionableCopy() {
+        assertEquals(
+            "That access token was not accepted.",
+            hostConnectionErrorMessage(RelayHttpException(401)),
+        )
+        assertEquals(
+            "Too many attempts. Try again in 30 seconds.",
+            hostConnectionErrorMessage(RelayHttpException(429, "30")),
+        )
+        assertEquals(
+            "Could not reach this relay. Check its address and your connection.",
+            hostConnectionErrorMessage(IOException("connection refused")),
+        )
+    }
+
+    @Test
+    fun adaptiveLayoutUsesWidthAndCompactHeightBoundaries() {
+        assertFalse(useTwoPane(599.dp, 800.dp))
+        assertTrue(useTwoPane(600.dp, 480.dp))
+        assertFalse(useTwoPane(800.dp, 479.dp))
+        assertFalse(usePermanentTelemetryPane(1199.dp, 800.dp))
+        assertTrue(usePermanentTelemetryPane(1200.dp, 480.dp))
     }
 
     @Test
