@@ -4,13 +4,18 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.ModalBottomSheet
@@ -96,11 +101,19 @@ fun RemotexApp(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        val permanentTelemetry = state.screen == Screen.Session &&
+            usePermanentTelemetryPane(maxWidth, maxHeight)
+        val selectedHost = state.hosts.find { it.id == state.selectedHostId }
+
+        LaunchedEffect(state.screen, permanentTelemetry) {
+            if (state.screen != Screen.Session || permanentTelemetry) telemetryOpen = false
+        }
+
         Scaffold(
             topBar = {
                 RemotexBar(
@@ -117,6 +130,7 @@ fun RemotexApp(
                     highContrast = highContrast,
                     onToggleTheme = onToggleTheme,
                     onOpenTelemetry = { telemetryOpen = true },
+                    showTelemetryAction = !permanentTelemetry,
                 )
             },
             containerColor = Color.Transparent,
@@ -152,24 +166,42 @@ fun RemotexApp(
                         onCreateFolder = vm::createFolder,
                         onToggleFavorite = vm::toggleFavorite,
                     )
-                    Screen.Session -> SessionScreen(
-                        state = state,
-                        onSend = vm::sendTurn,
-                        onStop = vm::interruptTurn,
-                        onSteer = vm::steerTurn,
-                        onQueue = vm::queueTurn,
-                        onRemoveQueued = vm::removeQueuedTurn,
-                        onLoadOlder = vm::loadOlderHistory,
-                        onAttachImage = vm::attachImage,
-                        onRemoveImage = vm::removeImage,
-                        onPermissionsChange = vm::setPermissions,
-                        onSlashCommand = vm::sendSlash,
-                        onListWorkspace = vm::listWorkspace,
-                        onDeleteWorkspaceFile = vm::deleteWorkspaceFile,
-                        onRenameWorkspaceFile = vm::renameWorkspaceFile,
-                        onReadWorkspaceFile = vm::readWorkspaceFile,
-                        onUploadWorkspaceFile = vm::uploadWorkspaceFile,
-                    )
+                    Screen.Session -> {
+                        val sessionContent: @Composable (Modifier) -> Unit = { modifier ->
+                            SessionScreen(
+                                state = state,
+                                onSend = vm::sendTurn,
+                                onStop = vm::interruptTurn,
+                                onSteer = vm::steerTurn,
+                                onQueue = vm::queueTurn,
+                                onRemoveQueued = vm::removeQueuedTurn,
+                                onLoadOlder = vm::loadOlderHistory,
+                                onAttachImage = vm::attachImage,
+                                onRemoveImage = vm::removeImage,
+                                onPermissionsChange = vm::setPermissions,
+                                onSlashCommand = vm::sendSlash,
+                                onListWorkspace = vm::listWorkspace,
+                                onDeleteWorkspaceFile = vm::deleteWorkspaceFile,
+                                onRenameWorkspaceFile = vm::renameWorkspaceFile,
+                                onReadWorkspaceFile = vm::readWorkspaceFile,
+                                onUploadWorkspaceFile = vm::uploadWorkspaceFile,
+                                modifier = modifier,
+                            )
+                        }
+                        if (permanentTelemetry) {
+                            Row(Modifier.fillMaxSize()) {
+                                sessionContent(Modifier.weight(1f))
+                                VerticalDivider(color = Line)
+                                TelemetryPanel(
+                                    hostLabel = selectedHost?.nickname ?: "no host selected",
+                                    snapshot = state.selectedHostId?.let { state.hostTelemetry[it] },
+                                    modifier = Modifier.width(320.dp).fillMaxHeight(),
+                                )
+                            }
+                        } else {
+                            sessionContent(Modifier.fillMaxSize())
+                        }
+                    }
                 }
                 // Only the head of each queue is rendered (contract F);
                 // answering it pops it and the next one takes its place.
@@ -211,7 +243,7 @@ fun RemotexApp(
                         )
                     }
                 }
-                state.error?.let { err ->
+                if (state.screen != Screen.Hosts) state.error?.let { err ->
                     Surface(
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
                         border = BorderStroke(1.dp, Warn),
@@ -234,14 +266,13 @@ fun RemotexApp(
         }
 
         // Telemetry rides a bottom sheet, matching the web phone layout.
-        if (telemetryOpen) {
-            val host = state.hosts.find { it.id == state.selectedHostId }
+        if (telemetryOpen && !permanentTelemetry) {
             ModalBottomSheet(
                 onDismissRequest = { telemetryOpen = false },
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
                 TelemetryPanel(
-                    hostLabel = host?.nickname ?: "no host selected",
+                    hostLabel = selectedHost?.nickname ?: "no host selected",
                     snapshot = state.selectedHostId?.let { state.hostTelemetry[it] },
                     modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
                 )

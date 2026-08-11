@@ -41,6 +41,7 @@ fun RemotexBar(
     highContrast: Boolean = false,
     onToggleTheme: () -> Unit = {},
     onOpenTelemetry: () -> Unit = {},
+    showTelemetryAction: Boolean = true,
 ) {
     val hasConfiguredHost = state.selectedHostId != null
     TopAppBar(
@@ -85,7 +86,7 @@ fun RemotexBar(
             }
         },
         actions = {
-            if (hasConfiguredHost) {
+            if (hasConfiguredHost && showTelemetryAction) {
                 IconButton(onClick = onOpenTelemetry) {
                     Icon(
                         Icons.Filled.Speed,

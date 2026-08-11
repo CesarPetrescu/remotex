@@ -108,6 +108,21 @@ class RelayClientTest {
     }
 
     @Test
+    fun listHostsPreservesStatusAndRetryAfterForFriendlyUiErrors() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "30"))
+
+        val unauthorized = runCatching { client.listHosts("bad-token") }.exceptionOrNull()
+        val limited = runCatching { client.listHosts("busy-token") }.exceptionOrNull()
+
+        assertTrue(unauthorized is RelayHttpException)
+        assertEquals(401, (unauthorized as RelayHttpException).statusCode)
+        assertTrue(limited is RelayHttpException)
+        assertEquals(429, (limited as RelayHttpException).statusCode)
+        assertEquals("30", limited.retryAfter)
+    }
+
+    @Test
     fun openSessionSendsCodexSessionPayload() = runTest {
         server.enqueue(
             MockResponse()

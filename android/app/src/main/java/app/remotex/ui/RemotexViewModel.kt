@@ -20,6 +20,7 @@ import app.remotex.model.UiEvent
 import app.remotex.persistence.ActiveSession
 import app.remotex.persistence.ActiveSessionStore
 import app.remotex.net.RelayClient
+import app.remotex.net.RelayHttpException
 import app.remotex.net.InventorySocket
 import app.remotex.net.normalizeRelayBaseUrl
 import app.remotex.net.SessionSocket
@@ -41,6 +42,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -57,12 +60,34 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.util.UUID
+import java.io.IOException
 import kotlin.math.min
 import kotlin.random.Random
 
 enum class Screen { Hosts, Threads, Files, Session }
 
 enum class Status { Idle, Opening, Connecting, Connected, Disconnected, Error }
+
+internal fun hostConnectionErrorMessage(cause: Throwable): String = when {
+    cause is RelayHttpException && cause.statusCode == 401 ->
+        "That access token was not accepted."
+    cause is RelayHttpException && cause.statusCode == 429 -> {
+        val retryAfter = cause.retryAfter?.trim().orEmpty()
+        when {
+            retryAfter.all(Char::isDigit) && retryAfter.isNotEmpty() ->
+                "Too many attempts. Try again in $retryAfter seconds."
+            retryAfter.isNotEmpty() -> "Too many attempts. Try again after $retryAfter."
+            else -> "Too many attempts. Try again shortly."
+        }
+    }
+    cause is RelayHttpException && cause.statusCode >= 500 ->
+        "The relay is unavailable right now. Try again shortly."
+    cause is RelayHttpException ->
+        "The relay rejected the request. Check its address and try again."
+    cause is IOException ->
+        "Could not reach this relay. Check its address and your connection."
+    else -> "Could not load hosts. Try again."
+}
 
 internal fun attachedTurnInFlight(msg: JsonObject): Boolean? =
     msg["turn_in_flight"]
@@ -549,7 +574,8 @@ class RemotexViewModel internal constructor(
     private var telemetryJob: Job? = null
     private var telemetryHostId: String? = null
     private var modelFetchJob: Job? = null
-    private var tokenSaveJob: Job? = null
+    private var tokenClearJob: Job? = null
+    private val tokenStoreMutex = Mutex()
     private var activeSessionSaveJob: Job? = null
     private var tokenEdited = false
     private var inventorySocket: InventorySocket? = null
@@ -570,12 +596,25 @@ class RemotexViewModel internal constructor(
     fun setToken(token: String) {
         tokenEdited = true
         stopInventory()
-        _state.update { it.copy(userToken = token) }
-        tokenSaveJob?.cancel()
-        tokenSaveJob = viewModelScope.launch {
-            if (token.isNotBlank()) delay(350L)
-            persistToken(token)
+        telemetryJob?.cancel()
+        telemetryJob = null
+        telemetryHostId = null
+        modelFetchJob?.cancel()
+        modelFetchJob = null
+        modelOptionsHostId = null
+        _state.update {
+            it.copy(
+                userToken = token,
+                hosts = emptyList(),
+                selectedHostId = null,
+                threads = emptyList(),
+                hostTelemetry = emptyMap(),
+                loading = false,
+                error = null,
+            )
         }
+        tokenClearJob?.cancel()
+        tokenClearJob = viewModelScope.launch { persistToken("") }
     }
 
     init {
@@ -648,15 +687,17 @@ class RemotexViewModel internal constructor(
         activeSessionStore.clear()
     }
 
-    private suspend fun persistToken(token: String): Boolean = try {
-        withContext(Dispatchers.IO) {
-            if (token.isBlank()) tokenStore.clear() else tokenStore.save(token)
+    private suspend fun persistToken(token: String): Boolean = tokenStoreMutex.withLock {
+        try {
+            withContext(Dispatchers.IO) {
+                if (token.isBlank()) tokenStore.clear() else tokenStore.save(token)
+            }
+            true
+        } catch (cause: Throwable) {
+            if (cause is CancellationException) throw cause
+            _state.update { it.copy(error = "Could not save the access token securely.") }
+            false
         }
-        true
-    } catch (cause: Throwable) {
-        if (cause is CancellationException) throw cause
-        _state.update { it.copy(error = "Could not save the access token securely.") }
-        false
     }
 
     /**
@@ -1124,6 +1165,7 @@ class RemotexViewModel internal constructor(
     }
 
     fun refresh() {
+        if (_state.value.loading) return
         val relayError = normalizeRelayBaseUrl(relayUrl, BuildConfig.DEBUG).exceptionOrNull()
         if (relayError != null) {
             _state.update {
@@ -1137,7 +1179,6 @@ class RemotexViewModel internal constructor(
         }
         val token = _state.value.userToken.trim()
         if (token.isEmpty()) {
-            tokenSaveJob?.cancel()
             viewModelScope.launch { persistToken("") }
             _state.update {
                 it.copy(
@@ -1151,14 +1192,17 @@ class RemotexViewModel internal constructor(
         }
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
-            tokenSaveJob?.cancel()
-            if (!persistToken(token)) {
-                _state.update { it.copy(loading = false) }
-                return@launch
-            }
-            _state.update { it.copy(userToken = token) }
             try {
                 val hosts = client.listHosts(token)
+                if (_state.value.userToken.trim() != token) return@launch
+                tokenClearJob?.join()
+                if (_state.value.userToken.trim() != token) return@launch
+                if (!persistToken(token)) {
+                    _state.update { it.copy(loading = false) }
+                    return@launch
+                }
+                if (_state.value.userToken.trim() != token) return@launch
+                tokenEdited = false
                 _state.update { it.copy(hosts = hosts, loading = false) }
                 ensureInventoryConnected()
                 // Auto-select first online host so the telemetry panel
@@ -1172,7 +1216,23 @@ class RemotexViewModel internal constructor(
                     _state.value.selectedHostId?.let { onHostSelected(it) }
                 }
             } catch (t: Throwable) {
-                _state.update { it.copy(loading = false, error = t.message ?: "refresh failed") }
+                if (_state.value.userToken.trim() != token) return@launch
+                if (t is RelayHttpException && t.statusCode == 401) {
+                    persistToken("")
+                    _state.update {
+                        it.copy(
+                            userToken = "",
+                            hosts = emptyList(),
+                            selectedHostId = null,
+                            loading = false,
+                            error = hostConnectionErrorMessage(t),
+                        )
+                    }
+                } else {
+                    _state.update {
+                        it.copy(loading = false, error = hostConnectionErrorMessage(t))
+                    }
+                }
             }
         }
     }

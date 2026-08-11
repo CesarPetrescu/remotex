@@ -24,7 +24,13 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+
+internal class RelayHttpException(
+    val statusCode: Int,
+    val retryAfter: String? = null,
+) : IOException("Relay returned HTTP $statusCode")
 
 class RelayClient(
     baseUrl: String,
@@ -82,7 +88,9 @@ class RelayClient(
             .get()
             .build()
         http.newCall(req).execute().use { resp ->
-            check(resp.isSuccessful) { "listHosts: ${resp.code} ${resp.message}" }
+            if (!resp.isSuccessful) {
+                throw RelayHttpException(resp.code, resp.header("Retry-After"))
+            }
             val body = resp.body?.string().orEmpty()
             json.decodeFromString(HostsResponse.serializer(), body).hosts
         }
