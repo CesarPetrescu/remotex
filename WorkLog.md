@@ -32,6 +32,40 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-11 — publish and independently verify stable v0.2.1
+**Agent:** Codex team · **Branch:** agent/v021-release-record · **Status:** done
+
+- **Why:** ship the secure Android onboarding and adaptive tablet work from a
+  reviewed commit, then verify the files users actually download rather than
+  relying only on local build output.
+- **Changed:** no product code in this entry; PR `#22` was squash-merged as
+  `9f39aa176d639a7737fbfd2948087299a8a5fe7e`, annotated tag `v0.2.1` points
+  to that exact commit, and GitHub Release `v0.2.1` is the latest stable with
+  Android, iPhone, Windows setup/portable, checksums, and provenance.
+- **Verified:** PR run `31533925580` passed all 12 executed jobs, including
+  the clean Android emulator UI job; stable Release run `31534953689` passed
+  target detection, Android, iPhone, Windows, and atomic publishing. A fresh
+  public download passes `SHA256SUMS.txt`; all four binaries pass GitHub
+  attestation verification pinned to this repository, release workflow, tag
+  ref, and source commit.
+- **Verified:** the public APK is `app.remotex` version `v0.2.1` / code `201`,
+  uses APK Signature Scheme v2 with exactly one signer, and retains release
+  certificate SHA-256 `ce056393153f7eaa6669bc0e8c9bc835e0d7b62f8173aaf84beca69baeaa5137`.
+  It installed and cold-launched from the public download; UI automation found
+  the relay address, access token, and guarded Connect controls, and phone plus
+  800dp landscape captures confirmed the compact and two-pane layouts.
+- **Verified:** the IPA is `app.remotex.ios` version `0.2.1` / build `128` and
+  remains intentionally unsigned. Both Windows downloads are valid NSIS PE
+  executables whose extracted Electron payload is version `0.2.1`. Extracted
+  scans of every platform found no maintainer relay URL or demo credential.
+  Main nightly run `31534931200` also passed. The public web page still serves
+  the exact audited local bundle; relay/Postgres are healthy and the daemon is
+  active, so this Android-only release needs no relay restart.
+- **Left open:** only the already documented distribution/runtime limitations
+  `I-022` through `I-024` remain (Windows Authenticode, signed iPhone
+  distribution, and notifications after a mobile app is terminated).
+- **Restart needed:** install the new Android APK; relay and daemon unchanged.
+
 ## 2026-08-11 — secure Android onboarding and adaptive tablet UI
 **Agent:** Codex team · **Branch:** agent/android-setup-tablet · **Status:** done locally; publication pending
 
