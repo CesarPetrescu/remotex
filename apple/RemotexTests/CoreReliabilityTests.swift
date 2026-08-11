@@ -332,6 +332,9 @@ final class CoreReliabilityTests: XCTestCase {
         XCTAssertEqual(RemotexViewModel.safeShareFileName("../../report.txt"), "report.txt")
         XCTAssertEqual(RemotexViewModel.safeShareFileName("..\\report.txt"), "report.txt")
         XCTAssertEqual(RemotexViewModel.safeShareFileName(".."), "download.bin")
+        XCTAssertEqual(RemotexViewModel.safeShareFileName("."), "download.bin")
+        XCTAssertEqual(RemotexViewModel.safeShareFileName("/"), "download.bin")
+        XCTAssertEqual(RemotexViewModel.safeShareFileName("\\"), "download.bin")
         XCTAssertEqual(RemotexViewModel.safeShareFileName("bad\nname.txt"), "badname.txt")
     }
 

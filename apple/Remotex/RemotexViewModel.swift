@@ -1519,7 +1519,14 @@ final class RemotexViewModel: ObservableObject {
 
     static func safeShareFileName(_ raw: String) -> String {
         let slashNormalized = raw.replacingOccurrences(of: "\\", with: "/")
-        let name = URL(fileURLWithPath: slashNormalized).lastPathComponent
+        // Treat relay-provided names as opaque strings. URL(fileURLWithPath:)
+        // resolves relative dot components on Darwin, so ".." unexpectedly
+        // becomes "/" instead of remaining a basename we can reject.
+        let basename = slashNormalized
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .last
+            .map(String.init) ?? ""
+        let name = basename
             .unicodeScalars
             .filter { !CharacterSet.controlCharacters.contains($0) }
             .map(String.init)

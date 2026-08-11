@@ -32,6 +32,23 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-11 — make iPhone share filenames platform-neutral
+**Agent:** Codex · **Branch:** agent/release-parity · **Status:** done; macOS rerun pending
+
+- **Why:** Xcode 16.4 CI proved that Darwin resolves `..` through
+  `URL(fileURLWithPath:)`, defeating the intended unsafe-basename fallback.
+- **Changed:** `apple/Remotex/RemotexViewModel.swift` — extract the last
+  relay-provided path component as an opaque string before stripping controls
+  and rejecting empty/dot basenames.
+- **Changed:** `apple/RemotexTests/CoreReliabilityTests.swift` — cover dot,
+  slash-only, and backslash-only untrusted names in the traversal regression.
+- **Verified:** the failing CI run compiled the app and all XCTest sources,
+  then passed 47/48 tests; static review confirms the string-only fix targets
+  the sole failure. The full macOS rerun is pending at this entry's commit.
+- **Left open:** none specific to this fix; release-wide platform limitations
+  remain tracked as I-022 through I-024.
+- **Restart needed:** none.
+
 ## 2026-08-11 — v0.2 provider-neutral clients, mobile parity, Windows app, and releases
 **Agent:** Codex team · **Branch:** agent/release-parity · **Status:** done locally and deployed; GitHub artifact gates pending
 
