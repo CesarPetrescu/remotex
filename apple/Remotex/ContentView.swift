@@ -5,7 +5,6 @@ import UIKit
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.colorSchemeContrast) private var systemContrast
     @StateObject private var viewModel = RemotexViewModel()
     @StateObject private var theme = ThemeSetting()
     @State private var telemetryOpen = false
@@ -68,10 +67,11 @@ struct ContentView: View {
         }
         .tint(.remotexAccent)
         .preferredColorScheme(theme.choice.colorScheme)
-        .environment(
-            \.colorSchemeContrast,
-            theme.choice == .highContrast ? .increased : systemContrast
-        )
+        // `colorSchemeContrast` is intentionally read-only: iOS owns the
+        // system accessibility setting. The explicit in-app choice uses a
+        // dark base plus a view contrast boost, while the dynamic palette
+        // below still honors the system Increase Contrast setting as well.
+        .contrast(theme.choice == .highContrast ? 1.35 : 1)
         .onChange(of: scenePhase) { _, phase in
             viewModel.setAppActive(phase != .background)
             if phase == .active {

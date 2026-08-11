@@ -98,7 +98,7 @@ final class RemotexViewModel: ObservableObject {
     private static let tokenAccountPrefix = "remotex.userToken.relay."
     private static let activeSessionPrefix = "remotex.activeSession."
     private static let notificationPermissionKey = "remotex.notificationPermissionRequested"
-    static let maxAttachmentBytes = 25 * 1024 * 1024
+    nonisolated static let maxAttachmentBytes = 25 * 1024 * 1024
     // The relay rejects a turn-start while a turn is still running.
     private static let turnBusyError = "a turn is already running in this chat"
 

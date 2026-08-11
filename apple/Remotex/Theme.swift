@@ -4,9 +4,11 @@ import UIKit
 // Two palettes, one token set — mirrors apps/web/src/styles.css and the
 // Android RemotexPalette.
 //
-// Each token is a dynamic UIColor, so light mode is automatic: the system
-// resolves the right variant per trait collection, and an explicit user
-// override just flips `preferredColorScheme` at the root.
+// Each token is a dynamic UIColor, so light mode and the system Increase
+// Contrast setting are automatic. Explicit user light/dark choices flip
+// `preferredColorScheme`; explicit High Contrast also applies a root contrast
+// boost in ContentView because iOS does not permit apps to override the
+// system-owned `colorSchemeContrast` environment value.
 
 private func dyn(
     dark: UInt32,
