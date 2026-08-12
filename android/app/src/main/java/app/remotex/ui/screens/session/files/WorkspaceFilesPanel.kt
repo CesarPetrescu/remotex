@@ -69,6 +69,7 @@ import app.remotex.ui.theme.Line
 import app.remotex.ui.theme.Ok
 import app.remotex.ui.theme.Warn
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -92,6 +93,7 @@ internal fun WorkspaceFilesPanel(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var path by remember { mutableStateOf(cwd.ifEmpty { "/" }) }
+    var requestedPath by remember { mutableStateOf(path) }
     var entries by remember { mutableStateOf<List<FsEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -117,17 +119,22 @@ internal fun WorkspaceFilesPanel(
         }
     }
 
-    suspend fun refresh() {
+    suspend fun load(target: String, commitPath: Boolean) {
         loading = true; error = null
         try {
-            entries = onList(path)
+            val nextEntries = onList(target)
+            if (commitPath) path = target
+            entries = nextEntries
+        } catch (cause: CancellationException) {
+            throw cause
         } catch (t: Throwable) {
             error = t.message ?: "list failed"
         } finally {
             loading = false
         }
     }
-    LaunchedEffect(path) { refresh() }
+    suspend fun refresh() = load(path, commitPath = false)
+    LaunchedEffect(requestedPath) { load(requestedPath, commitPath = true) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -145,7 +152,7 @@ internal fun WorkspaceFilesPanel(
                 )
                 if (path != "/") {
                     TextButton(onClick = {
-                        path = path.substringBeforeLast('/').ifEmpty { "/" }
+                        requestedPath = path.substringBeforeLast('/').ifEmpty { "/" }
                     }) {
                         Text("↑ up", color = AccentDeep, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                     }
@@ -174,7 +181,11 @@ internal fun WorkspaceFilesPanel(
                             entry = entry,
                             onOpen = {
                                 if (entry.isDirectory) {
-                                    path = if (path.endsWith("/")) path + entry.fileName else "$path/${entry.fileName}"
+                                    requestedPath = if (path.endsWith("/")) {
+                                        path + entry.fileName
+                                    } else {
+                                        "$path/${entry.fileName}"
+                                    }
                                 }
                             },
                             onRename = { renameTarget = entry },

@@ -48,6 +48,8 @@ import app.remotex.ui.screens.files.FilesScreen
 import app.remotex.ui.screens.hosts.HostsScreen
 import app.remotex.ui.screens.session.ApprovalDialog
 import app.remotex.ui.screens.session.SessionScreen
+import app.remotex.ui.screens.session.SessionSideRail
+import app.remotex.ui.screens.session.SplitSessionPane
 import app.remotex.ui.screens.session.UserInputDialog
 import app.remotex.ui.screens.threads.ThreadsScreen
 import app.remotex.ui.screens.telemetry.TelemetryPanel
@@ -75,6 +77,10 @@ fun RemotexApp(
     )
     val state by vm.state.collectAsState()
     var telemetryOpen by rememberSaveable { mutableStateOf(false) }
+    // Thread shown in the tablet split view's second chat column; null =
+    // no split. Survives rotation; the pane simply hides when the window
+    // drops below split width and comes back when it grows again.
+    var splitThreadId by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state.session?.sessionId) {
         if (state.session != null) onSessionOpened()
@@ -108,10 +114,17 @@ fun RemotexApp(
     ) {
         val permanentTelemetry = state.screen == Screen.Session &&
             usePermanentTelemetryPane(maxWidth, maxHeight)
+        val splitCapable = state.screen == Screen.Session &&
+            useSplitChat(maxWidth, maxHeight)
         val selectedHost = state.hosts.find { it.id == state.selectedHostId }
 
         LaunchedEffect(state.screen, permanentTelemetry) {
             if (state.screen != Screen.Session || permanentTelemetry) telemetryOpen = false
+        }
+        // The rail's history tab needs the thread list; it's empty when the
+        // app restored straight into a session without visiting Threads.
+        LaunchedEffect(permanentTelemetry) {
+            if (permanentTelemetry && state.threads.isEmpty()) vm.refreshThreads()
         }
 
         Scaffold(
@@ -178,6 +191,8 @@ fun RemotexApp(
                                 onLoadOlder = vm::loadOlderHistory,
                                 onAttachImage = vm::attachImage,
                                 onRemoveImage = vm::removeImage,
+                                onModelChange = vm::setModel,
+                                onEffortChange = vm::setEffort,
                                 onPermissionsChange = vm::setPermissions,
                                 onSlashCommand = vm::sendSlash,
                                 onListWorkspace = vm::listWorkspace,
@@ -188,18 +203,39 @@ fun RemotexApp(
                                 modifier = modifier,
                             )
                         }
-                        if (permanentTelemetry) {
-                            Row(Modifier.fillMaxSize()) {
+                        val splitOpen = splitCapable && splitThreadId != null &&
+                            state.selectedHostId != null
+                        when {
+                            // Two chats: the rail gives its space to the
+                            // second column; close it to get the rail back.
+                            splitOpen -> Row(Modifier.fillMaxSize()) {
                                 sessionContent(Modifier.weight(1f))
                                 VerticalDivider(color = Line)
-                                TelemetryPanel(
-                                    hostLabel = selectedHost?.nickname ?: "no host selected",
-                                    snapshot = state.selectedHostId?.let { state.hostTelemetry[it] },
-                                    modifier = Modifier.width(320.dp).fillMaxHeight(),
+                                SplitSessionPane(
+                                    relayUrl = relayUrl,
+                                    hostId = state.selectedHostId!!,
+                                    threadId = splitThreadId!!,
+                                    onClose = { splitThreadId = null },
+                                    modifier = Modifier.weight(1f).fillMaxHeight(),
                                 )
                             }
-                        } else {
-                            sessionContent(Modifier.fillMaxSize())
+                            permanentTelemetry -> Row(Modifier.fillMaxSize()) {
+                                sessionContent(Modifier.weight(1f))
+                                VerticalDivider(color = Line)
+                                SessionSideRail(
+                                    threads = state.threads,
+                                    threadsLoading = state.threadsLoading,
+                                    activeThreadId = state.session?.threadId,
+                                    splitEnabled = splitCapable,
+                                    hostLabel = selectedHost?.nickname ?: "no host selected",
+                                    snapshot = state.selectedHostId?.let { state.hostTelemetry[it] },
+                                    onRefreshThreads = vm::refreshThreads,
+                                    onOpenThread = { vm.openSession(it.id) },
+                                    onSplitThread = { splitThreadId = it.id },
+                                    modifier = Modifier.width(340.dp).fillMaxHeight(),
+                                )
+                            }
+                            else -> sessionContent(Modifier.fillMaxSize())
                         }
                     }
                 }

@@ -19,6 +19,55 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TokenPersistenceInstrumentedTest {
     @Test
+    fun acceptedTokenIsNormalizedBeforeLiveConnectionsUseIt() {
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/api/hosts" -> MockResponse().setResponseCode(200).setBody("""{"hosts":[]}""")
+                "/api/models" -> MockResponse().setResponseCode(200).setBody("""{"models":[]}""")
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        server.start()
+        val relayUrl = server.url("/").toString()
+
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val application = instrumentation.targetContext.applicationContext as Application
+        val store = RecordingTokenStore()
+        val viewModelStore = ViewModelStore()
+        lateinit var viewModel: RemotexViewModel
+
+        try {
+            instrumentation.runOnMainSync {
+                viewModel = RemotexViewModel(
+                    application = application,
+                    relayUrl = relayUrl,
+                    tokenStore = store,
+                )
+                viewModelStore.put("trimmed-token", viewModel)
+                viewModel.setToken("  accepted-token  ")
+                viewModel.refresh()
+            }
+
+            waitUntil {
+                viewModel.state.value.userToken == "accepted-token" &&
+                    !viewModel.state.value.loading
+            }
+            assertEquals("accepted-token", store.stored)
+
+            var hostsRequest: RecordedRequest? = null
+            repeat(4) {
+                val request = server.takeRequest(2, TimeUnit.SECONDS) ?: return@repeat
+                if (request.path == "/api/hosts") hostsRequest = request
+            }
+            assertEquals("Bearer accepted-token", hostsRequest?.getHeader("Authorization"))
+        } finally {
+            instrumentation.runOnMainSync { viewModelStore.clear() }
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun draftsAndRejectedTokensNeverPersist() {
         val server = MockWebServer()
         server.dispatcher = object : Dispatcher() {
@@ -113,5 +162,14 @@ class TokenPersistenceInstrumentedTest {
             clearCount += 1
             if (clearCount >= 2) secondClear.countDown()
         }
+    }
+
+    private class RecordingTokenStore : TokenStore {
+        @Volatile
+        var stored: String = ""
+
+        override fun load(): String = ""
+        override fun save(token: String) { stored = token }
+        override fun clear() { stored = "" }
     }
 }

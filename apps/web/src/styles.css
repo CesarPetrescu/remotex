@@ -1606,8 +1606,8 @@ main.screen-host {
   }
 
   .chip {
-    min-width: 116px;
-    flex: 0 0 32%;
+    min-width: 104px;
+    flex: 0 0 104px;
   }
 
   .empty-chat {
@@ -2865,12 +2865,16 @@ main.screen-host {
   background: var(--panel);
   border: 1px solid var(--line);
   width: min(660px, 100%);
+  min-width: 0;
+  min-height: 0;
+  max-width: 100vw;
   max-height: min(76vh, 660px);
   display: flex;
   flex-direction: column;
   font-family: var(--mono);
   color: var(--ink);
   box-shadow: var(--shadow-2);
+  overflow: hidden;
 }
 
 /* search input */
@@ -2977,7 +2981,7 @@ main.screen-host {
 .jp-newrow input { min-height: 30px; font-size: 13px; }
 
 /* list + rows */
-.jp-list { overflow-y: auto; padding: 6px; flex: 1; }
+.jp-list { overflow-y: auto; padding: 6px; flex: 1; min-height: 0; }
 .jp-section { margin-bottom: 2px; }
 .jp-section-label {
   font-size: 10px;
@@ -3122,8 +3126,8 @@ main.screen-host {
 
 /* mobile: full-screen, fat touch targets, sticky select bar */
 @media (max-width: 640px) {
-  .jp-scrim { padding: 0; place-items: stretch; }
-  .jp-modal { width: 100%; height: 100%; max-height: none; border: none; }
+  .jp-scrim { padding: 0; place-items: stretch; overflow: hidden; }
+  .jp-modal { width: 100%; height: 100dvh; max-height: 100dvh; border: none; }
   .jp-input { font-size: 16px; } /* >=16px stops iOS zoom-on-focus */
   .jp-input-row, .jp-bc-row { padding: 14px; }
   .jp-row-main { padding: 14px 8px; font-size: 14px; }
@@ -4094,7 +4098,7 @@ main.screen-host {
   /* Pickers shrink-to-fit made the row end flush at the screen edge, hiding
      the /plan and /goal chips entirely. A floor width forces overflow, so
      the next chip peeks in and signals the row scrolls. */
-  .chip { flex: 1 0 auto; min-width: 108px; }
+  .chip { flex: 0 0 92px; min-width: 92px; }
   .dashboard-layout .hosts-sidebar,
   .dashboard-layout .telemetry-sidebar,
   .dashboard-layout .right-sidebar {
@@ -4435,6 +4439,11 @@ html, body { overscroll-behavior-y: none; }
    settings; mid-composition you want transcript. Phone only. */
 @media (max-width: 640px) {
   .composer:has(.prompt:focus) .chip-row { display: none; }
+
+  /* Keep the two Codex modes immediately visible on a phone. The three
+     configurable pickers still live in the same labelled, scrollable rail. */
+  .composer .plan-chip { order: -2; }
+  .composer .goal-chip { order: -1; }
 }
 
 /* A1: drawers become bottom sheets on phones. Same components, different
@@ -4537,4 +4546,62 @@ html, body { overscroll-behavior-y: none; }
     border-radius: 14px 14px 0 0 !important;
   }
   .sheet-handle::before { border-radius: 999px !important; }
+}
+
+/* Touch hardware is not synonymous with a phone-sized viewport. Keep the
+   terminal-sized visuals, but make the interactive boxes reliable on Android
+   tablets, iPads, and touch laptops too. This stays deliberately scoped so
+   transcript disclosure rows do not become giant buttons. */
+@media (pointer: coarse) {
+  .brand-button,
+  .status-pill,
+  .icon-button,
+  .header-tool,
+  .theme-toggle,
+  .folder-current,
+  .card-hero .btn-primary,
+  .card-hero .btn-surface,
+  .hero-links button,
+  .meta-icon-btn,
+  .composer .chip-button,
+  .composer .plan-chip,
+  .composer .attach,
+  .composer .send-stop,
+  .card-head-actions .btn-sm,
+  .jump-to-bottom,
+  .slash-row,
+  .jp-input,
+  .jp-x,
+  .jp-up,
+  .jp-new,
+  .jp-crumb,
+  .jp-row-main,
+  .jp-pin,
+  .jp-selectbar button,
+  .sheet-handle,
+  .ws-drawer-actions button {
+    min-height: 44px;
+  }
+
+  .meta-icon-btn,
+  .icon-button,
+  .header-tool,
+  .theme-toggle,
+  .status-pill,
+  .card-head-actions .btn-sm,
+  .jump-to-bottom,
+  .jp-crumb,
+  .jp-x {
+    width: 44px;
+    min-width: 44px;
+  }
+
+  .composer .attach,
+  .composer .send-stop,
+  .jp-input,
+  .jp-up,
+  .jp-pin,
+  .ws-drawer-actions button {
+    min-width: 44px;
+  }
 }

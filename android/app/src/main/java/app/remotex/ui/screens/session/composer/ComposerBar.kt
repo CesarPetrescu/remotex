@@ -13,9 +13,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -31,7 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,7 +74,7 @@ internal fun ComposerBar(
     // Slash command sender — composer bypasses sendTurn for these.
     onSlashCommand: (cmd: String, args: String) -> Unit = { _, _ -> },
 ) {
-    var text by remember { mutableStateOf("") }
+    var text by rememberSaveable { mutableStateOf("") }
     // Typing stays enabled during a turn: what you type is steered into the
     // running turn rather than blocked until it ends.
     val textEnabled = connected
@@ -110,20 +113,25 @@ internal fun ComposerBar(
                                     .fillMaxSize()
                                     .background(MaterialTheme.colorScheme.surfaceVariant),
                             )
-                            Box(
-                                Modifier
+                            IconButton(
+                                onClick = { onRemoveImage(idx) },
+                                modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .size(20.dp)
-                                    .background(Color.Black.copy(alpha = 0.7f))
-                                    .clickable { onRemoveImage(idx) },
-                                contentAlignment = Alignment.Center,
+                                    .size(44.dp),
                             ) {
-                                Icon(
-                                    Icons.Filled.Close,
-                                    contentDescription = "Remove",
-                                    tint = Ink,
-                                    modifier = Modifier.size(12.dp),
-                                )
+                                Box(
+                                    Modifier
+                                        .size(20.dp)
+                                        .background(Color.Black.copy(alpha = 0.7f)),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "Remove attached image",
+                                        tint = Ink,
+                                        modifier = Modifier.size(12.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -161,7 +169,7 @@ internal fun ComposerBar(
                                 IconButton(
                                     onClick = { onRemoveQueued(queued.id) },
                                     enabled = !queued.sending,
-                                    modifier = Modifier.size(32.dp),
+                                    modifier = Modifier.size(44.dp),
                                 ) {
                                     Icon(
                                         Icons.Filled.Close,
@@ -235,7 +243,9 @@ internal fun ComposerBar(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RectangleShape,
                     border = BorderStroke(1.dp, Line),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp, max = 132.dp),
                 ) {
                     BasicTextField(
                         value = text,
@@ -247,6 +257,7 @@ internal fun ComposerBar(
                             fontSize = 14.sp,
                         ),
                         singleLine = false,
+                        maxLines = 5,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = {
                             val sent = handleSubmit(
@@ -350,6 +361,7 @@ internal val KNOWN_SLASHES = listOf(
     SlashSpec("cd", "change cwd for next turns", takesArg = true, argHint = "<path>"),
     SlashSpec("pwd", "show current cwd"),
     SlashSpec("compact", "have codex summarise + compact the thread"),
+    SlashSpec("collab", "list collaboration modes available from codex"),
 )
 
 private fun isGoalCommand(text: String): Boolean =
@@ -379,6 +391,7 @@ private fun PlanChip(
         border = BorderStroke(1.dp, if (planMode) Amber else Line),
         shape = RectangleShape,
         modifier = modifier
+            .sizeIn(minHeight = 44.dp)
             .clickable(onClick = onClick),
     ) {
         Row(
@@ -410,7 +423,9 @@ private fun GoalSlashChip(
         color = if (goalMode) Amber.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, if (goalMode) Amber else Line),
         shape = RectangleShape,
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier
+            .sizeIn(minHeight = 44.dp)
+            .clickable(onClick = onClick),
     ) {
         Row(
             Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -441,12 +456,14 @@ private fun SlashAutocomplete(query: String, onPick: (SlashSpec) -> Unit) {
         shape = RectangleShape,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column {
-            matches.forEach { cmd ->
+        LazyColumn(Modifier.heightIn(max = 220.dp)) {
+            items(matches.size, key = { matches[it].id }) { index ->
+                val cmd = matches[index]
                 Surface(
                     color = Color.Transparent,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .sizeIn(minHeight = 44.dp)
                         .clickable { onPick(cmd) },
                 ) {
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {

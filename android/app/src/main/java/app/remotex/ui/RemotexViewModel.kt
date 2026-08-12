@@ -575,6 +575,9 @@ class RemotexViewModel internal constructor(
     private var telemetryHostId: String? = null
     private var modelFetchJob: Job? = null
     private var tokenClearJob: Job? = null
+    private var openSessionJob: Job? = null
+    private var openSessionGeneration: Long = 0L
+    private var browseJob: Job? = null
     private val tokenStoreMutex = Mutex()
     private var activeSessionSaveJob: Job? = null
     private var tokenEdited = false
@@ -1058,7 +1061,15 @@ class RemotexViewModel internal constructor(
     }
 
     fun goToThreads() {
-        _state.update { it.copy(screen = Screen.Threads) }
+        cancelPendingSessionOpen()
+        browseJob?.cancel()
+        browseJob = null
+        _state.update {
+            it.copy(
+                screen = Screen.Threads,
+                status = if (it.session == null) Status.Idle else it.status,
+            )
+        }
     }
 
     // --- workspace files (in-chat panel) ---
@@ -1117,8 +1128,12 @@ class RemotexViewModel internal constructor(
 
     fun browseDir(path: String) {
         val target = _state.value.selectedHostId ?: return
-        viewModelScope.launch {
-            _state.update { it.copy(browseLoading = true, browsePath = path, error = null) }
+        browseJob?.cancel()
+        browseJob = viewModelScope.launch {
+            // Keep the committed path and its entries paired until the new
+            // listing succeeds. A failed navigation must not relabel stale
+            // children as if they belonged to the requested directory.
+            _state.update { it.copy(browseLoading = true, error = null) }
             try {
                 val resp = client.readDirectory(_state.value.userToken, target, path)
                 _state.update {
@@ -1130,6 +1145,8 @@ class RemotexViewModel internal constructor(
                         browseLoading = false,
                     )
                 }
+            } catch (cause: CancellationException) {
+                throw cause
             } catch (t: Throwable) {
                 _state.update {
                     it.copy(browseLoading = false, error = t.message ?: "readDir failed")
@@ -1203,7 +1220,11 @@ class RemotexViewModel internal constructor(
                 }
                 if (_state.value.userToken.trim() != token) return@launch
                 tokenEdited = false
-                _state.update { it.copy(hosts = hosts, loading = false) }
+                // Persist and publish the same normalized credential. REST
+                // already used the trimmed token; leaving the draft in state
+                // made the inventory/session WebSockets authenticate with a
+                // different value until the process restarted.
+                _state.update { it.copy(userToken = token, hosts = hosts, loading = false) }
                 ensureInventoryConnected()
                 // Auto-select first online host so the telemetry panel
                 // populates without an extra tap.
@@ -1394,13 +1415,21 @@ class RemotexViewModel internal constructor(
         }
     }
 
+    private fun cancelPendingSessionOpen() {
+        openSessionGeneration += 1L
+        openSessionJob?.cancel()
+        openSessionJob = null
+    }
+
     fun openSession(
         resumeThreadId: String? = null,
         cwd: String? = null,
         hostId: String? = null,
     ) {
         val target = hostId ?: _state.value.selectedHostId ?: return
+        cancelPendingSessionOpen()
         detachSession()
+        val generation = openSessionGeneration
         userClosed = false
         // Track for the foreground service / done notification — they
         // need the thread id to look up the title and deep-link back.
@@ -1441,7 +1470,7 @@ class RemotexViewModel internal constructor(
                 goal = null,
             )
         }
-        viewModelScope.launch {
+        openSessionJob = viewModelScope.launch {
             val sid = try {
                 client.openSession(
                     _state.value.userToken,
@@ -1449,10 +1478,16 @@ class RemotexViewModel internal constructor(
                     resumeThreadId = resumeThreadId,
                     cwd = cwd,
                 )
+            } catch (cause: CancellationException) {
+                throw cause
             } catch (t: Throwable) {
+                if (generation != openSessionGeneration) return@launch
                 _state.update {
                     it.copy(status = Status.Error, error = t.message ?: "open failed")
                 }
+                return@launch
+            }
+            if (generation != openSessionGeneration || _state.value.screen != Screen.Session) {
                 return@launch
             }
             _state.update {
@@ -1471,6 +1506,7 @@ class RemotexViewModel internal constructor(
             // session id must therefore replay from zero; transport-only
             // reconnects keep their cursor in attachSocket's default path.
             attachSocket(sid, replayFromStart = true)
+            if (generation == openSessionGeneration) openSessionJob = null
         }
     }
 
@@ -1805,6 +1841,7 @@ class RemotexViewModel internal constructor(
     }
 
     fun closeSession() {
+        cancelPendingSessionOpen()
         userClosed = true
         reconnectJob?.cancel()
         reconnectJob = null
@@ -2319,11 +2356,29 @@ class RemotexViewModel internal constructor(
     }
 
     companion object {
-        fun factory(application: Application, relayUrl: String): ViewModelProvider.Factory =
+        /**
+         * [activeSessionScope] isolates the persisted "active session"
+         * record. The tablet split pane runs a second view model against
+         * the same relay; without its own scope it would clobber the
+         * primary chat's process-restore state. Token storage is always
+         * shared — both panes speak for the same user.
+         */
+        fun factory(
+            application: Application,
+            relayUrl: String,
+            activeSessionScope: String? = null,
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                    RemotexViewModel(application, relayUrl) as T
+                    RemotexViewModel(
+                        application,
+                        relayUrl,
+                        activeSessionStore = ActiveSessionStore(
+                            application,
+                            activeSessionScope ?: relayScopeKey(relayUrl),
+                        ),
+                    ) as T
             }
     }
 }

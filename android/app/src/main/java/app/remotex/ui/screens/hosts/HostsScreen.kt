@@ -18,6 +18,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -26,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -60,6 +62,7 @@ fun HostsScreen(
     @Suppress("UNUSED_PARAMETER") onModelChange: (String) -> Unit,
     @Suppress("UNUSED_PARAMETER") onEffortChange: (String) -> Unit,
 ) {
+    var connectionExpanded by rememberSaveable { mutableStateOf(false) }
     PullToRefreshBox(
         isRefreshing = state.loading,
         onRefresh = onRefresh,
@@ -79,12 +82,14 @@ fun HostsScreen(
                             .testTag("connection-pane"),
                     ) {
                         item {
-                            ConnectionCard(
+                            ConnectionSection(
                                 state = state,
                                 relayUrl = relayUrl,
                                 onRelayUrlChange = onRelayUrlChange,
                                 onTokenChange = onTokenChange,
                                 onRefresh = onRefresh,
+                                expanded = connectionExpanded,
+                                onExpandedChange = { connectionExpanded = it },
                             )
                         }
                     }
@@ -104,18 +109,104 @@ fun HostsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     item {
-                        ConnectionCard(
+                        ConnectionSection(
                             state = state,
                             relayUrl = relayUrl,
                             onRelayUrlChange = onRelayUrlChange,
                             onTokenChange = onTokenChange,
                             onRefresh = onRefresh,
+                            expanded = connectionExpanded,
+                            onExpandedChange = { connectionExpanded = it },
                             modifier = Modifier.testTag("connection-pane"),
                         )
                     }
                     hostItems(state, onHostTap)
                 }
             }
+        }
+    }
+}
+
+// Once hosts are loaded the credential form collapses to a one-line
+// summary on every size class — a permanently expanded token form on a
+// connected tablet reads as "not signed in yet" and wastes the pane.
+@Composable
+private fun ConnectionSection(
+    state: UiState,
+    relayUrl: String,
+    onRelayUrlChange: (String) -> Unit,
+    onTokenChange: (String) -> Unit,
+    onRefresh: () -> Unit,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (state.hosts.isEmpty() || expanded) {
+        Column(modifier) {
+            ConnectionCard(
+                state = state,
+                relayUrl = relayUrl,
+                onRelayUrlChange = onRelayUrlChange,
+                onTokenChange = onTokenChange,
+                onRefresh = onRefresh,
+            )
+            if (state.hosts.isNotEmpty()) {
+                TextButton(
+                    onClick = { onExpandedChange(false) },
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text("Hide connection settings")
+                }
+            }
+        }
+    } else {
+        ConnectionSummary(
+            relayUrl = relayUrl,
+            onClick = { onExpandedChange(true) },
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun ConnectionSummary(
+    relayUrl: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, Line),
+        shape = RectangleShape,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "RELAY CONNECTED",
+                    color = Amber,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+                Text(
+                    relayUrl,
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                "settings →",
+                color = Ink,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+            )
         }
     }
 }

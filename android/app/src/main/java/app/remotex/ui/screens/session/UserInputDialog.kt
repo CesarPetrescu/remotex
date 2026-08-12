@@ -2,7 +2,9 @@ package app.remotex.ui.screens.session
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,11 +24,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,21 +72,18 @@ fun UserInputDialog(
     val questions = prompt.questions
     if (questions.isEmpty()) return
 
-    var page by remember(prompt.callId) { mutableStateOf(0) }
+    var page by rememberSaveable(prompt.callId) { mutableStateOf(0) }
     // Preserve per-(question, option) notes so switching options doesn't
     // erase what the user typed for the previous one.
-    val selected = remember(prompt.callId) {
-        mutableStateMapOf<String, String>().apply {
-            questions.forEach { q ->
-                this[q.id] = q.options.firstOrNull()?.label ?: ""
-            }
-        }
+    var selected by rememberSaveable(prompt.callId) {
+        mutableStateOf(
+            questions.associate { question ->
+                question.id to (question.options.firstOrNull()?.label ?: "")
+            },
+        )
     }
-    val notes = remember(prompt.callId) {
-        mutableStateMapOf<String, String>()
-    }
-    LaunchedEffect(prompt.callId) {
-        page = 0
+    var notes by rememberSaveable(prompt.callId) {
+        mutableStateOf<Map<String, String>>(emptyMap())
     }
 
     val current = questions[page]
@@ -117,7 +114,12 @@ fun UserInputDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (queuedBehind > 0) {
                     Text(
                         "$queuedBehind more queued — answer this one to see the next",
@@ -153,7 +155,7 @@ fun UserInputDialog(
                             .selectable(
                                 selected = isSelected,
                                 role = Role.RadioButton,
-                                onClick = { selected[current.id] = opt.label },
+                                onClick = { selected = selected + (current.id to opt.label) },
                             ),
                     ) {
                         Column(Modifier.padding(8.dp)) {
@@ -192,7 +194,7 @@ fun UserInputDialog(
                 ) {
                     BasicTextField(
                         value = notes[noteKey].orEmpty(),
-                        onValueChange = { notes[noteKey] = it },
+                        onValueChange = { notes = notes + (noteKey to it) },
                         textStyle = TextStyle(
                             color = Ink,
                             fontFamily = FontFamily.Monospace,

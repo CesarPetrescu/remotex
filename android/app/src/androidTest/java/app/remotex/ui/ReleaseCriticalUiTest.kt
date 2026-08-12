@@ -6,18 +6,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.remotex.model.Host
+import app.remotex.model.ThreadInfo
 import app.remotex.security.SecureTokenStore
 import app.remotex.persistence.ActiveSession
 import app.remotex.persistence.ActiveSessionStore
@@ -26,6 +30,7 @@ import app.remotex.ui.app.RemotexBar
 import app.remotex.ui.screens.hosts.HostsScreen
 import app.remotex.ui.screens.session.ApprovalDialog
 import app.remotex.ui.screens.session.SessionScreen
+import app.remotex.ui.screens.session.SessionSideRail
 import app.remotex.ui.screens.session.UserInputDialog
 import app.remotex.ui.screens.session.composer.ComposerBar
 import app.remotex.ui.screens.threads.ThreadsScreen
@@ -151,6 +156,11 @@ class ReleaseCriticalUiTest {
             }
         }
 
+        // Connected tablets collapse the credential form to a summary, same
+        // as phones; the full form is one tap away behind "settings →".
+        compose.onNodeWithText("RELAY CONNECTED").assertExists()
+        compose.onNodeWithText("Refresh hosts").assertDoesNotExist()
+        compose.onNodeWithText("settings →").performClick()
         compose.onNodeWithText("Refresh hosts").assertIsEnabled()
         compose.onNodeWithContentDescription("Relay address")
             .performTextReplacement("not a relay address")
@@ -159,6 +169,42 @@ class ReleaseCriticalUiTest {
         val inventory = compose.onNodeWithTag("hosts-pane").fetchSemanticsNode().boundsInRoot
         org.junit.Assert.assertTrue(connection.right < inventory.right)
         org.junit.Assert.assertTrue(connection.center.x < inventory.center.x)
+        compose.onNodeWithText("studio-pc · linux · online", substring = true).assertExists()
+    }
+
+    @Test
+    fun configuredPhoneCollapsesCredentialFormBehindConnectionSettings() {
+        compose.setContent {
+            RemotexTheme {
+                Box(Modifier.requiredSize(400.dp, 760.dp)) {
+                    HostsScreen(
+                        state = UiState(
+                            userToken = "relay-secret",
+                            hosts = listOf(
+                                Host(
+                                    id = "host-1",
+                                    nickname = "Workstation",
+                                    hostname = "studio-pc",
+                                    platform = "linux",
+                                    online = true,
+                                ),
+                            ),
+                        ),
+                        relayUrl = "https://relay.example.com",
+                        onRelayUrlChange = {},
+                        onTokenChange = {},
+                        onRefresh = {},
+                        onHostTap = {},
+                        onModelChange = {},
+                        onEffortChange = {},
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithText("RELAY CONNECTED").assertExists()
+        compose.onNodeWithText("settings →").assertExists()
+        compose.onNodeWithText("Access token").assertDoesNotExist()
         compose.onNodeWithText("studio-pc · linux · online", substring = true).assertExists()
     }
 
@@ -224,6 +270,34 @@ class ReleaseCriticalUiTest {
         val width = compose.onNodeWithTag("session-content").fetchSemanticsNode().boundsInRoot.width
         val maxWidth = with(compose.density) { 840.dp.toPx() }
         org.junit.Assert.assertTrue("session width was $width px", width <= maxWidth + 1f)
+    }
+
+    @Test
+    fun sessionSideRailListsHistoryAndSwitchesToTelemetry() {
+        var split: String? = null
+        compose.setContent {
+            RemotexTheme {
+                Box(Modifier.requiredSize(340.dp, 700.dp)) {
+                    SessionSideRail(
+                        threads = listOf(ThreadInfo(id = "t1", preview = "fix the relay bug")),
+                        threadsLoading = false,
+                        activeThreadId = "t1",
+                        splitEnabled = true,
+                        hostLabel = "Workstation",
+                        snapshot = null,
+                        onRefreshThreads = {},
+                        onOpenThread = {},
+                        onSplitThread = { split = it.id },
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithText("fix the relay bug", substring = true).assertExists()
+        compose.onNodeWithContentDescription("Open in split view").performClick()
+        org.junit.Assert.assertEquals("t1", split)
+        compose.onNodeWithText("system").performClick()
+        compose.onNodeWithText("SYSTEM TELEMETRY").assertExists()
     }
 
     @Test
@@ -295,6 +369,30 @@ class ReleaseCriticalUiTest {
     }
 
     @Test
+    fun compactBarMovesPickersOutOfTheCrowdedHeader() {
+        compose.setContent {
+            RemotexTheme {
+                Box(Modifier.requiredSize(400.dp, 80.dp)) {
+                    RemotexBar(
+                        state = UiState(
+                            screen = Screen.Threads,
+                            selectedHostId = "host-1",
+                        ),
+                        onBack = {},
+                        onModelChange = {},
+                        onEffortChange = {},
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithText("REMOTEX").assertExists()
+        compose.onNodeWithText("ready").assertExists()
+        compose.onNodeWithText("medium").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Host telemetry").assertExists()
+    }
+
+    @Test
     fun pendingComposerKeepsStopAndShowsQueuedTurns() {
         compose.setContent {
             RemotexTheme {
@@ -325,5 +423,7 @@ class ReleaseCriticalUiTest {
         compose.onNodeWithText("next (1)").assertExists()
         compose.onNodeWithText("next request").assertExists()
         compose.onNodeWithContentDescription("Remove queued turn").assertExists()
+            .assertWidthIsAtLeast(44.dp)
+            .assertHeightIsAtLeast(44.dp)
     }
 }

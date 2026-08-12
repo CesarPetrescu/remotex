@@ -43,8 +43,8 @@ class StateParityTest {
         assertFalse(useTwoPane(599.dp, 800.dp))
         assertTrue(useTwoPane(600.dp, 480.dp))
         assertFalse(useTwoPane(800.dp, 479.dp))
-        assertFalse(usePermanentTelemetryPane(1199.dp, 800.dp))
-        assertTrue(usePermanentTelemetryPane(1200.dp, 480.dp))
+        assertFalse(usePermanentTelemetryPane(959.dp, 800.dp))
+        assertTrue(usePermanentTelemetryPane(960.dp, 480.dp))
     }
 
     @Test

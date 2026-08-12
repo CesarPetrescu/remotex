@@ -32,6 +32,71 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-12 — complete Android and web responsive UI audit
+**Agent:** Codex team · **Branch:** main · **Status:** done
+
+- **Why:** the Android phone/tablet and web desktop/mobile layouts needed a
+  live, measured audit and root-cause fixes before normal use.
+- **Changed:** Android now has a compact phone header with model/effort/perms
+  in the session meta rail, a collapsed post-login relay summary, 960dp tablet
+  telemetry split, rotation-safe composer/dialog state, bounded editor and
+  slash list, `/collab`, 44dp removal/mode controls, normalized live tokens,
+  cancellation-safe session opens, and path/list commits only after successful
+  directory reads.
+- **Changed:** web phone shows plan/goal first, uses pointer-aware 44px touch
+  targets on phones/tablets, and constrains the folder picker to the dynamic
+  viewport with internal scrolling. Full findings are saved in
+  `docs/responsive-ui-audit-2026-08-12.md`; remaining gaps are `I-029`–`I-032`.
+- **Verified:** web ESLint, 17 Vitest files / 106 tests, and Vite build passed.
+  Android debug+release JVM tests and lint passed; 15 connected tests passed on
+  both `medium_phone` and `medium_tablet`; `android/build.sh` produced and both
+  emulators ran the final APK. Final phone/tablet and 1440/900/390 web captures
+  were visually inspected; audited touch flows have zero sub-44px controls.
+- **Restart needed:** rebuild/redeploy the relay web image for production web;
+  install the rebuilt Android APK. No daemon or protocol restart.
+
+## 2026-08-12 — repair and hot-load the Codex Security catalog
+**Agent:** Codex team · **Branch:** main · **Status:** done; I-028 fixed
+
+- **Why:** the legacy curated plugin appeared installed but was deliberately
+  excluded from the active account-backed plugin catalog, preventing Remotex
+  sessions from invoking Codex Security.
+- **Changed:** no product code. Installed canonical
+  `codex-security@openai-curated-remote` 0.1.18 through app-server
+  `plugin/install`, then repeated the idempotent install through the running
+  shared app-server so it refreshed its own effective catalog. Closed `I-028`.
+- **Verified:** a fresh Codex 0.147 app-server and the live shared app-server
+  each returned all 13 `codex-security:*` entries from forced `skills/list`,
+  including `security-scan`, `security-diff-scan`, and `deep-security-scan`.
+  The live refresh preserved the four currently open relay sessions.
+- **Left open:** Remotex still provides the headless conversational workflow,
+  not the desktop MCP App workbench (`I-026`); per-scan MCP output-directory
+  selection has no typed field, so the reported `scanDir` is authoritative.
+- **Restart needed:** none.
+
+## 2026-08-12 — verify mobile/web Security invocation and expose host catalog mismatch
+**Agent:** Codex team · **Branch:** main · **Status:** partial; I-028 filed
+
+- **Why:** answer how Codex Security is invoked from each Remotex client and
+  whether conversational scans can choose their artifact directory.
+- **Changed:** no product code. Re-ran the supported idempotent plugin-add
+  command for `codex-security@openai-curated`; recorded the unresolved host
+  discovery failure as `I-028`.
+- **Verified:** web, Windows, Android/tablet, and iPhone all preserve explicit
+  `$codex-security:security-scan` text, repository cwd, model, effort, and
+  permissions through the normal `turn/start` path. The official scan docs and
+  installed plugin confirm the headless/chat workflow and its scan bundle.
+- **Verified:** `codex plugin list --json` reports Codex Security installed and
+  enabled, but a real fresh initialized Codex 0.147 app-server forced
+  `skills/list` returns 14 skills and zero Security skills. The idempotent
+  install refresh did not change that result. The shared managed server still
+  reports app-server 0.144.3 behind the managed 0.147.0 binary.
+- **Left open:** `I-028`; do not tell users the command is ready on this host
+  until a forced catalog probe exposes the skill. Remotex has no per-scan
+  output-path UI or MCP App workbench (`I-026`).
+- **Restart needed:** shared app-server and `remotex-daemon`, but only after
+  the catalog install is repaired and active sessions have ended.
+
 ## 2026-08-12 — publish and independently verify Codex Security parity in v0.2.2
 **Agent:** Codex team · **Branch:** agent/v022-security-release-record · **Status:** done; shared-host reload safely deferred
 
@@ -2005,3 +2070,72 @@ saw it.
   `services/tests/test_daemon_connection.py` from another agent, plus
   modified `README.md`s. Untouched by this work; the full suite passes with
   them in place. Commit separately.
+
+## 2026-08-12 — visual inspection of clients (no code changes)
+
+- **Task:** screenshot how Android (phone/tablet) and web (mobile/desktop)
+  look; describe iPhone app from source (no iOS toolchain on Linux).
+- **Done:** captured hosts + session screens on both running emulators
+  (adb screencap) and via Playwright against a Vite dev server on :5199
+  proxying the dev relay on :9099 (demo-user-token). Nothing edited.
+- **Note:** Vite v8 binds [::1] only — 127.0.0.1 gets connection refused;
+  use http://localhost. Port 5174 was already taken by something else.
+
+## 2026-08-12 — tablet UX pass on Android (Claude)
+
+- **Task:** user disliked the tablet look; make tablet screens usable.
+- **Changed:**
+  - `HostsScreen.kt` — two-pane (tablet) connection pane now collapses to
+    the same "RELAY CONNECTED / settings →" summary phones use once hosts
+    are loaded; full form is one tap away. New private `ConnectionSection`
+    shared by both branches.
+  - `RemotexBar.kt` — model/effort chips only render on Threads/Files
+    (pre-session config); Session gets them in the MetaBar instead, Hosts
+    shows none. Width caps raised 94→150dp so "GPT-5.6-Sol" stops
+    truncating.
+  - `MetaBar.kt` — wide (≥600dp) layouts now group model + effort +
+    permissions + files + upload next to the cwd in one rail.
+  - `ReleaseCriticalUiTest.kt` — tablet hosts test updated for the collapse
+    (asserts summary, expands via "settings →", then the old assertions).
+- **Verified:** `ANDROID_SERIAL=emulator-5556 ./gradlew
+  :app:connectedDebugAndroidTest -P…class=ReleaseCriticalUiTest` → 13/13
+  passed on medium_tablet AVD. Visually verified on both emulators
+  (hosts, threads, session screenshots) after `RELAY_URL=http://10.0.2.2:9099
+  ./build.sh` + install.
+- **Not mine:** the tree carries a parallel agent's uncommitted responsive
+  pass across the same files (their session is live on demo-host). My edits
+  are additive on top of the current tree state; commit together or rebase.
+- **Left open:** filed I-033 (relaunch lands on dead session screen) and
+  I-034 (threads host card clips stat labels).
+
+## 2026-08-12 — tablet session side rail + split chat (Claude)
+
+- **Task:** user asked for chat + history/system on the right on tablets,
+  and optionally two chats side by side.
+- **Changed:**
+  - `SessionSideRail.kt` — **new**. Right rail on wide sessions (≥960dp)
+    with `history` / `system` tabs: history lists the host's threads
+    (active one outlined; tap switches the main chat; ⧉ opens a split),
+    system is the old TelemetryPanel.
+  - `SplitSessionPane.kt` — **new**. Second chat column driven by a second
+    RemotexViewModel (`key = "$relayUrl#split"`) — own session socket,
+    approval/user-input queues rendered locally. Header: SPLIT + status +
+    ✕ close. Waits for the async token load before resuming its thread.
+  - `RemotexViewModel.kt` — factory gained `activeSessionScope` so the
+    split VM persists its active session under `<scope>#split` instead of
+    clobbering the primary chat's process-restore record. Token store
+    stays shared.
+  - `AdaptiveLayout.kt` — new `useSplitChat` gate (≥1200dp × ≥480dp).
+  - `RemotexApp.kt` — session branch: split open → chat|chat, else wide →
+    chat|rail, else full-width chat. `splitThreadId` is rememberSaveable;
+    rail refreshes threads if the list is empty (process-restore case).
+  - `ReleaseCriticalUiTest.kt` — new `sessionSideRailListsHistoryAndSwitchesToTelemetry`.
+- **Verified:** 14/14 ReleaseCriticalUiTest on medium_tablet AVD; unit
+  tests pass; live on the tablet emulator against the dev relay — rail
+  tabs, thread switch, split open (two sessions streaming concurrently,
+  different cwds), split close all exercised by hand.
+- **Note:** the tablet emulator's app data was unexpectedly empty after an
+  `adb install -r` during this work (token + theme gone). Cause unknown;
+  re-entered the demo token. Watch for recurrence.
+- **Not mine:** parallel agent's uncommitted responsive pass still in the
+  tree; untouched.

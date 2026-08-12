@@ -1,12 +1,18 @@
 package app.remotex.ui.screens.session
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -23,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.remotex.ui.PermissionsMode
 import app.remotex.ui.UiState
+import app.remotex.ui.screens.session.composer.CompactEffortPicker
+import app.remotex.ui.screens.session.composer.CompactModelPicker
 import app.remotex.ui.screens.session.composer.CompactPermissionsPicker
 import app.remotex.ui.theme.AccentDeep
 import app.remotex.ui.theme.InkDim
@@ -31,6 +39,8 @@ import app.remotex.ui.theme.Line
 @Composable
 internal fun MetaBar(
     state: UiState,
+    onModelChange: (String) -> Unit,
+    onEffortChange: (String) -> Unit,
     onPermissionsChange: (PermissionsMode) -> Unit,
     onOpenFiles: () -> Unit,
     onUpload: () -> Unit,
@@ -41,27 +51,79 @@ internal fun MetaBar(
         else -> info.cwd ?: "/"
     }
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text,
-                color = InkDim,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            CompactPermissionsPicker(
-                selected = state.permissions,
-                onSelect = onPermissionsChange,
-            )
-            Spacer(Modifier.width(6.dp))
-            MetaButton("▤", "Browse workspace files", InkDim, onOpenFiles)
-            Spacer(Modifier.width(6.dp))
-            MetaButton("+", "Upload workspace file", AccentDeep, onUpload)
+        BoxWithConstraints {
+            val compact = maxWidth < 600.dp
+            Column {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text,
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (!compact) {
+                        // Wide layouts group every session knob here, next to
+                        // the cwd — the app bar deliberately shows none of
+                        // them on the session screen.
+                        CompactModelPicker(
+                            selected = state.model,
+                            options = state.modelOptions,
+                            onSelect = onModelChange,
+                            modifier = Modifier.widthIn(max = 170.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        CompactEffortPicker(
+                            model = state.model,
+                            selected = state.effort,
+                            options = state.modelOptions,
+                            onSelect = onEffortChange,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        CompactPermissionsPicker(
+                            selected = state.permissions,
+                            onSelect = onPermissionsChange,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    MetaButton("▤", "Browse workspace files", InkDim, onOpenFiles)
+                    Spacer(Modifier.width(6.dp))
+                    MetaButton("+", "Upload workspace file", AccentDeep, onUpload)
+                }
+                if (compact) {
+                    LazyRow(
+                        contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        item {
+                            CompactModelPicker(
+                                selected = state.model,
+                                options = state.modelOptions,
+                                onSelect = onModelChange,
+                            )
+                        }
+                        item {
+                            CompactEffortPicker(
+                                model = state.model,
+                                selected = state.effort,
+                                options = state.modelOptions,
+                                onSelect = onEffortChange,
+                            )
+                        }
+                        item {
+                            CompactPermissionsPicker(
+                                selected = state.permissions,
+                                onSelect = onPermissionsChange,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

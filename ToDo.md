@@ -404,7 +404,7 @@ daemon ~150 lines + tests, web ~200, relay ~40, preview stack ~200.
 
 ---
 
-# Plan: phone UI/IA — remaining work (2026-08-09)
+# Plan: phone UI/IA — DONE (2026-08-12)
 
 Owner flagged the phone experience. Fixed same day (see WorkLog): header
 tool buttons stretching into empty boxes, drawers leaving a 52px content
@@ -414,23 +414,24 @@ actions, tail-truncated path via `<bdi>`), composer squeezed from 3 rows
 to 2 (plan/goal chips live in the scrollable chip row, min-width floor
 makes the next chip peek).
 
-What remains for a properly phone-first layout, in value order:
+All six items are now shipped. The final responsive audit and device evidence
+are in `docs/responsive-ui-audit-2026-08-12.md`.
 
-1. **Bottom sheets instead of side drawers** (≤640px). Telemetry, prompts
+1. ~~**Bottom sheets instead of side drawers** (≤640px).~~ Telemetry, prompts
    and workspace files as swipe-dismissable bottom sheets — thumb
    reachable, native feel. CSS transform change + a drag handle; the
    components don't care.
-2. **Sticky compact session header.** On scroll, collapse the two-line
+2. ~~**Sticky compact session header.**~~ On scroll, collapse the two-line
    session header to one 36px line (host · model). Gives back ~40px.
-3. **Composer focus mode.** When the textarea focuses on phone, hide the
+3. ~~**Composer focus mode.**~~ When the textarea focuses on phone, hide the
    chip row until blur (chips are pre-turn settings; while typing you
    want space). Pure CSS `:focus-within` first pass.
-4. **Approvals as action sheet.** The pending-prompt panel is desktop-ish;
+4. ~~**Approvals as action sheet.**~~ The pending-prompt panel is desktop-ish;
    on phone it should be a bottom sheet with big Approve/Deny buttons in
    the thumb zone.
-5. **Larger touch targets sweep.** Several controls sit at 32-34px; audit
-   to ≥44px hit areas (padding, not visual size).
-6. **PWA polish.** manifest exists; add display: standalone testing,
+5. ~~**Larger touch targets sweep.**~~ Controls in the audited touch flows now
+   meet a 44px hit-area floor without enlarging mouse-only desktop chrome.
+6. ~~**PWA polish.**~~ Manifest exists; add display: standalone testing,
    safe-area-inset padding for the composer (iPhone home bar), and
    overscroll-behavior to stop pull-to-refresh killing the session view.
 

@@ -2,6 +2,7 @@ package app.remotex.ui.app
 
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
@@ -44,77 +45,92 @@ fun RemotexBar(
     showTelemetryAction: Boolean = true,
 ) {
     val hasConfiguredHost = state.selectedHostId != null
-    TopAppBar(
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "REMOTEX",
-                    color = Amber,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 14.sp,
-                )
-                if (hasConfiguredHost) {
-                    Spacer(Modifier.width(10.dp))
-                    StatusBadge(state)
-                    Spacer(Modifier.width(8.dp))
-                    CompactModelPicker(
-                        selected = state.model,
-                        options = state.modelOptions,
-                        onSelect = onModelChange,
-                        modifier = Modifier.widthIn(max = 94.dp),
+    BoxWithConstraints {
+        val compact = maxWidth < 600.dp
+        TopAppBar(
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "REMOTEX",
+                        color = Amber,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
                     )
-                    Spacer(Modifier.width(6.dp))
-                    CompactEffortPicker(
-                        model = state.model,
-                        selected = state.effort,
-                        options = state.modelOptions,
-                        onSelect = onEffortChange,
-                        modifier = Modifier.widthIn(max = 78.dp),
-                    )
+                    if (hasConfiguredHost) {
+                        Spacer(Modifier.width(10.dp))
+                        StatusBadge(state)
+                        // On phones these controls move to the session meta
+                        // rail. Keeping four labels plus Back and two actions
+                        // in one app bar is guaranteed to clip at 360–411dp.
+                        // On the session screen (any width) the meta rail
+                        // already groups model/effort/permissions next to the
+                        // cwd, so the app bar only carries them on the
+                        // pre-session screens where they configure the next
+                        // session (Threads/Files) — not on Hosts.
+                        val preSession = state.screen == Screen.Threads ||
+                            state.screen == Screen.Files
+                        if (!compact && preSession) {
+                            Spacer(Modifier.width(8.dp))
+                            CompactModelPicker(
+                                selected = state.model,
+                                options = state.modelOptions,
+                                onSelect = onModelChange,
+                                modifier = Modifier.widthIn(max = 150.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            CompactEffortPicker(
+                                model = state.model,
+                                selected = state.effort,
+                                options = state.modelOptions,
+                                onSelect = onEffortChange,
+                                modifier = Modifier.widthIn(max = 90.dp),
+                            )
+                        }
+                    }
                 }
-            }
-        },
-        navigationIcon = {
-            if (state.screen != Screen.Hosts) {
-                IconButton(onClick = onBack) {
+            },
+            navigationIcon = {
+                if (state.screen != Screen.Hosts) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Ink,
+                        )
+                    }
+                }
+            },
+            actions = {
+                if (hasConfiguredHost && showTelemetryAction) {
+                    IconButton(onClick = onOpenTelemetry) {
+                        Icon(
+                            Icons.Filled.Speed,
+                            contentDescription = "Host telemetry",
+                            tint = Ink,
+                        )
+                    }
+                }
+                IconButton(onClick = onToggleTheme) {
+                    val icon = when {
+                        highContrast -> Icons.Filled.DarkMode
+                        darkTheme -> Icons.Filled.LightMode
+                        else -> Icons.Filled.Contrast
+                    }
+                    val description = when {
+                        highContrast -> "Switch to dark theme"
+                        darkTheme -> "Switch to light theme"
+                        else -> "Switch to high contrast theme"
+                    }
                     Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        icon,
+                        contentDescription = description,
                         tint = Ink,
                     )
                 }
-            }
-        },
-        actions = {
-            if (hasConfiguredHost && showTelemetryAction) {
-                IconButton(onClick = onOpenTelemetry) {
-                    Icon(
-                        Icons.Filled.Speed,
-                        contentDescription = "Host telemetry",
-                        tint = Ink,
-                    )
-                }
-            }
-            IconButton(onClick = onToggleTheme) {
-                val icon = when {
-                    highContrast -> Icons.Filled.DarkMode
-                    darkTheme -> Icons.Filled.LightMode
-                    else -> Icons.Filled.Contrast
-                }
-                val description = when {
-                    highContrast -> "Switch to dark theme"
-                    darkTheme -> "Switch to light theme"
-                    else -> "Switch to high contrast theme"
-                }
-                Icon(
-                    icon,
-                    contentDescription = description,
-                    tint = Ink,
-                )
-            }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-        ),
-    )
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            ),
+        )
+    }
 }

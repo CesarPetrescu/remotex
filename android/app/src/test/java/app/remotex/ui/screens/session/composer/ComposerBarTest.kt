@@ -8,6 +8,22 @@ import org.junit.Test
 class ComposerBarTest {
 
     @Test
+    fun collaborationModesAreDiscoverableAndRoutedAsAControlCommand() {
+        val commands = mutableListOf<Pair<String, String>>()
+
+        assertTrue(KNOWN_SLASHES.any { it.id == "collab" })
+        val handled = handleSubmit(
+            text = "/collab",
+            hasAttachments = false,
+            onSlashCommand = { command, args -> commands += command to args },
+            onSend = { error("slash command became a user turn") },
+        )
+
+        assertTrue(handled)
+        assertEquals(listOf("collab" to ""), commands)
+    }
+
+    @Test
     fun imageOnlySubmissionReachesTheViewModel() {
         val sent = mutableListOf<String>()
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,7 +49,9 @@ internal fun CompactModelPicker(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RectangleShape,
         border = BorderStroke(1.dp, Line),
-        modifier = modifier.clickable { expanded = true },
+        modifier = modifier
+            .sizeIn(minHeight = 44.dp)
+            .clickable { expanded = true },
     ) {
         Row(
             Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
@@ -105,7 +108,9 @@ internal fun CompactPermissionsPicker(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RectangleShape,
         border = BorderStroke(1.dp, if (selected == PermissionsMode.Full) Warn else Line),
-        modifier = modifier.clickable { expanded = true },
+        modifier = modifier
+            .sizeIn(minHeight = 44.dp)
+            .clickable { expanded = true },
     ) {
         Row(
             Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
@@ -171,7 +176,9 @@ internal fun CompactEffortPicker(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RectangleShape,
         border = BorderStroke(1.dp, Line),
-        modifier = modifier.clickable { expanded = true },
+        modifier = modifier
+            .sizeIn(minHeight = 44.dp)
+            .clickable { expanded = true },
     ) {
         Row(
             Modifier.padding(horizontal = 9.dp, vertical = 6.dp),

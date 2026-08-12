@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-028**.
+  never reuse. Next free ID: **I-033**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -53,6 +53,11 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-025 | fixed | medium | apple | MCP/dynamic/subagent tool results were discarded on iPhone |
 | I-026 | open | info | clients/protocol | Remotex does not host sandboxed MCP App workbenches |
 | I-027 | investigating | medium | relay/security | Detached deep scans can outlive the silent-session ceiling |
+| I-028 | fixed | high | host/plugins | Installed Codex Security plugin is absent from the app-server skill catalog |
+| I-029 | open | medium | android/navigation | A second Back from the thread list closes an active turn without confirmation |
+| I-030 | open | low | android/telemetry | A failed telemetry poll may leave the visible status reading live indefinitely |
+| I-031 | open | low | android/session | Successful `/cd` feedback does not update the visible session cwd |
+| I-032 | open | medium | web/tooling | Responsive browser behavior has no durable CI regression suite |
 
 ---
 
@@ -692,3 +697,109 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 - **Evidence:** `services/relay/handlers/ws_client.py` defaults
   `RELAY_SESSION_STALL_CEILING_SECONDS` to 7,200; the cloned plugin's
   `.mcp.json` sets `tool_timeout_sec` to 86,400.
+
+### I-028 — installed Codex Security is absent from the skill catalog
+
+- **Status:** fixed · **Severity:** high · **Area:** host/plugins
+- **Resolution:** 2026-08-12 — installed the canonical remote
+  `codex-security@openai-curated-remote` 0.1.18 plugin and hot-loaded it through
+  the running shared app-server; see the 2026-08-12 WorkLog entry “repair and
+  hot-load the Codex Security catalog.”
+- **Impact:** the host reports `codex-security@openai-curated` 0.1.11 as
+  installed and enabled, but a new Remotex/Codex thread cannot reliably invoke
+  `$codex-security:security-scan` while that skill is missing from Codex's
+  loaded catalog.
+- **Observed:** re-running the supported, idempotent `codex plugin add
+  codex-security@openai-curated --json` succeeded but did not change the
+  catalog. The managed binary is 0.147.0 while the still-running shared
+  app-server reports 0.144.3, but the mismatch also reproduces in a fresh
+  `codex app-server` 0.147.0 process.
+- **How it was fixed:** migrated the effective install to the account-backed
+  `openai-curated-remote` catalog, then repeated the idempotent remote install
+  through the running shared app-server so it refreshed its own catalog. A
+  restart was not required.
+- **Evidence:** `codex plugin list --json` reports the plugin installed and
+  enabled; a real initialized app-server `skills/list` request with
+  `forceReload: true` returns 14 skills and no name containing `security`,
+  with no skill-load errors.
+- **Root cause:** when ChatGPT authentication enables the remote global plugin
+  catalog, Codex deliberately filters legacy `@openai-curated` entries and
+  loads their account-backed `@openai-curated-remote` equivalents instead.
+  The legacy install command therefore updated a catalog that this runtime
+  intentionally ignored.
+- **Fix verification:** canonical `plugin/install` materialized version 0.1.18
+  under `~/.codex/plugins/cache/openai-curated-remote/`. A fresh Codex 0.147
+  app-server and the already-running shared app-server each returned all 13
+  `codex-security:*` skills from forced `skills/list`. No process restart or
+  session interruption was needed.
+
+### I-029 — active Android turn can be closed without confirmation
+
+- **Status:** open · **Severity:** medium · **Area:** android/navigation
+- **Impact:** Back from a session intentionally keeps the live session attached
+  while showing the thread list, but one more Back calls `goToHosts()` and
+  `closeSession()` immediately. An accidental double-Back can therefore end an
+  active turn.
+- **How to fix:** when a session is active or a turn is pending, make the second
+  Back show an explicit keep-running / end-session choice; retain the current
+  one-Back path to inspect saved threads.
+- **Evidence:** `android/app/src/main/java/app/remotex/ui/RemotexApp.kt` wires
+  the Threads Back handler to `goToHosts`; `RemotexViewModel.goToHosts()` calls
+  `closeSession()` with no confirmation state.
+
+### I-030 — Android telemetry freshness can remain visually live
+
+- **Status:** open · **Severity:** low · **Area:** android/telemetry
+- **Impact:** if telemetry requests start failing after a good sample, the
+  panel may continue to show `live · 3s` because elapsed wall time alone does
+  not trigger Compose recomposition.
+- **How to fix:** drive freshness from a small UI ticker or publish an explicit
+  stale state after consecutive polling failures.
+- **Evidence:** `TelemetryPanel.kt` computes freshness with
+  `System.currentTimeMillis()` during composition, while
+  `RemotexViewModel.startTelemetryPoll()` catches failures without changing
+  state.
+
+### I-031 — Android `/cd` leaves the displayed cwd stale
+
+- **Status:** open · **Severity:** low · **Area:** android/session
+- **Impact:** Codex accepts the directory change for later turns, but the
+  session metadata can keep showing the old path, which is misleading before a
+  subsequent event happens to refresh it.
+- **How to fix:** include the resolved cwd in the daemon's successful `/cd`
+  acknowledgement and apply it to Android `SessionInfo`, matching the server's
+  authoritative path.
+- **Evidence:** the Android `slash-ack` reducer updates only plan mode and
+  `slashFeedback`; it has no `/cd` branch that updates `session.cwd`.
+
+### I-032 — responsive web coverage is not durable in CI
+
+- **Status:** open · **Severity:** medium · **Area:** web/tooling
+- **Impact:** width overflow, touch-target, and full-screen picker regressions
+  can pass the current node-only Vitest suite and production build.
+- **How to fix:** add a small browser job covering 390px touch phone, 900px
+  touch tablet, and desktop; assert document width, key control bounds, and
+  picker/dialog viewport containment using the existing UI-dev fixture.
+- **Evidence:** this audit required a temporary Playwright harness; `apps/web`
+  has no checked-in browser runner, and `npm run test:run` executes Vitest in a
+  node environment.
+
+### I-033 — Android relaunch restores a dead session screen
+
+- **Status:** open · **Severity:** low · **Area:** android
+- **Impact:** launching the app after its process died lands directly on the
+  last session in a disconnected "session closed" state (cwd "/", no events)
+  instead of the threads list; the user has to back out manually.
+- **How to fix:** on cold start, restore to Threads for the persisted host and
+  only enter Session when the thread is actually resumable.
+- **Evidence:** observed on both emulators after reinstall during the
+  2026-08-12 tablet UX pass (screenshots in that session's scratchpad).
+
+### I-034 — tablet threads host card clips its telemetry stat labels
+
+- **Status:** open · **Severity:** low · **Area:** android
+- **Impact:** on the tablet threads screen the host card's stat labels
+  (CPU / RAM / GPU names / TEMP) are vertically clipped to half height.
+- **How to fix:** give the stat header row its intrinsic height instead of a
+  fixed card height in the threads host card.
+- **Evidence:** tablet screenshot 2026-08-12 (medium_tablet AVD, 2560×1600).

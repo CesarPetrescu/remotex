@@ -50,6 +50,8 @@ fun SessionScreen(
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
     onPermissionsChange: (PermissionsMode) -> Unit,
+    onModelChange: (String) -> Unit = {},
+    onEffortChange: (String) -> Unit = {},
     onSlashCommand: (cmd: String, args: String) -> Unit,
     onListWorkspace: suspend (path: String) -> List<FsEntry>,
     onDeleteWorkspaceFile: suspend (path: String) -> Unit,
@@ -107,6 +109,8 @@ fun SessionScreen(
         ) {
             MetaBar(
                 state = state,
+                onModelChange = onModelChange,
+                onEffortChange = onEffortChange,
                 onPermissionsChange = onPermissionsChange,
                 onOpenFiles = { filesPanelOpen = true },
                 onUpload = { uploadLauncher.launch(arrayOf("*/*")) },
