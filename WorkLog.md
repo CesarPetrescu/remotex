@@ -32,6 +32,31 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-12 — publish and verify Android image/tablet repair in v0.4.1
+**Agent:** Codex team · **Branch:** main · **Status:** done
+
+- **Why:** close the Android image-send and tablet-layout repair only after
+  the exact public packages passed independent release verification.
+- **Changed:** PR `#26` was squash-merged as
+  `f7cadd0584e868f19bb2eeacc8f14ab31c9410fa`; annotated tag `v0.4.1`
+  points to that commit, and the non-prerelease GitHub Release contains the
+  signed Android APK, tested unsigned iPhone IPA, Windows setup/portable
+  executables, and `SHA256SUMS.txt`. This entry changes no product code.
+- **Verified:** PR CI `31600048908`, post-merge CI `31601020610`, rolling
+  Release `31601020579`, and stable Release `31602089000` passed. Both PR and
+  merged commits passed the 21-test Android emulator UI suite.
+- **Verified:** fresh public downloads all passed `SHA256SUMS.txt` and GitHub
+  build-attestation verification pinned to this repository, tag ref, and
+  source commit. The APK is `app.remotex` v0.4.1/code 401, minSdk 26,
+  targetSdk 35, zip-aligned, v2-signed by the expected 4096-bit Remotex
+  release certificate, and clean of private relay/demo-token strings. The
+  downloaded APK cold-installed and launched successfully on the phone AVD.
+- **Left open:** only the non-blocking rejected-turn temp-file cleanup in
+  `I-036`; successful image sends, socket health, and released clients are
+  unaffected.
+- **Restart needed:** install `remotex-v0.4.1.apk`. No relay/web or daemon
+  restart is required for these Android-only changes.
+
 ## 2026-08-12 — repair Android images and tablet post-login layouts
 **Agent:** Codex team · **Branch:** agent/android-image-tablet-repair · **Status:** done locally; publication pending CI
 
