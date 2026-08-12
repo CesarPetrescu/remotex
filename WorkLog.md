@@ -2168,3 +2168,24 @@ saw it.
 - **Note:** each pane runs its own inventory socket (same trade-off as
   the Android split pane). Fine at ~4 tabs; revisit only if tab counts
   grow.
+
+## 2026-08-12 — v0.3.0 release verification (Claude)
+
+- **Release:** v0.3.0 published from tag (run 31584883569), all jobs
+  green: Android signed APK (5m1s), Windows Electron installer + portable
+  (1m40s), iPhone tested unsigned IPA (10m7s), atomic publish (26s).
+- **Assets:** remotex-v0.3.0.apk · remotex-v0.3.0.ipa ·
+  remotex-windows-v0.3.0-setup.exe · remotex-windows-v0.3.0-portable.exe ·
+  SHA256SUMS.txt. Not a draft.
+- **Contents:** tablet session side rail (history/system tabs) + split
+  chat, hosts-pane collapse, meta-rail regrouping, the parallel
+  responsive audit's web/Android fixes, daemon connection hardening.
+  (The web desktop multi-session tabs landed after the tag in a047bbc —
+  deployed via the relay image, part of the next tag.)
+- **Deployed locally:** relay image rebuilt twice today (v0.3.0 content,
+  then a047bbc web tabs) and recreated — healthy, HTTP 200;
+  remotex-daemon restarted on the new daemon code.
+- **Verified by:** gh run view (all jobs ✓) and gh release view (5
+  assets, draft:false). Did not install the released APK/IPA/EXE on real
+  devices — emulator/dev-relay verification only, recorded in the two
+  entries above.
