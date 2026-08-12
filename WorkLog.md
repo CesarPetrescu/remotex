@@ -2373,3 +2373,24 @@ saw it.
   tablet AVD (the 44dp queue-button guard still passes), keyboard-open
   screenshot on the phone AVD — two slim rows, more transcript.
   Installed on both emulators.
+
+## 2026-08-12 — v0.4.0 release verification (Claude)
+
+- **Release:** v0.4.0 published from tag (run 31591751030), all jobs
+  green: Android signed APK (5m26s), iPhone tested unsigned IPA
+  (4m38s), Windows Electron setup + portable (1m40s), atomic publish
+  (22s).
+- **Assets:** remotex-v0.4.0.apk · remotex-v0.4.0.ipa ·
+  remotex-windows-v0.4.0-setup.exe · remotex-windows-v0.4.0-portable.exe
+  · SHA256SUMS.txt. Not a draft.
+- **Contents since v0.3.0:** web desktop multi-session tabs (max 4 on
+  screen, LRU background tabs, dedupe guards), full project paths in
+  tabs/headers, compact grid panes that fill their width,
+  Claude-style composer (footer selectors, rounded shell,
+  content-sized input), skeleton loading + reconnect pill (web +
+  Android), Android adjustResize keyboard fix, slimmer Android control
+  chrome.
+- **Deployed:** relay image current with the release's web bundle;
+  daemon running restarted code; both emulators on the same commit.
+- **Verified by:** gh run view (all jobs ✓) and gh release view
+  (5 assets, draft:false).
