@@ -2,6 +2,32 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MODEL_OPTIONS, PERMISSIONS, effortsFor } from '../config';
 
+// Current-settings readout for the composer's top row. Presentational —
+// the ⚙ button owns the interaction; this just keeps the per-chat
+// values visible without stealing width from the prompt input.
+export function ComposerSettingsSummary({ model, effort, permissions, models }) {
+  const modelList = models && models.length > 0 ? models : MODEL_OPTIONS;
+  const currentModel = modelList.find((m) => m.id === model) || modelList[0];
+  const efforts = effortsFor(model, modelList);
+  const effortValue = efforts.includes(effort) ? effort : '';
+  const currentPerms = PERMISSIONS.find((p) => p.id === permissions) || PERMISSIONS[0];
+  const danger = permissions === 'full';
+  return (
+    <span
+      className="composer-settings"
+      title={`model ${currentModel.label} · reasoning ${effortValue || 'default'} · permissions ${currentPerms.label}`}
+    >
+      <span className="co-model">{currentModel.label}</span>
+      {' · '}
+      {effortValue || 'default'}
+      {' · '}
+      <span className={danger ? 'co-perms danger' : ''}>
+        {currentPerms.label.toLowerCase()}
+      </span>
+    </span>
+  );
+}
+
 // One ⚙ options popover next to the send button: model, reasoning
 // effort, and permissions in a single panel. The trigger itself shows
 // the current per-chat values, so even a small grid pane displays its
@@ -95,15 +121,10 @@ export function ComposerOptions({
         onClick={toggle}
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-label="Chat options (model, reasoning, permissions)"
         title={`model ${currentModel.label} · reasoning ${effortValue || 'default'} · permissions ${currentPerms.label}`}
       >
-        <span className="co-model">{currentModel.label}</span>
-        <span className="co-sep">·</span>
-        <span className="co-effort">{effortValue || 'default'}</span>
-        <span className="co-sep">·</span>
-        <span className={`co-perms ${danger ? 'danger' : ''}`}>
-          {currentPerms.label.toLowerCase()}
-        </span>
+        ⚙
       </button>
       {open && pos
         && createPortal(

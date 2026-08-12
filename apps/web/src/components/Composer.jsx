@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ComposerOptions } from './Pickers';
+import { ComposerOptions, ComposerSettingsSummary } from './Pickers';
 import { SendOrStopButton } from './SendOrStopButton';
 
 // Daemon-supported slash commands. Wire matches services/daemon/adapters/stdio.py.
@@ -248,6 +248,12 @@ export function Composer({
           <span className="plan-chip-dot" />
           {goalMode ? 'goal on' : '/goal'}
         </button>
+        <ComposerSettingsSummary
+          model={model}
+          effort={effort}
+          permissions={permissions}
+          models={models}
+        />
       </div>
       {slashOpen && slashMatches.length > 0 && (
         <div className="slash-popover" role="listbox">

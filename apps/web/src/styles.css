@@ -4831,32 +4831,32 @@ html, body { overscroll-behavior-y: none; }
 .composer-options { display: flex; min-width: 0; }
 
 .composer-options-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  max-width: 240px;
-  padding: 6px 9px;
+  min-width: 44px;
   background: var(--panel-2);
   border: 1px solid var(--line);
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: 15px;
   color: var(--ink-dim);
   cursor: pointer;
-  white-space: nowrap;
 }
+.composer-options-btn:hover { color: var(--ink); }
 
-.composer-options-btn.danger { border-color: var(--warn); }
-.composer-options-btn .co-model {
+/* Read-only settings line, right end of the /plan · /goal row — keeps
+   per-chat model/effort/perms visible without shrinking the input. */
+.composer-settings {
+  margin-left: auto;
+  align-self: center;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--amber);
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-dim);
 }
-.composer-options-btn .co-effort { flex: none; }
-.composer-options-btn .co-perms { flex: none; }
-.composer-options-btn .co-perms.danger { color: var(--warn); }
-.composer-options-btn .co-sep { flex: none; color: var(--line-strong); }
+.composer-settings .co-model { color: var(--amber); }
+.composer-settings .co-perms.danger { color: var(--warn); }
+.composer-options-btn.danger { border-color: var(--warn); color: var(--warn); }
+
 
 .dd-options { max-height: min(62vh, 520px); overflow-y: auto; }
 
@@ -4870,16 +4870,6 @@ html, body { overscroll-behavior-y: none; }
 }
 .dd-section-label:first-of-type { border-top: 0; }
 
-/* Small panes: the summary stays but tightens. */
-.session-grid:not(.count-1) .composer-options-btn {
-  max-width: 200px;
-  font-size: 10px;
-  padding: 5px 7px;
-}
-
-@media (max-width: 1000px) {
-  .composer-options-btn { max-width: 150px; }
-}
 
 /* Multi-pane grids: reading-measure gutters (82% agent column, 72ch
    markdown measure) are single-wide-column typography. In a split every

@@ -2245,3 +2245,17 @@ saw it.
   reading measure.
 - **Verified:** vitest 112/112; Playwright 2-pane at 2000px — content
   spans the full pane, no gutter. Relay rebuilt + redeployed (200).
+
+## 2026-08-12 — composer options: icon trigger, summary relocated (Claude)
+
+- **Task:** the wide `model · effort · perms` trigger squeezed the
+  prompt input in panes and still truncated the model name.
+- **Changed:** `Pickers.jsx` — the popover trigger is a 44px ⚙ icon
+  (warn-tinted on full access); new presentational
+  `ComposerSettingsSummary` shows the live values at the right end of
+  the /plan · /goal row (ellipsizes gracefully, model in accent, perms
+  in warn when full). `Composer.jsx` renders it there; `styles.css`
+  updated (old wide-trigger rules dropped).
+- **Verified:** eslint clean, vitest 112/112, Playwright 2-pane check —
+  input spans the row, ⚙ next to send, summary visible per pane.
+  Relay rebuilt + redeployed (200).
