@@ -2394,3 +2394,17 @@ saw it.
   daemon running restarted code; both emulators on the same commit.
 - **Verified by:** gh run view (all jobs ✓) and gh release view
   (5 assets, draft:false).
+
+## 2026-08-12 — grid panes drop their header rows (Claude)
+
+- **Task:** user: the per-pane header rows duplicate the tab strip —
+  deprecate them.
+- **Changed:** `SessionScreen.jsx` — `compact` now renders NO meta
+  header (tab strip names every pane); workspace files/upload triggers
+  move into the composer footer via new optional `onOpenFiles` /
+  `onUploadFile` props on `Composer.jsx` (📁 ＋ beside attach,
+  compact-only). `onClosePane` removed (tab ✕ covers closing).
+  `SessionPane.jsx` simplified; dead pane-header CSS dropped.
+- **Verified:** eslint clean, vitest 115/115, Playwright 2-pane: chat
+  starts at the top of each pane, footer shows 📎 📁 ＋ perms left /
+  model reasoning send right. Relay rebuilt + redeployed (200).

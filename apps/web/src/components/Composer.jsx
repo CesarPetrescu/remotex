@@ -72,6 +72,10 @@ export function Composer({
   onAttachImage,
   onRemoveImage,
   onSlashCommand,
+  // Grid panes have no meta header, so the workspace controls join the
+  // footer's left cluster next to attach.
+  onOpenFiles = null,
+  onUploadFile = null,
 }) {
   const [text, setText] = useState('');
   const [slashIdx, setSlashIdx] = useState(0);
@@ -325,6 +329,28 @@ export function Composer({
             hidden
             onChange={onPickFiles}
           />
+          {onOpenFiles && (
+            <button
+              type="button"
+              className="attach"
+              onClick={onOpenFiles}
+              aria-label="Workspace files"
+              title="Workspace files (rename / delete / download)"
+            >
+              📁
+            </button>
+          )}
+          {onUploadFile && (
+            <button
+              type="button"
+              className="attach"
+              onClick={onUploadFile}
+              aria-label="Upload a file into the workspace cwd"
+              title="Upload a file into the workspace cwd"
+            >
+              ＋
+            </button>
+          )}
           <PermissionsSelect value={permissions} onChange={onPermissionsChange} />
           <span className="composer-foot-spacer" />
           <ModelSelect value={model} models={models} onChange={onModelChange} />

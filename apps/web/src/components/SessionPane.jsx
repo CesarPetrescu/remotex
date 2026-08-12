@@ -9,7 +9,7 @@ import { PendingPromptsPanel } from './PendingPromptsPanel';
 // one more client on the same relay token. Prompts render inline at the
 // top of the pane because the app-level right sidebar belongs to the
 // primary session.
-export function SessionPane({ token, remember, hostId, threadId, cwd, title, onClose }) {
+export function SessionPane({ token, remember, hostId, threadId, cwd, title }) {
   const r = useRemotex({ token, remember });
   const { state } = r;
   const openedRef = useRef(false);
@@ -58,7 +58,6 @@ export function SessionPane({ token, remember, hostId, threadId, cwd, title, onC
             sendSlash: r.sendSlash,
           }}
           compact
-          onClosePane={onClose}
         />
       </div>
     </section>

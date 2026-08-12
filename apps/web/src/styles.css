@@ -4747,21 +4747,6 @@ html, body { overscroll-behavior-y: none; }
     flex-direction: column;
   }
 
-  /* Compact meta row for grid panes: the full project folder is the
-     headline. Breaks anywhere rather than truncating — full visibility
-     of the path beats a tidy single line. */
-  .session-meta-cwd-full {
-    flex: 1;
-    min-width: 0;
-    font-size: 12px;
-    color: var(--amber);
-    word-break: break-all;
-  }
-
-  .session-meta.pane-compact {
-    padding: 4px 10px;
-  }
-
   /* Multi-pane grids run tighter chrome: smaller chips, slimmer plan
      row — four composers on one screen add up fast. */
   .session-grid:not(.count-1) .chip-button {
@@ -4780,31 +4765,6 @@ html, body { overscroll-behavior-y: none; }
   .session-grid:not(.count-1) .plan-chip {
     padding: 2px 7px;
     font-size: 10px;
-  }
-
-  .session-pane-status {
-    flex: none;
-    color: var(--warn, #e0aa4e);
-  }
-
-  .session-pane-status.ok {
-    color: var(--ink-dim);
-  }
-
-  .session-pane-close {
-    flex: none;
-    padding: 2px 7px;
-    border: 1px solid var(--line);
-    background: transparent;
-    color: var(--ink-dim);
-    font-family: inherit;
-    font-size: 11px;
-    cursor: pointer;
-  }
-
-  .session-pane-close:hover {
-    color: var(--ink);
-    border-color: var(--line-strong);
   }
 
   .session-pane-prompts {

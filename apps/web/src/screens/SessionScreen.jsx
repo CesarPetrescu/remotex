@@ -78,12 +78,11 @@ export function SessionScreen({
   onAttachImage,
   onRemoveImage,
   workspaceApi,
-  // Grid-pane mode: one slim meta row — the full project folder is the
-  // headline (never shortened), the chat title moves to its tooltip, and
-  // the host/model/token lines disappear (model already lives in the
-  // composer chips). `onClosePane` renders the tab-close ✕ inline.
+  // Grid-pane mode: no meta header at all — the tab strip above the grid
+  // already names every pane by its full project path, so repeating it
+  // per pane was dead rows. The workspace files/upload buttons relocate
+  // into the composer footer.
   compact = false,
-  onClosePane = null,
 }) {
   const info = state.session;
   const hostId = info?.hostId;
@@ -133,46 +132,25 @@ export function SessionScreen({
           W6: workspace + add buttons live INSIDE the meta block as
           icon-only controls, so they're discoverable without claiming
           a whole row of vertical space between meta and chat. */}
-      <div className={`session-meta ${atBottom ? '' : 'compact'} ${compact ? 'pane-compact' : ''}`}>
-        <div className="session-meta-row1">
-          {compact ? (
-            <span className="session-meta-cwd-full" title={chatTitle}>{cwd}</span>
-          ) : (
+      {!compact && (
+        <div className={`session-meta ${atBottom ? '' : 'compact'}`}>
+          <div className="session-meta-row1">
             <span className="session-meta-title" title={chatTitle}>{chatTitle}</span>
-          )}
-          <button
-            type="button"
-            className="meta-icon-btn"
-            onClick={() => setFilesOpen(true)}
-            disabled={!hostId}
-            title="Workspace files (rename / delete / download)"
-          >📁</button>
-          <button
-            type="button"
-            className="meta-icon-btn add"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!hostId}
-            title="Upload a file into the workspace cwd"
-          >＋</button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            style={{ display: 'none' }}
-            onChange={onUpload}
-          />
-          {compact && state.status !== STATUS.Connected && (
-            <span className="session-pane-status">{state.status}</span>
-          )}
-          {compact && onClosePane && (
             <button
               type="button"
-              className="session-pane-close"
-              onClick={onClosePane}
-              aria-label="Close session tab"
-            >✕</button>
-          )}
-        </div>
-        {!compact && (
+              className="meta-icon-btn"
+              onClick={() => setFilesOpen(true)}
+              disabled={!hostId}
+              title="Workspace files (rename / delete / download)"
+            >📁</button>
+            <button
+              type="button"
+              className="meta-icon-btn add"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!hostId}
+              title="Upload a file into the workspace cwd"
+            >＋</button>
+          </div>
           <div className="session-meta-row2">
             <span className="session-meta-host">{hostLabel}</span>
             {info?.model && <span className="session-meta-sep">·</span>}
@@ -180,8 +158,6 @@ export function SessionScreen({
             <span className="session-meta-sep">·</span>
             <span className="session-meta-cwd" title={cwd}>{cwd}</span>
           </div>
-        )}
-        {!compact && (
           <SessionUsage
             goal={state.goal}
             tokensInput={state.tokensInput}
@@ -189,8 +165,14 @@ export function SessionScreen({
             tokensCached={state.tokensCached}
             tokensReasoning={state.tokensReasoning}
           />
-        )}
-      </div>
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        style={{ display: 'none' }}
+        onChange={onUpload}
+      />
       {state.resuming && <ResumingBanner sinceMs={state.resumingSinceMs} />}
       {/* PLAN moved to the right sidebar tab — see App.jsx → RightSidebar.
           The chat surface stays focused on the conversation. */}
@@ -229,6 +211,8 @@ export function SessionScreen({
         onAttachImage={onAttachImage}
         onRemoveImage={onRemoveImage}
         onSlashCommand={workspaceApi?.sendSlash}
+        onOpenFiles={compact && hostId ? () => setFilesOpen(true) : null}
+        onUploadFile={compact && hostId ? () => fileInputRef.current?.click() : null}
       />
       <WorkspaceFilesDrawer
         open={filesOpen}
