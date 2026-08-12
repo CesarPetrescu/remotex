@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ModelPicker, EffortPicker, PermissionsPicker } from './Pickers';
+import { ComposerOptions } from './Pickers';
 import { SendOrStopButton } from './SendOrStopButton';
 
 // Daemon-supported slash commands. Wire matches services/daemon/adapters/stdio.py.
@@ -228,9 +228,6 @@ export function Composer({
         </div>
       )}
       <div className="chip-row">
-        <ModelPicker value={model} models={models} onChange={onModelChange} />
-        <EffortPicker model={model} value={effort} models={models} onChange={onEffortChange} />
-        <PermissionsPicker value={permissions} onChange={onPermissionsChange} />
         <button
           type="button"
           className={`plan-chip ${planActive ? 'on' : ''}`}
@@ -316,6 +313,15 @@ export function Composer({
           onChange={(e) => enabled && setTextSized(e.target.value)}
           onKeyDown={onKeyDown}
           disabled={!enabled}
+        />
+        <ComposerOptions
+          model={model}
+          effort={effort}
+          permissions={permissions}
+          models={models}
+          onModelChange={onModelChange}
+          onEffortChange={onEffortChange}
+          onPermissionsChange={onPermissionsChange}
         />
         <SendOrStopButton
           pending={pending}

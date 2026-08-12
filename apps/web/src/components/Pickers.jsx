@@ -2,79 +2,31 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MODEL_OPTIONS, PERMISSIONS, effortsFor } from '../config';
 
-// Three compact dropdown chips shown in the composer row. Each uses
-// the same ChipDropdown primitive so the popup styling stays
-// consistent with the rest of the boxy UI.
-
-export function ModelPicker({ value, onChange, models }) {
-  const list = models && models.length > 0 ? models : MODEL_OPTIONS;
-  const current = list.find((m) => m.id === value) || list[0];
-  return (
-    <ChipDropdown
-      label="model"
-      value={current.label}
-      items={list}
-      // Name only. The model list is long and fetched from codex, so a
-      // description on every row turned picking a model into reading a page.
-      // Kept as the title so the blurb is still there on hover.
-      renderItem={(opt) => (
-        <div className="dd-line" title={opt.hint || ''}>{opt.label}</div>
-      )}
-      selectedId={current.id}
-      onPick={(opt) => onChange(opt.id)}
-    />
-  );
-}
-
-export function EffortPicker({ model, value, onChange, models }) {
-  const options = effortsFor(model, models && models.length > 0 ? models : MODEL_OPTIONS);
-  const display = options.includes(value) ? value : '';
-  return (
-    <ChipDropdown
-      label="effort"
-      value={display || 'default'}
-      items={options.map((e) => ({ id: e, label: e || 'default' }))}
-      renderItem={(opt) => <div className="dd-line">{opt.label}</div>}
-      selectedId={display}
-      onPick={(opt) => onChange(opt.id)}
-    />
-  );
-}
-
-export function PermissionsPicker({ value, onChange }) {
-  const current = PERMISSIONS.find((p) => p.id === value) || PERMISSIONS[0];
-  const danger = value === 'full';
-  return (
-    <ChipDropdown
-      label="perms"
-      value={current.label.toLowerCase()}
-      chipClass={danger ? 'danger' : ''}
-      items={PERMISSIONS}
-      renderItem={(opt) => (
-        <div>
-          <div className={`dd-line ${opt.id === 'full' ? 'danger' : ''}`}>{opt.label}</div>
-          <div className="dd-hint">{opt.hint}</div>
-        </div>
-      )}
-      selectedId={current.id}
-      onPick={(opt) => onChange(opt.id)}
-    />
-  );
-}
-
-// --- internal primitive ---
-
-function ChipDropdown({
-  label, value, chipClass = '', items, renderItem, onPick, selectedId,
+// One ⚙ options popover next to the send button: model, reasoning
+// effort, and permissions in a single panel. The trigger itself shows
+// the current per-chat values, so even a small grid pane displays its
+// own settings at a glance without a whole chip row.
+export function ComposerOptions({
+  model,
+  effort,
+  permissions,
+  models,
+  onModelChange,
+  onEffortChange,
+  onPermissionsChange,
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const ref = useRef(null);
   const menuRef = useRef(null);
 
-  // The menu is portalled to <body> with position:fixed so it can't be
-  // clipped by an ancestor's overflow — the composer's `.chip-row` is
-  // `overflow-x:auto` on mobile, which used to swallow the whole dropdown.
+  const modelList = models && models.length > 0 ? models : MODEL_OPTIONS;
+  const currentModel = modelList.find((m) => m.id === model) || modelList[0];
+  const efforts = effortsFor(model, modelList);
+  const effortValue = efforts.includes(effort) ? effort : '';
+  const currentPerms = PERMISSIONS.find((p) => p.id === permissions) || PERMISSIONS[0];
+  const danger = permissions === 'full';
+
   useEffect(() => {
     if (!open) return undefined;
     function onDown(e) {
@@ -104,44 +56,68 @@ function ChipDropdown({
   function toggle() {
     if (!open && ref.current) {
       const r = ref.current.getBoundingClientRect();
-      const width = Math.max(r.width, 168);
-      const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-      // Open upward above the chip (the composer sits at the bottom).
+      const width = Math.max(r.width, 230);
+      const left = Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8));
       setPos({ left, width, bottom: window.innerHeight - r.top + 4 });
     }
     setOpen((o) => !o);
   }
 
+  function section(label, items, selectedId, onPick, renderItem) {
+    return (
+      <>
+        <div className="dd-section-label">{label}</div>
+        {items.map((it) => {
+          const active = it.id === selectedId;
+          return (
+            <button
+              key={it.id || 'default'}
+              type="button"
+              role="option"
+              aria-selected={active}
+              className={`dd-item${active ? ' selected' : ''}`}
+              onClick={() => onPick(it)}
+            >
+              <span className="dd-check" aria-hidden="true">{active ? '✓' : ''}</span>
+              <span className="dd-item-main">{renderItem(it)}</span>
+            </button>
+          );
+        })}
+      </>
+    );
+  }
+
   return (
-    <div ref={ref} className={`chip ${chipClass}`}>
+    <div ref={ref} className="composer-options">
       <button
         type="button"
-        className="chip-button"
+        className={`composer-options-btn ${danger ? 'danger' : ''}`}
         onClick={toggle}
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-expanded={open}
+        title={`model ${currentModel.label} · reasoning ${effortValue || 'default'} · permissions ${currentPerms.label}`}
       >
-        <span className="chip-label">{label}</span>
-        <span className="chip-value">{value}</span>
+        <span className="co-model">{currentModel.label}</span>
+        <span className="co-sep">·</span>
+        <span className="co-effort">{effortValue || 'default'}</span>
+        <span className="co-sep">·</span>
+        <span className={`co-perms ${danger ? 'danger' : ''}`}>
+          {currentPerms.label.toLowerCase()}
+        </span>
       </button>
       {open && pos
         && createPortal(
           <>
-            {/* Phone-only: the menu becomes a bottom sheet, so it needs a
-                scrim to read as modal and to catch taps outside it. Hidden
-                on desktop, where the mousedown listener already suffices. */}
             <div className="dd-scrim" onClick={() => setOpen(false)} aria-hidden="true" />
             <div
               ref={menuRef}
-              className="dd dd-portal"
-              role="listbox"
-              aria-label={label}
-              /* Inline coords are the desktop anchor; the phone media query
-                 overrides them with !important to dock this to the bottom. */
+              className="dd dd-portal dd-options"
+              role="dialog"
+              aria-label="Chat options"
               style={{ left: pos.left, width: pos.width, bottom: pos.bottom }}
             >
               <div className="dd-head">
-                <span className="dd-head-label">{label}</span>
+                <span className="dd-head-label">chat options</span>
                 <button
                   type="button"
                   className="dd-close"
@@ -151,25 +127,21 @@ function ChipDropdown({
                   ×
                 </button>
               </div>
-              {items.map((it, i) => {
-                const active = selectedId !== undefined && it.id === selectedId;
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    className={`dd-item${active ? ' selected' : ''}`}
-                    onClick={() => {
-                      onPick(it);
-                      setOpen(false);
-                    }}
-                  >
-                    <span className="dd-check" aria-hidden="true">{active ? '✓' : ''}</span>
-                    <span className="dd-item-main">{renderItem(it)}</span>
-                  </button>
-                );
-              })}
+              {section('model', modelList, currentModel.id,
+                (opt) => onModelChange(opt.id),
+                (opt) => <div className="dd-line" title={opt.hint || ''}>{opt.label}</div>)}
+              {section('reasoning', efforts.map((e) => ({ id: e, label: e || 'default' })),
+                effortValue,
+                (opt) => onEffortChange(opt.id),
+                (opt) => <div className="dd-line">{opt.label}</div>)}
+              {section('permissions', PERMISSIONS, currentPerms.id,
+                (opt) => onPermissionsChange(opt.id),
+                (opt) => (
+                  <div>
+                    <div className={`dd-line ${opt.id === 'full' ? 'danger' : ''}`}>{opt.label}</div>
+                    <div className="dd-hint">{opt.hint}</div>
+                  </div>
+                ))}
             </div>
           </>,
           document.body,

@@ -2212,3 +2212,23 @@ saw it.
   grid shows each pane's full path as headline, tabs read
   /root/Projects/… in full, 5th tab still LRU-evicts. Relay rebuilt +
   redeployed (HTTP 200) — live on the production compose.
+
+## 2026-08-12 — composer options popover (Claude)
+
+- **Task:** proper model selector near send — one options button for
+  model + reasoning + permissions, with per-chat visibility when small.
+- **Changed:**
+  - `Pickers.jsx` — replaced the three chip pickers + ChipDropdown
+    primitive with a single `ComposerOptions` popover (model /
+    reasoning / permissions sections, ✓ on current, portalled above
+    the composer like the old dropdowns; phone bottom-sheet CSS reused
+    via dd classes). Trigger button shows live values
+    `model · effort · perms`, warn-bordered on full access.
+  - `Composer.jsx` — chip row now only /plan · /goal; the options
+    trigger sits in the prompt row between input and send.
+  - `styles.css` — trigger + `.dd-section-label` styles; summary
+    tightens but stays visible in multi-pane grids.
+- **Verified:** eslint clean, vitest 112/112, Playwright: popover opens
+  with all three sections and correct checkmarks; 4-pane grid shows a
+  per-pane summary next to each send button. Relay rebuilt + redeployed
+  (HTTP 200).
