@@ -2311,3 +2311,31 @@ saw it.
   left/right as asked, model menu opens with ✓ on current, active row
   has no ⊞ (count 0), grid panes each show their own values. Relay
   rebuilt + redeployed (200).
+
+## 2026-08-12 — skeleton loading replaces "connecting…" (Claude)
+
+- **Task:** replace the bare "connecting…" captions and the ugly red
+  bottom-right toast with proper skeleton loading, all platforms, tested.
+- **Web:**
+  - `EventStream.jsx` — exported `showSkeleton(connecting, eventCount)`
+    gate + `SkeletonTranscript` (shimmering agent line-blocks with the
+    left stripe + right-aligned user bubbles). Only when attaching AND
+    empty — the instant-paint preview and live transcripts always win.
+  - `SessionScreen.jsx` — passes `connecting`; placeholder is now only
+    the connected-empty "send a prompt to start…".
+  - `styles.css` — shimmer keyframes (reduced-motion safe), full-width
+    variant in grid panes; Toast restyled from red corner box to a
+    bottom-center pill (blurred panel, rounded, pulsing status dot,
+    calm border).
+- **Android:** `EventList.kt` — disconnected+empty now renders
+  `SkeletonTranscript` (alpha-pulsing rows, testTag "session-skeleton")
+  instead of the "connecting…" caption; connected+empty keeps the
+  prompt hint.
+- **Verified:** web vitest 115/115 (3 new showSkeleton tests) + eslint;
+  Playwright with the session WS intercepted: skeleton renders (count 1,
+  screenshots), reconnect pill shows "reconnecting in 5s · dismiss"
+  bottom-center; preview-cached opens correctly skip the skeleton.
+  Android: 15/15 ReleaseCriticalUiTest on the tablet AVD (new skeleton
+  test asserts tag present, caption gone). Relay rebuilt + redeployed
+  (200); fresh APK on both emulators.
+- **Not done:** apple client (no Mac here) — filed I-035.

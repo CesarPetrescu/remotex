@@ -100,11 +100,43 @@ function WorkingRow({ sinceMs, onStop }) {
   );
 }
 
+// Skeleton gate: only while the socket is still attaching AND nothing
+// has arrived. Connected-but-empty threads get the real placeholder;
+// reconnects with a transcript keep showing the transcript.
+export function showSkeleton(connecting, eventCount) {
+  return Boolean(connecting) && eventCount === 0;
+}
+
+// Shaped like a real exchange: striped agent blocks of a few lines,
+// right-aligned user bubbles between them.
+const SKELETON_BLOCKS = [
+  { kind: 'user', lines: [34] },
+  { kind: 'agent', lines: [92, 76, 58] },
+  { kind: 'agent', lines: [88, 64] },
+  { kind: 'user', lines: [26] },
+  { kind: 'agent', lines: [70, 82, 45] },
+];
+
+function SkeletonTranscript() {
+  return (
+    <div className="stream-skeleton" aria-hidden="true" data-testid="stream-skeleton">
+      {SKELETON_BLOCKS.map((b, i) => (
+        <div key={i} className={`skel-block ${b.kind}`}>
+          {b.lines.map((w, j) => (
+            <div key={j} className="skel-line" style={{ width: `${w}%` }} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function EventStream({
   events,
   pending,
   pendingSinceMs = 0,
   placeholder,
+  connecting = false,
   historyHasMore = false,
   historyLoading = false,
   historyTick = 0,
@@ -214,7 +246,9 @@ export function EventStream({
       onScroll={onScroll}
       {...STREAM_A11Y_PROPS}
     >
-      {!events.length && (
+      {showSkeleton(connecting, events.length) ? (
+        <SkeletonTranscript />
+      ) : !events.length && (
         <div className="empty">{placeholder || 'send a prompt to start…'}</div>
       )}
       {events.length > 0 && historyHasMore && (

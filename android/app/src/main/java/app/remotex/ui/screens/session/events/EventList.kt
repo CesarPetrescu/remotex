@@ -5,6 +5,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.BorderStroke
@@ -98,13 +107,19 @@ internal fun EventList(
             .collect { first -> if (first <= 0) onLoadOlder() }
     }
     if (events.isEmpty()) {
-        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                if (connected) "send a prompt to start…" else "connecting…",
-                color = InkDim,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-            )
+        if (connected) {
+            Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "send a prompt to start…",
+                    color = InkDim,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                )
+            }
+        } else {
+            // Attaching with nothing to show yet: skeleton exchange
+            // instead of a bare "connecting…" caption (mirrors web).
+            SkeletonTranscript(modifier)
         }
         return
     }
@@ -202,4 +217,46 @@ internal fun EventList(
     }
 }
 
-
+// Pulsing placeholder shaped like a real exchange: left-aligned agent
+// lines with right-aligned user bubbles. Infinite transitions are
+// test-friendly (the compose test clock skips them).
+@Composable
+private fun SkeletonTranscript(modifier: Modifier = Modifier) {
+    val pulse by rememberInfiniteTransition(label = "skeleton").animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "skeletonAlpha",
+    )
+    Column(
+        modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .testTag("session-skeleton"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        data class SkelRow(val widthFraction: Float, val heightDp: Int, val user: Boolean)
+        val rows = listOf(
+            SkelRow(0.35f, 36, true),
+            SkelRow(0.9f, 12, false),
+            SkelRow(0.72f, 12, false),
+            SkelRow(0.55f, 12, false),
+            SkelRow(0.28f, 36, true),
+            SkelRow(0.85f, 12, false),
+            SkelRow(0.6f, 12, false),
+        )
+        rows.forEach { row ->
+            Box(
+                Modifier
+                    .fillMaxWidth(row.widthFraction)
+                    .height(row.heightDp.dp)
+                    .align(if (row.user) Alignment.End else Alignment.Start)
+                    .graphicsLayer { alpha = pulse }
+                    .background(Line),
+            )
+        }
+    }
+}

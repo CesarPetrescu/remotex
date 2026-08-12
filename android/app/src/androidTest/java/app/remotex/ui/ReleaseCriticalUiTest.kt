@@ -273,6 +273,37 @@ class ReleaseCriticalUiTest {
     }
 
     @Test
+    fun attachingSessionShowsSkeletonInsteadOfConnectingCaption() {
+        compose.setContent {
+            RemotexTheme {
+                Box(Modifier.requiredSize(400.dp, 700.dp)) {
+                    SessionScreen(
+                        state = UiState(), // Idle status, no events
+                        onSend = {},
+                        onStop = {},
+                        onSteer = {},
+                        onQueue = {},
+                        onRemoveQueued = {},
+                        onLoadOlder = {},
+                        onAttachImage = {},
+                        onRemoveImage = {},
+                        onPermissionsChange = {},
+                        onSlashCommand = { _, _ -> },
+                        onListWorkspace = { emptyList() },
+                        onDeleteWorkspaceFile = {},
+                        onRenameWorkspaceFile = { _, _ -> },
+                        onReadWorkspaceFile = { error("unused") },
+                        onUploadWorkspaceFile = { _, _, _, _ -> },
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithTag("session-skeleton").assertExists()
+        compose.onNodeWithText("connecting…").assertDoesNotExist()
+    }
+
+    @Test
     fun sessionSideRailListsHistoryAndSwitchesToTelemetry() {
         var split: String? = null
         compose.setContent {

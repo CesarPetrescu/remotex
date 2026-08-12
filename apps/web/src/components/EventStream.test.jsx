@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STREAM_A11Y_PROPS, isNearTail } from './EventStream';
+import { STREAM_A11Y_PROPS, isNearTail, showSkeleton } from './EventStream';
 
 // The jump-to-latest pill shows when this is false, so the edge cases matter:
 // a pill stuck on screen at the tail was the bug this guards.
@@ -28,5 +28,19 @@ describe('EventStream accessibility', () => {
       'aria-live': 'polite',
       'aria-relevant': 'additions',
     });
+  });
+});
+
+describe('showSkeleton', () => {
+  it('shows while attaching with an empty transcript', () => {
+    expect(showSkeleton(true, 0)).toBe(true);
+  });
+
+  it('never covers an existing transcript during a reconnect', () => {
+    expect(showSkeleton(true, 12)).toBe(false);
+  });
+
+  it('yields to the real placeholder once connected', () => {
+    expect(showSkeleton(false, 0)).toBe(false);
   });
 });

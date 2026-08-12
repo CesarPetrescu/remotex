@@ -205,9 +205,8 @@ export function SessionScreen({
         onLoadOlder={onLoadOlder}
         onAtBottomChange={setAtBottom}
         onStop={onStop}
-        placeholder={
-          state.status === STATUS.Connected ? 'send a prompt to start…' : 'connecting…'
-        }
+        connecting={state.status !== STATUS.Connected}
+        placeholder="send a prompt to start…"
       />
       <Composer
         connected={state.status === STATUS.Connected && !state.resuming}

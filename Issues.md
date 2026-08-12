@@ -803,3 +803,15 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 - **How to fix:** give the stat header row its intrinsic height instead of a
   fixed card height in the threads host card.
 - **Evidence:** tablet screenshot 2026-08-12 (medium_tablet AVD, 2560×1600).
+
+### I-035 — iPhone client still shows a plain "connecting" caption
+
+- **Status:** open · **Severity:** low · **Area:** apple
+- **Impact:** web and Android now show a skeleton transcript while a
+  session attaches (2026-08-12); the SwiftUI client still shows plain
+  text, so the three clients no longer match.
+- **How to fix:** add a redacted-placeholder exchange (agent line blocks +
+  trailing user bubble, `.redacted(reason: .placeholder)` or shimmer) to
+  `ContentView.swift`'s empty/connecting state.
+- **Evidence:** no iOS toolchain on this Linux box — cannot build or
+  verify; needs a Mac.
