@@ -4893,3 +4893,96 @@ html, body { overscroll-behavior-y: none; }
   padding: 10px;
   gap: 10px;
 }
+
+/* --- unified composer shell -------------------------------------------
+   One rounded container in the ChatGPT mold: borderless textarea in the
+   middle, quiet circular icon buttons inside the shell, filled round
+   send. Replaces the four separate boxes of mismatched heights. */
+
+.prompt-row {
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+}
+
+.prompt-row:focus-within {
+  border-color: var(--line-strong);
+}
+
+.composer .prompt {
+  background: transparent;
+  border: 0;
+  outline: none;
+  min-height: 36px;
+  padding: 8px 6px;
+}
+
+.composer .attach,
+.composer .composer-options-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  flex: none;
+}
+
+.composer .attach:hover:not(:disabled),
+.composer .composer-options-btn:hover {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.composer .composer-options-btn.danger {
+  color: var(--warn);
+}
+
+.composer .turn-actions {
+  flex: none;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.composer .send-stop.send {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--ink-dim);
+}
+
+.composer .send-stop.send.ready {
+  background: var(--amber);
+  color: var(--on-accent);
+}
+
+.composer .send-stop.send-alt {
+  height: 36px;
+  min-width: 24px;
+  border: 0;
+  border-radius: 0;
+}
+
+/* Touch layouts keep their 44px minimums inside the shell. */
+@media (max-width: 1000px) {
+  .composer .attach,
+  .composer .composer-options-btn,
+  .composer .send-stop.send {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+  }
+
+  .composer .prompt {
+    min-height: 44px;
+  }
+}

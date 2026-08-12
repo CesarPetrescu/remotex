@@ -2274,3 +2274,17 @@ saw it.
 - **Verified:** vitest 112/112; Playwright: empty 44px (matches
   buttons), 4 lines → 98px snug, clears back to 44px, screenshot clean.
   Relay rebuilt + redeployed (200).
+
+## 2026-08-12 — unified composer shell (Claude)
+
+- **Task:** user wants the ChatGPT-style chat box instead of four
+  separate boxy controls with mismatched heights.
+- **Changed:** `styles.css` only — `.prompt-row` is now one rounded
+  (24px) bordered shell; textarea inside is borderless/transparent;
+  📎 and ⚙ are 36px circular quiet icon buttons (hover wash, warn tint
+  for full access); send is a filled round button (accent when ready);
+  steer-chevron folds into the same pill. Touch layouts (<1000px) keep
+  44px minimums via a follow-up media block.
+- **Verified:** vitest 112/112; Playwright screenshots single + 2-pane:
+  one shell per pane, aligned heights, round send. Relay rebuilt +
+  redeployed (200).
