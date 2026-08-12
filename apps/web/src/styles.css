@@ -1355,6 +1355,9 @@ main.screen-host {
 .prompt { max-height: 132px; overflow-y: auto; }
 .prompt {
   flex: 1;
+  /* Sized by content natively where supported (Chrome 123+); the JS
+     autosize in Composer.jsx covers the rest. */
+  field-sizing: content;
   min-height: 44px;
   padding: 12px;
   background: var(--panel-2);

@@ -2259,3 +2259,18 @@ saw it.
 - **Verified:** eslint clean, vitest 112/112, Playwright 2-pane check —
   input spans the row, ⚙ next to send, summary visible per pane.
   Relay rebuilt + redeployed (200).
+
+## 2026-08-12 — composer textarea sizing fix (Claude)
+
+- **Task:** prompt box showed a phantom scrollbar when empty and kept
+  dead space below multi-line text.
+- **Cause:** JS autosize set `height = scrollHeight` under global
+  `box-sizing: border-box` — 2px (borders) too short every time, so the
+  scrollbar thumb never went away and growth glitched.
+- **Changed:** `styles.css` `.prompt` gains `field-sizing: content`
+  (native content sizing, Chrome 123+); `Composer.jsx` autosize now
+  no-ops when the browser supports that and adds the missing +2px in
+  the fallback path.
+- **Verified:** vitest 112/112; Playwright: empty 44px (matches
+  buttons), 4 lines → 98px snug, clears back to 44px, screenshot clean.
+  Relay rebuilt + redeployed (200).

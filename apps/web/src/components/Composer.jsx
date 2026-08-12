@@ -79,12 +79,19 @@ export function Composer({
   const promptRef = useRef(null);
 
   // Grow the textarea with its content up to ~5 lines, then scroll
-  // internally. Reset to one line after a send.
+  // internally. Reset to one line after a send. Modern browsers do this
+  // natively via CSS `field-sizing: content`; the JS path is the
+  // fallback, and must add the 2px of borders — with the global
+  // border-box sizing, raw scrollHeight leaves the box 2px short, which
+  // shows a permanent scrollbar thumb even when empty.
+  const nativeFieldSizing =
+    typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content');
   function autosize() {
+    if (nativeFieldSizing) return;
     const el = promptRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+    el.style.height = `${Math.min(el.scrollHeight + 2, 132)}px`;
   }
   function setTextSized(value) {
     setText(value);
