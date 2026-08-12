@@ -2,14 +2,16 @@ package app.remotex.ui.screens.threads
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -21,7 +23,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -34,10 +35,8 @@ import androidx.compose.ui.unit.sp
 import app.remotex.model.ThreadInfo
 import app.remotex.ui.UiState
 import app.remotex.ui.components.CompactStatusBar
-import app.remotex.ui.useTwoPane
 import app.remotex.ui.theme.Amber
 import app.remotex.ui.theme.InkDim
-import app.remotex.ui.theme.Line
 import app.remotex.ui.theme.OnAccent
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,66 +50,38 @@ fun ThreadsScreen(
     val selectedHost = state.hosts.firstOrNull { it.id == state.selectedHostId }
     val telemetry = state.selectedHostId?.let { state.hostTelemetry[it]?.data }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val twoPane = useTwoPane(maxWidth, maxHeight)
-        val actionWidth = (maxWidth * 0.4f).coerceIn(280.dp, 360.dp)
-        if (twoPane) {
-            Row(
-                modifier = Modifier.fillMaxSize().padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Column(
+            Modifier
+                .fillMaxHeight()
+                .widthIn(max = 840.dp)
+                .fillMaxWidth()
+                .testTag("threads-content"),
+        ) {
+            CompactStatusBar(host = selectedHost, data = telemetry)
+            PullToRefreshBox(
+                isRefreshing = state.threadsLoading,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(),
             ) {
                 Column(
-                    modifier = Modifier
-                        .width(actionWidth)
-                        .testTag("session-actions-pane"),
+                    Modifier.fillMaxSize().padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    CompactStatusBar(host = selectedHost, data = telemetry)
                     NewSessionCard(
                         hostName = selectedHost?.nickname ?: "host",
-                        compact = false,
+                        compact = state.threads.size > 5,
                         onClick = onNewSession,
-                        modifier = Modifier.padding(horizontal = 12.dp),
                     )
-                }
-                VerticalDivider(color = Line)
-                PullToRefreshBox(
-                    isRefreshing = state.threadsLoading,
-                    onRefresh = onRefresh,
-                    modifier = Modifier.weight(1f).testTag("saved-sessions-pane"),
-                ) {
                     PreviousSessions(
                         state = state,
                         onRefresh = onRefresh,
                         onResumeThread = onResumeThread,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.weight(1f),
                     )
-                }
-            }
-        } else {
-            Column(Modifier.fillMaxSize()) {
-                CompactStatusBar(host = selectedHost, data = telemetry)
-                PullToRefreshBox(
-                    isRefreshing = state.threadsLoading,
-                    onRefresh = onRefresh,
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    Column(
-                        Modifier.fillMaxSize().padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        NewSessionCard(
-                            hostName = selectedHost?.nickname ?: "host",
-                            compact = state.threads.size > 5,
-                            onClick = onNewSession,
-                        )
-                        PreviousSessions(
-                            state = state,
-                            onRefresh = onRefresh,
-                            onResumeThread = onResumeThread,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
                 }
             }
         }
@@ -137,7 +108,7 @@ private fun NewSessionCard(
                 Text("+", color = OnAccent, fontFamily = FontFamily.Monospace, fontSize = 16.sp)
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    "New session on $hostName",
+                    "New session · choose folder",
                     color = OnAccent,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 14.sp,
@@ -155,7 +126,7 @@ private fun NewSessionCard(
                 Column {
                     Text("New session", color = OnAccent, fontSize = 16.sp)
                     Text(
-                        "Start a fresh Codex thread on $hostName",
+                        "Choose a working folder on $hostName",
                         color = OnAccent.copy(alpha = 0.72f),
                         fontSize = 11.sp,
                     )

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -63,23 +64,25 @@ internal fun ComposerBar(
     pending: Boolean,
     planMode: Boolean,
     pendingImages: List<PendingImage>,
+    imagePreparing: Boolean = false,
     queuedTurns: List<QueuedTurn> = emptyList(),
-    onSend: (String) -> Unit,
+    onSend: (String) -> Boolean,
     onStop: () -> Unit,
-    onSteer: (String) -> Unit = {},
-    onQueue: (String) -> Unit = {},
+    onSteer: (String) -> Boolean = { false },
+    onQueue: (String) -> Boolean = { false },
     onRemoveQueued: (String) -> Unit = {},
+    onImagePickerActive: (Boolean) -> Unit = {},
     onAttachImage: (android.net.Uri) -> Unit,
     onRemoveImage: (Int) -> Unit,
     // Slash command sender — composer bypasses sendTurn for these.
-    onSlashCommand: (cmd: String, args: String) -> Unit = { _, _ -> },
+    onSlashCommand: (cmd: String, args: String) -> Boolean = { _, _ -> false },
 ) {
     var text by rememberSaveable { mutableStateOf("") }
     // Typing stays enabled during a turn: what you type is steered into the
     // running turn rather than blocked until it ends.
     val textEnabled = connected
     val hasContent = text.isNotBlank() || pendingImages.isNotEmpty()
-    val canSteer = connected && pending && hasContent
+    val canSteer = connected && pending && hasContent && !imagePreparing
     val slashOnly = pendingImages.isEmpty() && text.trimStart().startsWith("/")
     val canQueue = canSteer && !slashOnly
     val goalMode = isGoalCommand(text)
@@ -90,7 +93,7 @@ internal fun ComposerBar(
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        if (uri != null) onAttachImage(uri)
+        if (uri != null) onAttachImage(uri) else onImagePickerActive(false)
     }
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -102,6 +105,24 @@ internal fun ComposerBar(
                 .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
+            if (imagePreparing) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = Amber,
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        "Preparing image…",
+                        color = InkDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                }
+            }
             if (pendingImages.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(pendingImages.size) { idx ->
@@ -190,10 +211,11 @@ internal fun ComposerBar(
                     PlanChip(
                         planMode = planActive,
                         onClick = {
-                            if (!planMode && goalMode) {
-                                text = removeGoalCommand(text)
+                            if (onSlashCommand(if (planMode) "default" else "plan", "")) {
+                                if (!planMode && goalMode) {
+                                    text = removeGoalCommand(text)
+                                }
                             }
-                            onSlashCommand(if (planMode) "default" else "plan", "")
                         },
                     )
                 }
@@ -204,8 +226,9 @@ internal fun ComposerBar(
                             if (goalMode) {
                                 text = removeGoalCommand(text)
                             } else {
-                                if (planMode) onSlashCommand("default", "")
-                                text = addGoalCommand(text)
+                                if (!planMode || onSlashCommand("default", "")) {
+                                    text = addGoalCommand(text)
+                                }
                             }
                         },
                     )
@@ -217,8 +240,7 @@ internal fun ComposerBar(
                     onPick = { cmd ->
                         if (cmd.takesArg) {
                             text = "/${cmd.id} "
-                        } else {
-                            onSlashCommand(cmd.id, "")
+                        } else if (onSlashCommand(cmd.id, "")) {
                             text = ""
                         }
                     },
@@ -227,16 +249,17 @@ internal fun ComposerBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = {
+                        onImagePickerActive(true)
                         picker.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
-                    enabled = textEnabled,
+                    enabled = textEnabled && !imagePreparing,
                 ) {
                     Icon(
                         Icons.Filled.AttachFile,
                         contentDescription = "Attach image",
-                        tint = if (textEnabled) Ink else InkDim,
+                        tint = if (textEnabled && !imagePreparing) Ink else InkDim,
                     )
                 }
                 Surface(
@@ -260,13 +283,15 @@ internal fun ComposerBar(
                         maxLines = 5,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = {
-                            val sent = handleSubmit(
-                                text,
-                                pendingImages.isNotEmpty(),
-                                onSlashCommand,
-                                if (pending) onSteer else onSend,
-                            )
-                            if (sent) text = ""
+                            if (!imagePreparing) {
+                                val sent = handleSubmit(
+                                    text,
+                                    pendingImages.isNotEmpty(),
+                                    onSlashCommand,
+                                    if (pending) onSteer else onSend,
+                                )
+                                if (sent) text = ""
+                            }
                         }),
                         cursorBrush = SolidColor(Amber),
                         decorationBox = { inner ->
@@ -288,7 +313,7 @@ internal fun ComposerBar(
                 Spacer(Modifier.width(8.dp))
                 SendOrStopButton(
                     pending = pending,
-                    canSend = connected && !pending && hasContent,
+                    canSend = connected && !pending && hasContent && !imagePreparing,
                     canSteer = canSteer,
                     canQueue = canQueue,
                     onSend = {
@@ -329,22 +354,20 @@ internal fun ComposerBar(
 internal fun handleSubmit(
     text: String,
     hasAttachments: Boolean,
-    onSlashCommand: (String, String) -> Unit,
-    onSend: (String) -> Unit,
+    onSlashCommand: (String, String) -> Boolean,
+    onSend: (String) -> Boolean,
 ): Boolean {
-    if (text.startsWith("/")) {
+    if (!hasAttachments && text.startsWith("/")) {
         val trimmed = text.trim().removePrefix("/")
         val space = trimmed.indexOf(' ')
         val cmd = if (space == -1) trimmed else trimmed.substring(0, space)
         val args = if (space == -1) "" else trimmed.substring(space + 1)
         if (KNOWN_SLASHES.any { it.id == cmd }) {
-            onSlashCommand(cmd, args)
-            return true
+            return onSlashCommand(cmd, args)
         }
     }
     if (text.isBlank() && !hasAttachments) return false
-    onSend(text)
-    return true
+    return onSend(text)
 }
 
 internal data class SlashSpec(
