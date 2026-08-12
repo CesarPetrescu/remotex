@@ -2358,3 +2358,18 @@ saw it.
 - **Verified:** keyboard screenshots before/after on the phone AVD;
   16/16 ReleaseCriticalUiTest on the tablet AVD; installed on both
   emulators.
+
+## 2026-08-12 — slim Android control chrome (Claude)
+
+- **Task:** composer/meta buttons were 44dp+ boxes wasting vertical
+  space on phones.
+- **Changed:** ComposerBar (/plan · /goal chips 44→34dp visual, tighter
+  inner padding, input min 48→42dp with 12→9dp inner padding, column
+  padding/gap 6/5→4/4, slash rows 44→34), SendOrStopButton 44→40,
+  MetaBar workspace buttons 44→32-min, CompactPickers 44→32-min,
+  SessionSideRail tabs 44→34. The queued-turn remove button keeps its
+  test-guarded 44dp.
+- **Verified:** unit tests green, 16/16 ReleaseCriticalUiTest on the
+  tablet AVD (the 44dp queue-button guard still passes), keyboard-open
+  screenshot on the phone AVD — two slim rows, more transcript.
+  Installed on both emulators.

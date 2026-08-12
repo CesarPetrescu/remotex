@@ -160,7 +160,7 @@ private fun RailTab(label: String, selected: Boolean, onClick: () -> Unit) {
         border = BorderStroke(1.dp, if (selected) Amber else Line),
         shape = RectangleShape,
         onClick = onClick,
-        modifier = Modifier.sizeIn(minHeight = 44.dp),
+        modifier = Modifier.sizeIn(minHeight = 34.dp),
     ) {
         Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 12.dp)) {
             Text(

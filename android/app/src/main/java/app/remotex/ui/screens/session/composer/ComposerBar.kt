@@ -99,8 +99,8 @@ internal fun ComposerBar(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             if (pendingImages.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -245,7 +245,7 @@ internal fun ComposerBar(
                     border = BorderStroke(1.dp, Line),
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 48.dp, max = 132.dp),
+                        .heightIn(min = 42.dp, max = 132.dp),
                 ) {
                     BasicTextField(
                         value = text,
@@ -270,7 +270,7 @@ internal fun ComposerBar(
                         }),
                         cursorBrush = SolidColor(Amber),
                         decorationBox = { inner ->
-                            Box(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            Box(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
                                 if (text.isEmpty()) {
                                     Text(
                                         if (pending) "steer this turn" else "ask codex",
@@ -391,11 +391,11 @@ private fun PlanChip(
         border = BorderStroke(1.dp, if (planMode) Amber else Line),
         shape = RectangleShape,
         modifier = modifier
-            .sizeIn(minHeight = 44.dp)
+            .sizeIn(minHeight = 34.dp)
             .clickable(onClick = onClick),
     ) {
         Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.size(6.dp).background(accent))
@@ -424,11 +424,11 @@ private fun GoalSlashChip(
         border = BorderStroke(1.dp, if (goalMode) Amber else Line),
         shape = RectangleShape,
         modifier = modifier
-            .sizeIn(minHeight = 44.dp)
+            .sizeIn(minHeight = 34.dp)
             .clickable(onClick = onClick),
     ) {
         Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.size(6.dp).background(accent))
@@ -463,7 +463,7 @@ private fun SlashAutocomplete(query: String, onPick: (SlashSpec) -> Unit) {
                     color = Color.Transparent,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .sizeIn(minHeight = 44.dp)
+                        .sizeIn(minHeight = 34.dp)
                         .clickable { onPick(cmd) },
                 ) {
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {

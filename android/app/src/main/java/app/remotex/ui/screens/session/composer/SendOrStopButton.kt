@@ -123,7 +123,7 @@ private fun ActionButton(
     color: Color,
     onClick: () -> Unit,
     description: String,
-    size: Int = 44,
+    size: Int = 40,
     content: @Composable () -> Unit,
 ) {
     Surface(

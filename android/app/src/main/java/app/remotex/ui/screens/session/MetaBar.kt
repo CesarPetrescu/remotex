@@ -141,7 +141,7 @@ private fun MetaButton(
         shape = RectangleShape,
         onClick = onClick,
         modifier = Modifier
-            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
+            .sizeIn(minWidth = 36.dp, minHeight = 32.dp)
             .semantics { contentDescription = accessibilityLabel },
     ) {
         Text(
@@ -149,7 +149,7 @@ private fun MetaButton(
             color = accent,
             fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
         )
     }
 }
