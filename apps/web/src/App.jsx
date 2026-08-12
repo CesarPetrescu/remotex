@@ -282,7 +282,7 @@ function AuthenticatedApp({ auth, onLogout }) {
                 onClick={() => r.goToSession()}
                 title={state.session?.cwd || 'session'}
               >
-                {state.session?.cwd?.split('/').filter(Boolean).pop() || 'session'}
+                {state.session?.cwd || 'session'}
               </button>
             )}
             {sessionTabs.map((t) => (
@@ -295,7 +295,7 @@ function AuthenticatedApp({ auth, onLogout }) {
                 onClick={() => focusPane(t.key)}
                 title={t.title}
               >
-                <span className="session-tab-label">{t.title}</span>
+                <span className="session-tab-label">{t.cwd || t.title}</span>
                 <span
                   className="session-tab-close"
                   role="button"
@@ -325,6 +325,7 @@ function AuthenticatedApp({ auth, onLogout }) {
           {onSessionScreen && (
             <div className="session-cell">
               <SessionScreen
+                compact={visibleExtras.length > 0}
                 state={state}
                 onSend={r.sendTurn}
                 onStop={r.interruptTurn}

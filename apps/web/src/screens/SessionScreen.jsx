@@ -5,15 +5,6 @@ import { ResumingBanner } from '../components/ResumingBanner';
 import { WorkspaceFilesDrawer } from '../components/WorkspaceFilesDrawer';
 import { STATUS } from '../config';
 
-function shortenCwdLeft(cwd, max = 36) {
-  if (!cwd) return '';
-  if (cwd.length <= max) return cwd;
-  // A5/W4 mirror: keep the leaf folder visible.
-  const tail = cwd.slice(-(max - 1));
-  const slash = tail.indexOf('/');
-  return '…' + (slash > 0 ? tail.slice(slash) : tail);
-}
-
 function compactTokens(value) {
   const n = Number(value || 0);
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}m`;
@@ -87,6 +78,12 @@ export function SessionScreen({
   onAttachImage,
   onRemoveImage,
   workspaceApi,
+  // Grid-pane mode: one slim meta row — the full project folder is the
+  // headline (never shortened), the chat title moves to its tooltip, and
+  // the host/model/token lines disappear (model already lives in the
+  // composer chips). `onClosePane` renders the tab-close ✕ inline.
+  compact = false,
+  onClosePane = null,
 }) {
   const info = state.session;
   const hostId = info?.hostId;
@@ -136,9 +133,13 @@ export function SessionScreen({
           W6: workspace + add buttons live INSIDE the meta block as
           icon-only controls, so they're discoverable without claiming
           a whole row of vertical space between meta and chat. */}
-      <div className={`session-meta ${atBottom ? '' : 'compact'}`}>
+      <div className={`session-meta ${atBottom ? '' : 'compact'} ${compact ? 'pane-compact' : ''}`}>
         <div className="session-meta-row1">
-          <span className="session-meta-title" title={chatTitle}>{chatTitle}</span>
+          {compact ? (
+            <span className="session-meta-cwd-full" title={chatTitle}>{cwd}</span>
+          ) : (
+            <span className="session-meta-title" title={chatTitle}>{chatTitle}</span>
+          )}
           <button
             type="button"
             className="meta-icon-btn"
@@ -159,21 +160,36 @@ export function SessionScreen({
             style={{ display: 'none' }}
             onChange={onUpload}
           />
+          {compact && state.status !== STATUS.Connected && (
+            <span className="session-pane-status">{state.status}</span>
+          )}
+          {compact && onClosePane && (
+            <button
+              type="button"
+              className="session-pane-close"
+              onClick={onClosePane}
+              aria-label="Close session tab"
+            >✕</button>
+          )}
         </div>
-        <div className="session-meta-row2">
-          <span className="session-meta-host">{hostLabel}</span>
-          {info?.model && <span className="session-meta-sep">·</span>}
-          {info?.model && <span className="session-meta-model">{info.model}</span>}
-          <span className="session-meta-sep">·</span>
-          <span className="session-meta-cwd" title={cwd}>{shortenCwdLeft(cwd)}</span>
-        </div>
-        <SessionUsage
-          goal={state.goal}
-          tokensInput={state.tokensInput}
-          tokensOutput={state.tokensOutput}
-          tokensCached={state.tokensCached}
-          tokensReasoning={state.tokensReasoning}
-        />
+        {!compact && (
+          <div className="session-meta-row2">
+            <span className="session-meta-host">{hostLabel}</span>
+            {info?.model && <span className="session-meta-sep">·</span>}
+            {info?.model && <span className="session-meta-model">{info.model}</span>}
+            <span className="session-meta-sep">·</span>
+            <span className="session-meta-cwd" title={cwd}>{cwd}</span>
+          </div>
+        )}
+        {!compact && (
+          <SessionUsage
+            goal={state.goal}
+            tokensInput={state.tokensInput}
+            tokensOutput={state.tokensOutput}
+            tokensCached={state.tokensCached}
+            tokensReasoning={state.tokensReasoning}
+          />
+        )}
       </div>
       {state.resuming && <ResumingBanner sinceMs={state.resumingSinceMs} />}
       {/* PLAN moved to the right sidebar tab — see App.jsx → RightSidebar.

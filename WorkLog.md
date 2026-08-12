@@ -2189,3 +2189,26 @@ saw it.
   assets, draft:false). Did not install the released APK/IPA/EXE on real
   devices — emulator/dev-relay verification only, recorded in the two
   entries above.
+
+## 2026-08-12 — de-clutter web session grid; full project paths (Claude)
+
+- **Task:** user found the deployed multi-session view cluttered and
+  wants the project folder always fully visible.
+- **Changed:**
+  - `SessionScreen.jsx` — new `compact`/`onClosePane` props for grid
+    panes: one slim meta row headlined by the FULL cwd (never
+    shortened; chat title in tooltip), no host/model row, no token
+    usage line, ✕ inline. Non-compact row2 now also shows the full cwd
+    (left-ellipsis only on overflow); `shortenCwdLeft` deleted.
+  - `SessionPane.jsx` — dropped its duplicate header entirely; passes
+    compact + onClosePane down.
+  - `App.jsx` — tab labels are the full project path (was preview
+    title); primary session pane goes compact whenever extras share
+    the screen.
+  - `styles.css` — tabs never truncate (strip scrolls), `.session-meta-
+    cwd-full` accent headline, tighter chips/plan buttons in multi-pane
+    grids.
+- **Verified:** eslint clean, vitest 112/112, Playwright drive: 4-pane
+  grid shows each pane's full path as headline, tabs read
+  /root/Projects/… in full, 5th tab still LRU-evicts. Relay rebuilt +
+  redeployed (HTTP 200) — live on the production compose.

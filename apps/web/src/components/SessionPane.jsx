@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { useRemotex } from '../hooks/useRemotex';
 import { SessionScreen } from '../screens/SessionScreen';
 import { PendingPromptsPanel } from './PendingPromptsPanel';
-import { STATUS } from '../config';
 
 // One extra chat column for the desktop multi-session grid. Runs its own
 // useRemotex instance (own session socket, own approval queues) — the
@@ -23,24 +22,9 @@ export function SessionPane({ token, remember, hostId, threadId, cwd, title, onC
   }, []);
 
   const hasPrompt = !!(state.pendingApproval || state.pendingUserInput);
-  const connected = state.status === STATUS.Connected;
 
   return (
     <section className="session-pane" aria-label={`Session ${title}`}>
-      <header className="session-pane-head">
-        <span className="session-pane-title" title={title}>{title}</span>
-        <span className={`session-pane-status ${connected ? 'ok' : ''}`}>
-          {state.status}
-        </span>
-        <button
-          type="button"
-          className="session-pane-close"
-          onClick={onClose}
-          aria-label={`Close session tab ${title}`}
-        >
-          ✕
-        </button>
-      </header>
       {hasPrompt && (
         <div className="session-pane-prompts">
           <PendingPromptsPanel
@@ -73,6 +57,8 @@ export function SessionPane({ token, remember, hostId, threadId, cwd, title, onC
             upload: r.workspaceUploadFile,
             sendSlash: r.sendSlash,
           }}
+          compact
+          onClosePane={onClose}
         />
       </div>
     </section>
