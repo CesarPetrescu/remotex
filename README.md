@@ -333,13 +333,16 @@ codex plugin add codex-security@openai-curated --json
 ```
 
 Finish active turns before reloading long-lived processes. New `stdio`
-sessions load the plugin automatically; for a persistent/shared installation,
-reload both layers:
+sessions load the plugin automatically. If Remotex uses Codex's managed
+app-server daemon from the user service, reload both layers:
 
 ```bash
 codex app-server daemon restart
 systemctl --user restart remotex-daemon
 ```
+
+If `codex_socket_path` points to a separately supervised app-server, restart
+that server and the matching Remotex service through its own supervisor.
 
 Open the repository as the session cwd and send `Run a Codex Security scan on
 this repository.` The supported Remotex path is the plugin's headless/chat
@@ -462,7 +465,7 @@ docker compose --profile tls up -d --build
 | Relay REST + WebSocket transport | Working; Postgres-backed; tokens hashed at rest; demo tokens opt-in via `RELAY_SEED_DEMO` |
 | Daemon -> relay connection | Working; outbound WebSocket with bounded jittered reconnect and clean active-turn failure/resume semantics |
 | Real Codex bridge | Working through isolated app-server stdio or opt-in shared WebSocket-over-UDS |
-| Host-installed Codex plugins | Headless/chat workflows work through normal sessions, including MCP progress and input; sandboxed MCP App workbenches are not embedded |
+| Codex Security plugin | Its headless/chat workflow works through normal sessions, including MCP progress and input; its sandboxed MCP App workbench is not embedded |
 | Mock adapter | Working for tests and offline demos |
 | Web client | Live host/thread inventory, open/resume, text/images, FIFO queue or active-turn steer, streamed events, approvals/input prompts, Codex-resolved settings, slash commands, goals, files, all NVIDIA GPUs, and Dark/White/High Contrast themes |
 | Windows client | Secure Electron shell around the selected relay's web UI; same product surface as web, provider-selectable on first launch |
