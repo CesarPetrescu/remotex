@@ -32,6 +32,46 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-12 — add Codex Security chat compatibility and iPhone tool parity
+**Agent:** Codex team · **Branch:** agent/codex-security-compat · **Status:** local implementation done; macOS CI/publication pending
+
+- **Why:** determine whether OpenAI's public Codex Security project conflicts
+  with Remotex, install the supported integration on this host, and close the
+  client gap that hid its tool results on iPhone.
+- **Changed:** `README.md` and `apple/README.md` — document the official
+  same-user/same-`CODEX_HOME` plugin path, Node/access requirements, reload
+  ritual, chat invocation, and the explicit boundary that Remotex does not yet
+  embed the desktop MCP App workbench.
+- **Changed:** `apple/Remotex/{Models.swift,RemotexViewModel.swift,ContentView.swift}`
+  and `apple/RemotexTests/FrameHandlingTests.swift` — render normalized MCP,
+  dynamic, and collaboration tool calls with arguments, completed results,
+  scalar JSON, failure state, expandable details, and reducer fixtures instead
+  of dropping them into generic system rows (`I-025`).
+- **Changed:** `Issues.md` — record the fixed iPhone loss plus the deliberately
+  unimplemented generic MCP App host (`I-026`) and the newer deep-scan lifetime
+  question (`I-027`).
+- **Host state:** installed `codex-security@openai-curated` through Codex's
+  marketplace as plugin `0.1.11` under `/root/.codex`; no clone files were
+  copied into Codex and no credentials/apps were authorized.
+- **Verified:** cloned official `codex-security` main at `455d7c8`; its npm
+  package builds and type-checks, production audit reports no known
+  vulnerabilities, the packed 203-entry tarball passes its consumer/nested
+  worker smoke, all 34 Python files parse, and its real stdio MCP server
+  initializes and lists 43 tools. Its full TypeScript suite passes 1,038 tests
+  with 10 platform-gated skips and zero failures. Installed Codex 0.147
+  app-server reports the plugin enabled and exposes its plugin/skills/MCP
+  protocol surface.
+- **Verified:** a real `StdioCodexAdapter` opened an ephemeral empty Git repo,
+  entered the Codex Security workflow, relayed the expected structured
+  acknowledgement, exercised two shell tool lifecycle pairs, and completed in
+  31.7 seconds without an error or file modification. `git diff --check`
+  passes. iPhone compilation/XCTest requires macOS CI and is pending.
+- **Left open:** full sandboxed MCP App UI is `I-026`; prove or fix detached
+  24-hour deep-scan behavior when the newer plugin reaches the marketplace in
+  `I-027`. No paid/non-empty repository scan was run.
+- **Restart needed:** finish active turns, then restart the managed Codex
+  app-server and `remotex-daemon` so the long-lived shared skill catalog reloads.
+
 ## 2026-08-11 — publish and independently verify stable v0.2.1
 **Agent:** Codex team · **Branch:** agent/v021-release-record · **Status:** done
 

@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-025**.
+  never reuse. Next free ID: **I-028**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -50,6 +50,9 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-022 | open | medium | windows/release | Windows release executables are not Authenticode-signed |
 | I-023 | open | medium | apple/release | Release IPA is unsigned and must be re-signed before installation |
 | I-024 | open | low | mobile | No FCM/APNs delivery after a mobile app is stopped or suspended |
+| I-025 | fixed | medium | apple | MCP/dynamic/subagent tool results were discarded on iPhone |
+| I-026 | open | info | clients/protocol | Remotex does not host sandboxed MCP App workbenches |
+| I-027 | investigating | medium | relay/security | Detached deep scans can outlive the silent-session ceiling |
 
 ---
 
@@ -632,3 +635,60 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
   payloads.
 - **Evidence:** no FCM/APNs dependencies or device-token routes exist; native
   clients only use local notification APIs.
+
+### I-025 — iPhone discarded MCP, dynamic, and subagent tool results
+
+- **Status:** fixed · **Severity:** medium · **Area:** apple
+- **Resolution:** 2026-08-12 — iPhone now reduces all three normalized item
+  types into the existing tool row, retains arguments and completed output,
+  and has frame-level regression tests. See the 2026-08-12 WorkLog entry.
+- **Symptom:** Codex Security and other MCP activity appeared as a generic
+  system row on iPhone; completed `result` / `content_items` were ignored.
+- **Cause:** `makeStreamItem` special-cased only `tool_call`, and the completion
+  reducer read only `text` / `output`. Web and Android already had explicit
+  `mcp_tool_call`, `dynamic_tool_call`, and `collab_agent_tool_call` branches.
+- **Evidence:** `apple/Remotex/RemotexViewModel.swift` previously fell through
+  at the item-type switch; `apple/RemotexTests/FrameHandlingTests.swift` had no
+  fixture for any of the three daemon wire shapes.
+
+### I-026 — Remotex does not host MCP App workbenches
+
+- **Status:** open · **Severity:** info · **Area:** clients/protocol
+- **Impact:** the Codex Security plugin's supported headless/chat scan works,
+  but its desktop repository, scan, finding, triage, and remediation tables do
+  not appear inside Remotex. The same applies to other plugins that provide a
+  sandboxed MCP App resource.
+- **Why:** Remotex does not advertise the MCP Apps extension, proxy
+  `mcpServer/resource/read` / app-only tool calls, or provide the required
+  sandboxed HTML + postMessage host on web, Android, and iPhone. Preserving a
+  resource URI in a transcript item is not itself a safe app host.
+- **How to add it:** implement the generic MCP Apps host contract with strict
+  owner scoping, resource/tool allowlists, origin isolation, and equivalent
+  mobile webview bridges; then test an official resource end to end. Do not
+  special-case Codex Security's private SQLite schema or expose an arbitrary
+  MCP RPC proxy.
+- **Evidence:** installed Codex 0.147 reports
+  `ui://codex-security/0.1.63/workspace.html` as
+  `text/html;profile=mcp-app`; `services/daemon/adapters/items.py` preserves
+  only the item URI and no client consumes it.
+
+### I-027 — detached deep scans may exceed the silent-session ceiling
+
+- **Status:** investigating · **Severity:** medium · **Area:** relay/security
+- **Risk:** after the last client detaches, Remotex reaps an active turn after
+  two hours with no daemon frame. Newer Codex Security deep-scan coordination
+  can allow work for up to 24 hours; a genuinely quiet phase could therefore
+  be terminated even though its durable artifacts remain resumable.
+- **Current boundary:** the locally curated plugin installed for Codex 0.147 is
+  older (`0.1.11`) and declares a 900-second MCP tool timeout. The public
+  `codex-security` checkout at `455d7c8` declares 86,400 seconds, so this must
+  be re-tested when that plugin line reaches the host marketplace; it is not
+  evidence that today's standard scan is broken.
+- **How to settle/fix:** run a fake-clock relay test plus a live detached deep
+  scan and observe whether MCP progress provides heartbeats. If quiet work is
+  real, forward a durable activity heartbeat or make the stall policy aware
+  of the active tool deadline instead of globally retaining every stuck turn
+  for a day.
+- **Evidence:** `services/relay/handlers/ws_client.py` defaults
+  `RELAY_SESSION_STALL_CEILING_SECONDS` to 7,200; the cloned plugin's
+  `.mcp.json` sets `tool_timeout_sec` to 86,400.

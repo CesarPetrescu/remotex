@@ -78,6 +78,7 @@ struct StreamItem: Identifiable, Equatable {
     var text: String
     var detail: String = ""
     var completed: Bool = false
+    var failed: Bool = false
     var imageCount: Int = 0
     var imageData: [Data] = []
 }

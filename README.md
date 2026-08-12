@@ -321,6 +321,45 @@ but loopback — that would put the bridge token and every prompt on the
 wire in the clear. The URL above is loopback, so it's fine; a LAN relay
 wants `wss://`, or an explicit `--allow-insecure` at `init` time.
 
+#### Optional: Codex Security
+
+Codex Security works through the same Codex app-server Remotex already uses;
+it is not a second Remotex session kind. Install the official plugin as the
+same operating-system user, and with the same `CODEX_HOME`, as the daemon:
+
+```bash
+node --version   # supported: Node 22.13+ within 22.x, Node 24.x, or Node 26.x
+codex plugin add codex-security@openai-curated --json
+```
+
+Finish active turns before reloading long-lived processes. New `stdio`
+sessions load the plugin automatically. If Remotex uses Codex's managed
+app-server daemon from the user service, reload both layers:
+
+```bash
+codex app-server daemon restart
+systemctl --user restart remotex-daemon
+```
+
+If `codex_socket_path` points to a separately supervised app-server, restart
+that server and the matching Remotex service through its own supervisor.
+
+Open the repository as the session cwd and send `Run a Codex Security scan on
+this repository.` The supported Remotex path is the plugin's headless/chat
+flow: scan commands, MCP progress/results, subagents, approvals, and structured
+input remain in the normal transcript, while scan artifacts stay on the host.
+It requires Codex Security access and may require
+[Trusted Access for Cyber](https://chatgpt.com/cyber).
+
+The Codex desktop Security sidebar is an MCP App workbench. Remotex does not
+yet host that sandboxed HTML app, so its repository/finding tables are not
+embedded in the web, Windows, Android, or iPhone clients. Do not set
+`codex_binary` to the standalone `codex-security` CLI: that package launches
+its own pinned `codex exec` runtime and owns separate scan/auth state. See the
+[official plugin guide](https://learn.chatgpt.com/docs/security/plugin) and
+[CLI guide](https://learn.chatgpt.com/docs/security/cli) for those two distinct
+surfaces.
+
 ### 3. Run the Web Client
 
 ```bash
@@ -426,6 +465,7 @@ docker compose --profile tls up -d --build
 | Relay REST + WebSocket transport | Working; Postgres-backed; tokens hashed at rest; demo tokens opt-in via `RELAY_SEED_DEMO` |
 | Daemon -> relay connection | Working; outbound WebSocket with bounded jittered reconnect and clean active-turn failure/resume semantics |
 | Real Codex bridge | Working through isolated app-server stdio or opt-in shared WebSocket-over-UDS |
+| Codex Security plugin | Its headless/chat workflow works through normal sessions, including MCP progress and input; its sandboxed MCP App workbench is not embedded |
 | Mock adapter | Working for tests and offline demos |
 | Web client | Live host/thread inventory, open/resume, text/images, FIFO queue or active-turn steer, streamed events, approvals/input prompts, Codex-resolved settings, slash commands, goals, files, all NVIDIA GPUs, and Dark/White/High Contrast themes |
 | Windows client | Secure Electron shell around the selected relay's web UI; same product surface as web, provider-selectable on first launch |

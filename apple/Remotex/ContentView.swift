@@ -662,7 +662,11 @@ private struct ToolRow: View {
             Button { expanded.toggle() } label: {
                 HStack(spacing: 7) {
                     Circle()
-                        .fill(streaming ? Color.remotexAccent : Color.remotexGreen)
+                        .fill(
+                            streaming
+                                ? Color.remotexAccent
+                                : (item.failed ? Color.remotexWarn : Color.remotexGreen)
+                        )
                         .frame(width: 8, height: 8)
                     Text(item.title)
                         .font(.system(size: 12, design: .monospaced).weight(.semibold))
@@ -677,6 +681,13 @@ private struct ToolRow: View {
                 }
             }
             .buttonStyle(.plain)
+
+            if expanded, !isEdit, !item.detail.isEmpty {
+                Text(item.detail)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color.remotexMuted)
+                    .textSelection(.enabled)
+            }
 
             if isEdit, !item.text.isEmpty {
                 DiffView(summary: item.detail, diff: item.text, streaming: streaming)

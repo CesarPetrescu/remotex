@@ -63,6 +63,108 @@ final class FrameHandlingTests: XCTestCase {
         XCTAssertTrue(vm.stream[0].completed)
     }
 
+    func testMCPToolCallRendersArgumentsAndCompletedResult() {
+        let vm = makeViewModel()
+        vm.handle(frame: sessionEvent("item-started", [
+            "item_id": "mcp_1",
+            "item_type": "mcp_tool_call",
+            "server": "codex-security",
+            "tool": "record_scan",
+            "arguments": ["scanId": "scan_1"],
+            "status": "inProgress",
+        ]))
+
+        XCTAssertEqual(vm.stream[0].role, .tool)
+        XCTAssertEqual(vm.stream[0].title, "MCP · codex-security.record_scan")
+        XCTAssertTrue(vm.stream[0].detail.contains("scan_1"))
+        XCTAssertFalse(vm.stream[0].completed)
+
+        vm.handle(frame: sessionEvent("item-completed", [
+            "item_id": "mcp_1",
+            "item_type": "mcp_tool_call",
+            "status": "completed",
+            "duration_ms": 37,
+            "result": ["content": [["type": "text", "text": "scan saved"]]],
+        ]))
+        XCTAssertEqual(vm.stream[0].text, "completed\n37ms\nscan saved")
+        XCTAssertTrue(vm.stream[0].completed)
+    }
+
+    func testDynamicToolCallRendersStructuredResult() {
+        let vm = makeViewModel()
+        vm.handle(frame: sessionEvent("item-started", [
+            "item_id": "dynamic_1",
+            "item_type": "dynamic_tool_call",
+            "namespace": "security",
+            "tool": "rank",
+            "arguments": true,
+            "status": "inProgress",
+        ]))
+        vm.handle(frame: sessionEvent("item-completed", [
+            "item_id": "dynamic_1",
+            "item_type": "dynamic_tool_call",
+            "status": "completed",
+            "success": true,
+            "content_items": [["text": "ranked"]],
+        ]))
+
+        XCTAssertEqual(vm.stream[0].title, "TOOL · security.rank")
+        XCTAssertEqual(vm.stream[0].detail, "true")
+        XCTAssertTrue(vm.stream[0].text.contains("success"))
+        XCTAssertTrue(vm.stream[0].text.contains("ranked"))
+        XCTAssertTrue(vm.stream[0].completed)
+    }
+
+    func testFailedMCPToolCallRetainsFailureStateAndError() {
+        let vm = makeViewModel()
+        vm.handle(frame: sessionEvent("item-started", [
+            "item_id": "mcp_failed",
+            "item_type": "mcp_tool_call",
+            "server": "codex-security",
+            "tool": "record_scan",
+            "status": "failed",
+            "error": "invalid scan",
+        ]))
+
+        XCTAssertTrue(vm.stream[0].completed)
+        XCTAssertTrue(vm.stream[0].failed)
+        XCTAssertTrue(vm.stream[0].text.contains("error: invalid scan"))
+    }
+
+    func testInProgressDynamicToolCallDoesNotTreatNullSuccessAsFailure() {
+        let vm = makeViewModel()
+        vm.handle(frame: sessionEvent("item-started", [
+            "item_id": "dynamic_pending",
+            "item_type": "dynamic_tool_call",
+            "tool": "rank",
+            "status": "inProgress",
+            "success": NSNull(),
+        ]))
+
+        XCTAssertEqual(vm.stream[0].text, "inProgress")
+        XCTAssertFalse(vm.stream[0].failed)
+        XCTAssertFalse(vm.stream[0].completed)
+    }
+
+    func testCollabAgentToolCallRendersAsTool() {
+        let vm = makeViewModel()
+        vm.handle(frame: sessionEvent("item-started", [
+            "item_id": "collab_1",
+            "item_type": "collab_agent_tool_call",
+            "tool": "spawnAgent",
+            "prompt": "Audit the parser",
+            "status": "completed",
+            "model": "gpt-test",
+            "receiver_thread_ids": ["thread_1", "thread_2"],
+        ]))
+
+        XCTAssertEqual(vm.stream[0].role, .tool)
+        XCTAssertEqual(vm.stream[0].title, "spawn agent")
+        XCTAssertEqual(vm.stream[0].detail, "Audit the parser")
+        XCTAssertEqual(vm.stream[0].text, "completed · gpt-test · 2 threads")
+        XCTAssertTrue(vm.stream[0].completed)
+    }
+
     func testReplayedItemsArriveCompleted() {
         let vm = makeViewModel()
         vm.handle(frame: sessionEvent("item-started", [

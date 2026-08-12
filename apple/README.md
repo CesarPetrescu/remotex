@@ -9,9 +9,10 @@ The app supports the main remote Codex session workflow:
 
 - Runtime relay setup, online hosts, host-scoped model options, a remote
   working-directory picker, saved-thread preview/resume, and paged history.
-- Streamed user, reasoning, command/file-change, and agent items with
-  Markdown, progressive diffs, replay-gap markers, and a visible fallback row
-  for other normalized Codex item types.
+- Streamed user, reasoning, command/file-change, MCP/dynamic/subagent, and
+  agent items with Markdown, progressive diffs, structured tool details,
+  replay-gap markers, and a visible fallback row for other normalized Codex
+  item types.
 - Model, reasoning-effort, and permission controls; token usage and native
   goal progress in the session header.
 - Text and Photos Picker image turns, active-turn steer or interrupt, and a
