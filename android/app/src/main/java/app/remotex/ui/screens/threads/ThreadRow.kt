@@ -43,7 +43,7 @@ internal fun ThreadRow(thread: ThreadInfo, onClick: () -> Unit) {
                 color = Ink,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (description != null) {
@@ -53,7 +53,7 @@ internal fun ThreadRow(thread: ThreadInfo, onClick: () -> Unit) {
                     color = InkDim,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -61,13 +61,6 @@ internal fun ThreadRow(thread: ThreadInfo, onClick: () -> Unit) {
             Row {
                 Text(
                     relativeAge(thread.updatedAt ?: thread.createdAt ?: 0L),
-                    color = InkDim,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "· ${thread.id.take(8)}…",
                     color = InkDim,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 10.sp,

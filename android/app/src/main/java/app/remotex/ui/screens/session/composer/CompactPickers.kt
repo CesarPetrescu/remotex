@@ -50,7 +50,7 @@ internal fun CompactModelPicker(
         shape = RectangleShape,
         border = BorderStroke(1.dp, Line),
         modifier = modifier
-            .sizeIn(minHeight = 32.dp)
+            .sizeIn(minHeight = 44.dp)
             .clickable { expanded = true },
     ) {
         Row(
@@ -109,7 +109,7 @@ internal fun CompactPermissionsPicker(
         shape = RectangleShape,
         border = BorderStroke(1.dp, if (selected == PermissionsMode.Full) Warn else Line),
         modifier = modifier
-            .sizeIn(minHeight = 32.dp)
+            .sizeIn(minHeight = 44.dp)
             .clickable { expanded = true },
     ) {
         Row(
@@ -177,7 +177,7 @@ internal fun CompactEffortPicker(
         shape = RectangleShape,
         border = BorderStroke(1.dp, Line),
         modifier = modifier
-            .sizeIn(minHeight = 32.dp)
+            .sizeIn(minHeight = 44.dp)
             .clickable { expanded = true },
     ) {
         Row(

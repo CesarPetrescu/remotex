@@ -170,7 +170,6 @@ private fun MetricCell(label: String, value: String, accent: Color, sub: String?
         horizontalAlignment = Alignment.Start,
     ) {
         Row(
-            modifier = Modifier.height(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.size(5.dp).background(accent))

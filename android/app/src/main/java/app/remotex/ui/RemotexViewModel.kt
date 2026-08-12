@@ -25,6 +25,7 @@ import app.remotex.net.InventorySocket
 import app.remotex.net.normalizeRelayBaseUrl
 import app.remotex.net.SessionSocket
 import app.remotex.net.SocketEvent
+import app.remotex.net.outboundFrameFits
 import app.remotex.security.SecureTokenStore
 import app.remotex.security.TokenStore
 import app.remotex.security.relayScopeKey
@@ -36,6 +37,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -225,6 +227,7 @@ data class UiState(
     val favorites: List<String> = emptyList(),  // pinned cwd paths (per host)
     val recents: List<String> = emptyList(),    // recently-used cwd paths (per host)
     val pendingImages: List<PendingImage> = emptyList(),
+    val imagePreparing: Boolean = false,
     val queuedTurns: List<QueuedTurn> = emptyList(),
     val permissions: PermissionsMode = PermissionsMode.Default,
     /** Every unanswered approval, in arrival order (contract F). A second
@@ -267,12 +270,13 @@ data class UiState(
 const val EFFORT_DEFAULT = ""
 val ALL_EFFORTS = listOf(EFFORT_DEFAULT, "low", "medium", "high", "xhigh")
 
-// Client-side ceiling for anything that travels as bytes — image
-// attachments (base64 inside one turn-start frame) and workspace uploads.
-// Mirrors REMOTEX_MAX_FILE_BYTES on the relay and daemon (25 MB default)
-// and apps/web/src/config.js: over it the request is refused, or the
-// websocket frame is dropped and takes the socket with it.
+// Workspace uploads use the relay/daemon's 25 MiB HTTP limit.
 const val MAX_FILE_BYTES = 25L * 1024 * 1024
+
+// Images are base64 inside an OkHttp WebSocket frame. OkHttp's hard queue
+// ceiling is 16 MiB, so 25 MiB raw (the old limit) disconnected the socket.
+// Ten MiB raw leaves room for 4/3 base64 growth plus JSON and control frames.
+const val MAX_IMAGE_ATTACHMENT_BYTES = 10L * 1024 * 1024
 
 fun formatBytes(n: Long): String = when {
     n >= 1024 * 1024 -> "%.1f MB".format(n / (1024.0 * 1024.0))
@@ -569,6 +573,7 @@ class RemotexViewModel internal constructor(
     private var historyBuffer: MutableList<UiEvent>? = null
     private var historyBufferPrepend = false
     private var reconnectJob: Job? = null
+    private var imagePrepareJob: Job? = null
     private var reconnectAttempt: Int = 0
     private var userClosed: Boolean = false
     private var telemetryJob: Job? = null
@@ -852,8 +857,11 @@ class RemotexViewModel internal constructor(
     }
 
     /** Public slash sender — used by composer's plan-chip + autocomplete. */
-    fun sendSlash(cmd: String, args: String = "") {
-        val sock = socket ?: return
+    fun sendSlash(cmd: String, args: String = ""): Boolean {
+        val sock = socket ?: run {
+            _state.update { it.copy(error = "socket is not connected") }
+            return false
+        }
         val frame = Json.encodeToString(
             JsonObject.serializer(),
             buildJsonObject {
@@ -864,10 +872,11 @@ class RemotexViewModel internal constructor(
         )
         if (!sock.sendJson(frame)) {
             _state.update { it.copy(error = "socket is not connected") }
-            return
+            return false
         }
         if (cmd == "plan") _state.update { it.copy(planMode = true) }
         if (cmd == "default") _state.update { it.copy(planMode = false) }
+        return true
     }
 
     fun refreshGoal() {
@@ -1591,11 +1600,15 @@ class RemotexViewModel internal constructor(
         attachSocket(sid)
     }
 
-    fun sendTurn(text: String) {
+    fun sendTurn(text: String): Boolean {
+        if (_state.value.imagePreparing) {
+            _state.update { it.copy(error = "Wait for the image preview before sending.") }
+            return false
+        }
         val input = text.trim()
         val attachments = _state.value.pendingImages
-        if (input.isEmpty() && attachments.isEmpty()) return
-        val sock = socket ?: return
+        if (input.isEmpty() && attachments.isEmpty()) return false
+        val sock = socket ?: return false
         // Slash command shortcut: `/cmd [args…]` is routed as a separate
         // frame type, never as a prompt to the model.
         if (attachments.isEmpty() && input.startsWith("/")) {
@@ -1615,33 +1628,38 @@ class RemotexViewModel internal constructor(
                 )
                 if (!sock.sendJson(frame)) {
                     _state.update { it.copy(error = "socket is not connected") }
-                    return
+                    return false
                 }
                 if (cmd == "plan") _state.update { it.copy(planMode = true) }
                 if (cmd == "default") _state.update { it.copy(planMode = false) }
-                return
+                return true
             }
         }
         val turn = newTurn(input, attachments)
-        if (!sock.sendJson(buildTurnStartFrame(turn))) {
-            _state.update { it.copy(error = "socket is not connected") }
-            return
-        }
         rememberSentImages(turn)
+        if (!sendTurnFrame(sock, buildTurnStartFrame(turn), attachments.isNotEmpty())) {
+            forgetSentImages(turn.clientMessageId)
+            return false
+        }
         _state.update {
             it.copy(
                 pending = true,
                 pendingImages = emptyList(),
             )
         }
+        return true
     }
 
-    fun queueTurn(text: String) {
+    fun queueTurn(text: String): Boolean {
         val state = _state.value
+        if (state.imagePreparing) {
+            _state.update { it.copy(error = "Wait for the image preview before queueing.") }
+            return false
+        }
         val input = text.trim()
         val attachments = state.pendingImages
-        if (!state.pending || (input.isEmpty() && attachments.isEmpty())) return
-        if (attachments.isEmpty() && input.startsWith("/")) return
+        if (!state.pending || (input.isEmpty() && attachments.isEmpty())) return false
+        if (attachments.isEmpty() && input.startsWith("/")) return false
         val turn = newTurn(input, attachments).copy(
             id = "queued-${UUID.randomUUID().toString().take(8)}",
         )
@@ -1651,6 +1669,7 @@ class RemotexViewModel internal constructor(
                 pendingImages = emptyList(),
             )
         }
+        return true
     }
 
     fun removeQueuedTurn(id: String) {
@@ -1678,12 +1697,43 @@ class RemotexViewModel internal constructor(
         }
     }
 
+    private fun forgetSentImages(clientMessageId: String) {
+        sentImagesByMessageId.remove(clientMessageId)
+    }
+
+    private fun sendTurnFrame(
+        sock: SessionSocket,
+        frame: String,
+        hasImages: Boolean,
+    ): Boolean {
+        if (!outboundFrameFits(frame)) {
+            _state.update {
+                it.copy(
+                    error = if (hasImages) {
+                        "The attached images are too large to send. Remove one or choose a smaller image."
+                    } else {
+                        "This message is too large to send."
+                    },
+                )
+            }
+            return false
+        }
+        if (!sock.sendJson(frame)) {
+            _state.update { it.copy(error = "Could not send; the session is reconnecting.") }
+            return false
+        }
+        return true
+    }
+
     private fun drainQueuedTurn() {
         val turn = _state.value.queuedTurns.firstOrNull() ?: return
         if (turn.sending) return
         val sock = socket ?: return
-        if (!sock.sendJson(buildTurnStartFrame(turn))) return
         rememberSentImages(turn)
+        if (!sendTurnFrame(sock, buildTurnStartFrame(turn), turn.images.isNotEmpty())) {
+            forgetSentImages(turn.clientMessageId)
+            return
+        }
         _state.update {
             it.copy(
                 queuedTurns = markQueuedTurnSending(it.queuedTurns, turn.id),
@@ -1742,12 +1792,16 @@ class RemotexViewModel internal constructor(
         }
     }
 
-    fun steerTurn(text: String) {
+    fun steerTurn(text: String): Boolean {
+        if (_state.value.imagePreparing) {
+            _state.update { it.copy(error = "Wait for the image preview before sending.") }
+            return false
+        }
         val input = text.trim()
         val attachments = _state.value.pendingImages
-        if (input.isEmpty() && attachments.isEmpty()) return
-        if (!_state.value.pending) return
-        val sock = socket ?: return
+        if (input.isEmpty() && attachments.isEmpty()) return false
+        if (!_state.value.pending) return false
+        val sock = socket ?: return false
         val clientMessageId = "msg-${UUID.randomUUID().toString().take(8)}"
         val frame = Json.encodeToString(
             JsonObject.serializer(),
@@ -1767,70 +1821,98 @@ class RemotexViewModel internal constructor(
                 }
             },
         )
-        if (!sock.sendJson(frame)) {
-            _state.update { it.copy(error = "socket is not connected") }
-            return
-        }
         if (attachments.isNotEmpty()) {
             sentImagesByMessageId[clientMessageId] = attachments.map { it.uri }
         }
+        if (!sendTurnFrame(sock, frame, attachments.isNotEmpty())) {
+            forgetSentImages(clientMessageId)
+            return false
+        }
         _state.update { it.copy(pendingImages = emptyList()) }
+        return true
     }
 
     /** Called from the UI when the user picks an image. Handles reading +
      *  base64-encoding off the main thread. */
+    fun setImagePickerActive(active: Boolean) {
+        if (!active && imagePrepareJob?.isActive == true) return
+        _state.update { it.copy(imagePreparing = active, error = if (active) null else it.error) }
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun replacePendingImagesForTest(images: List<PendingImage>) {
+        _state.update { it.copy(pendingImages = images) }
+    }
+
     fun attachImage(uri: Uri) {
+        if (imagePrepareJob?.isActive == true) return
+        _state.update { it.copy(imagePreparing = true, error = null) }
         val app = getApplication<Application>()
-        viewModelScope.launch {
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 val already = _state.value.pendingImages.sumOf { it.bytes }
-                val remaining = (MAX_FILE_BYTES - already).coerceAtLeast(0L)
-                val (bytes, mime, label) = withContext(Dispatchers.IO) {
+                val remaining = (MAX_IMAGE_ATTACHMENT_BYTES - already).coerceAtLeast(0L)
+                if (remaining == 0L) {
+                    throw ContentTooLargeException(already, MAX_IMAGE_ATTACHMENT_BYTES)
+                }
+                val (normalized, label, encoded) = withContext(Dispatchers.IO) {
                     val metadata = app.contentResolver.openableMetadata(uri)
                     metadata.size?.let { knownSize ->
-                        if (knownSize > remaining) {
-                            throw ContentTooLargeException(already + knownSize, MAX_FILE_BYTES)
+                        if (knownSize > MAX_FILE_BYTES) {
+                            throw ContentTooLargeException(knownSize, MAX_FILE_BYTES)
                         }
                     }
-                    val resolved = app.contentResolver.getType(uri) ?: "image/jpeg"
-                    val bytes = app.contentResolver.openInputStream(uri)?.use {
-                        readBounded(it, remaining)
+                    val source = app.contentResolver.openInputStream(uri)?.use {
+                        readBounded(it, MAX_FILE_BYTES)
                     }
                         ?: throw IllegalStateException("empty stream for $uri")
+                    val image = normalizeImageAttachment(source, remaining)
                     Triple(
-                        bytes,
-                        resolved,
-                        metadata.displayName ?: uri.lastPathSegment?.substringAfterLast('/') ?: "image",
+                        image,
+                        metadata.displayName
+                            ?: uri.lastPathSegment?.substringAfterLast('/')
+                            ?: "image",
+                        android.util.Base64.encodeToString(
+                            image.bytes,
+                            android.util.Base64.NO_WRAP,
+                        ),
                     )
                 }
                 val currentBytes = _state.value.pendingImages.sumOf { it.bytes }
-                if (currentBytes + bytes.size > MAX_FILE_BYTES) {
-                    // Images ride inside a single turn-start frame, so the
-                    // whole batch has to fit under the ceiling.
+                if (currentBytes + normalized.bytes.size > MAX_IMAGE_ATTACHMENT_BYTES) {
                     _state.update {
                         it.copy(
-                            error = "image: ${formatBytes(bytes.size.toLong())} exceeds the " +
-                                "${formatBytes(MAX_FILE_BYTES)} attachment limit",
+                            error = "image: ${formatBytes(normalized.bytes.size.toLong())} exceeds the " +
+                                "${formatBytes(MAX_IMAGE_ATTACHMENT_BYTES)} attachment limit",
                         )
                     }
                     return@launch
                 }
-                val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                 _state.update {
                     it.copy(
                         pendingImages = it.pendingImages + PendingImage(
                             uri = uri.toString(),
-                            mime = mime,
-                            base64 = b64,
+                            mime = normalized.mime,
+                            base64 = encoded,
                             label = label.take(32),
-                            bytes = bytes.size.toLong(),
+                            bytes = normalized.bytes.size.toLong(),
                         ),
+                        error = null,
                     )
                 }
+            } catch (cause: CancellationException) {
+                throw cause
             } catch (t: Throwable) {
                 _state.update { it.copy(error = "image: ${t.message ?: "read failed"}") }
+            } finally {
+                if (imagePrepareJob === kotlinx.coroutines.currentCoroutineContext()[Job]) {
+                    _state.update { it.copy(imagePreparing = false) }
+                    imagePrepareJob = null
+                }
             }
         }
+        imagePrepareJob = job
+        job.start()
     }
 
     fun removeImage(index: Int) {
@@ -1842,6 +1924,7 @@ class RemotexViewModel internal constructor(
 
     fun closeSession() {
         cancelPendingSessionOpen()
+        cancelImagePreparation()
         userClosed = true
         reconnectJob?.cancel()
         reconnectJob = null
@@ -1869,6 +1952,7 @@ class RemotexViewModel internal constructor(
     }
 
     private fun detachSession() {
+        cancelImagePreparation()
         userClosed = true
         reconnectJob?.cancel()
         reconnectJob = null
@@ -1880,6 +1964,12 @@ class RemotexViewModel internal constructor(
         sentImagesByMessageId.clear()
         clearActiveSession()
         _state.update { it.copy(queuedTurns = emptyList()) }
+    }
+
+    private fun cancelImagePreparation() {
+        imagePrepareJob?.cancel()
+        imagePrepareJob = null
+        _state.update { it.copy(imagePreparing = false, pendingImages = emptyList()) }
     }
 
     // --- frame parsing ------------------------------------------------------

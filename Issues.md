@@ -10,7 +10,7 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 ## Rules
 
 - IDs are sequential and permanent: `I-001`, `I-002`, … Never renumber,
-  never reuse. Next free ID: **I-033**.
+  never reuse. Next free ID: **I-037**.
 - Add new issues to the bottom of the table and the bottom of the details
   section.
 - **Status:** `open` · `investigating` · `fixed` · `wontfix` · `invalid` ·
@@ -58,6 +58,10 @@ Not a bug tracker for user reports — this is agent-to-agent. Work you
 | I-030 | open | low | android/telemetry | A failed telemetry poll may leave the visible status reading live indefinitely |
 | I-031 | open | low | android/session | Successful `/cd` feedback does not update the visible session cwd |
 | I-032 | open | medium | web/tooling | Responsive browser behavior has no durable CI regression suite |
+| I-033 | open | low | android | Android relaunch restores a dead session screen |
+| I-034 | fixed | low | android | Tablet threads host card clips its telemetry stat labels |
+| I-035 | open | low | apple | iPhone client still shows a plain "connecting" caption |
+| I-036 | open | low | daemon/images | Rejected image turns can retain daemon temp files until a later completion |
 
 ---
 
@@ -797,7 +801,10 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
 
 ### I-034 — tablet threads host card clips its telemetry stat labels
 
-- **Status:** open · **Severity:** low · **Area:** android
+- **Status:** fixed · **Severity:** low · **Area:** android
+- **Resolution:** 2026-08-12 — removed the fixed stat-header height while
+  rebuilding the centered tablet thread layout; see the WorkLog entry
+  “repair Android images and tablet post-login layouts.”
 - **Impact:** on the tablet threads screen the host card's stat labels
   (CPU / RAM / GPU names / TEMP) are vertically clipped to half height.
 - **How to fix:** give the stat header row its intrinsic height instead of a
@@ -815,3 +822,17 @@ complete validation matrix passed; see the 2026-08-09 reconciliation entry in
   `ContentView.swift`'s empty/connecting state.
 - **Evidence:** no iOS toolchain on this Linux box — cannot build or
   verify; needs a Mac.
+
+### I-036 — rejected image turns can retain daemon temp files
+
+- **Status:** open · **Severity:** low · **Area:** daemon/images
+- **Impact:** an image is written to `/tmp/remotex-img-*` before all
+  `turn/start` validation and the Codex request complete. A rejected turn can
+  therefore retain that file until a later turn completes; stopping the
+  adapter before then leaves it behind for the operating system to reap.
+- **How to fix:** centralize image-temp cleanup, invoke it from adapter stop
+  and every early/failure path after `_build_input`, and track the per-request
+  slice so a failed steer does not remove files still owned by the live turn.
+- **Evidence:** `services/daemon/adapters/stdio.py:_build_input` appends each
+  temp path to `_turn_tmp_files`, while the only cleanup loop is currently in
+  the `turn/completed` notification branch; `stop()` does not unlink them.

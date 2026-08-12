@@ -9,7 +9,7 @@ plugins {
 // -PversionName=nightly-<date>-<sha> on main; local builds pass nothing.
 // See .github/workflows/release.yml.
 val versionNameProperty: String = (findProperty("versionName") as String?)?.trim().orEmpty()
-val resolvedVersionName: String = versionNameProperty.ifEmpty { "0.2.1" }
+val resolvedVersionName: String = versionNameProperty.ifEmpty { "0.4.1" }
 
 // v1.2.3 → 10203, so a newer tag always compares greater. Anything that
 // isn't a semver tag (nightlies, local builds) stays at 1 — those are

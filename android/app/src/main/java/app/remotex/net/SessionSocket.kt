@@ -13,12 +13,27 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.utf8Size
 import java.util.concurrent.TimeUnit
 
 sealed interface SocketEvent {
     data class Frame(val text: String) : SocketEvent
     data class Closed(val reason: String) : SocketEvent
     data class Failure(val throwable: Throwable) : SocketEvent
+}
+
+// OkHttp closes a WebSocket when its queued messages cross 16 MiB. Keep one
+// MiB of headroom for control traffic so a large attachment is rejected here
+// instead of disconnecting every session on the socket.
+internal const val MAX_OUTBOUND_FRAME_BYTES = 15L * 1024 * 1024
+
+internal fun outboundFrameFits(
+    json: String,
+    queuedBytes: Long = 0L,
+    maxBytes: Long = MAX_OUTBOUND_FRAME_BYTES,
+): Boolean {
+    val frameBytes = json.utf8Size()
+    return queuedBytes <= maxBytes && frameBytes <= maxBytes - queuedBytes
 }
 
 internal fun buildHelloFrame(
@@ -109,7 +124,9 @@ class SessionSocket(
         _events.close()
     }
 
+    @Synchronized
     fun sendJson(json: String): Boolean {
+        if (!outboundFrameFits(json, queuedBytes = socket.queueSize())) return false
         return socket.send(json)
     }
 

@@ -3,6 +3,7 @@ package app.remotex.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -11,8 +12,10 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onChild
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -127,10 +130,10 @@ class ReleaseCriticalUiTest {
     }
 
     @Test
-    fun tabletHostsScreenUsesSeparateConnectionAndInventoryPanes() {
+    fun connectedTabletCentersInventoryAndOnlySplitsExpandedSettings() {
         compose.setContent {
             RemotexTheme {
-                Box(Modifier.requiredSize(800.dp, 600.dp)) {
+                Box(Modifier.requiredSize(1280.dp, 800.dp).testTag("tablet-root")) {
                     HostsScreen(
                         state = UiState(
                             userToken = "relay-secret",
@@ -160,6 +163,14 @@ class ReleaseCriticalUiTest {
         // as phones; the full form is one tap away behind "settings →".
         compose.onNodeWithText("RELAY CONNECTED").assertExists()
         compose.onNodeWithText("Refresh hosts").assertDoesNotExist()
+        val root = compose.onNodeWithTag("tablet-root").getUnclippedBoundsInRoot()
+        val centered = compose.onNodeWithTag("hosts-content").getUnclippedBoundsInRoot()
+        org.junit.Assert.assertTrue((centered.right - centered.left).value <= 840f)
+        org.junit.Assert.assertEquals(
+            (root.left + root.right).value / 2f,
+            (centered.left + centered.right).value / 2f,
+            1f,
+        )
         compose.onNodeWithText("settings →").performClick()
         compose.onNodeWithText("Refresh hosts").assertIsEnabled()
         compose.onNodeWithContentDescription("Relay address")
@@ -209,10 +220,17 @@ class ReleaseCriticalUiTest {
     }
 
     @Test
-    fun tabletThreadsScreenSeparatesActionsFromSavedSessions() {
+    fun tabletThreadsScreenUsesAReadableCenteredColumn() {
+        val threads = List(6) { index ->
+            ThreadInfo(
+                id = "019ff44f-$index",
+                preview = "A very long previous request that should stay a compact one-line row on tablets $index",
+                cwd = "/root/Projects/remotex/$index",
+            )
+        }
         compose.setContent {
             RemotexTheme {
-                Box(Modifier.requiredSize(800.dp, 600.dp)) {
+                Box(Modifier.requiredSize(1280.dp, 800.dp).testTag("tablet-root")) {
                     ThreadsScreen(
                         state = UiState(
                             selectedHostId = "host-1",
@@ -224,6 +242,7 @@ class ReleaseCriticalUiTest {
                                     online = true,
                                 ),
                             ),
+                            threads = threads,
                         ),
                         onRefresh = {},
                         onNewSession = {},
@@ -233,11 +252,17 @@ class ReleaseCriticalUiTest {
             }
         }
 
-        val actions = compose.onNodeWithTag("session-actions-pane").fetchSemanticsNode().boundsInRoot
-        val sessions = compose.onNodeWithTag("saved-sessions-pane").fetchSemanticsNode().boundsInRoot
-        org.junit.Assert.assertTrue(actions.center.x < sessions.center.x)
-        compose.onNodeWithText("New session").assertExists()
+        val root = compose.onNodeWithTag("tablet-root").getUnclippedBoundsInRoot()
+        val content = compose.onNodeWithTag("threads-content").getUnclippedBoundsInRoot()
+        org.junit.Assert.assertEquals(840f, (content.right - content.left).value, 1f)
+        org.junit.Assert.assertEquals(
+            (root.left + root.right).value / 2f,
+            (content.left + content.right).value / 2f,
+            1f,
+        )
+        compose.onNodeWithText("New session · choose folder").assertExists()
         compose.onNodeWithText("Previous sessions").assertExists()
+        compose.onNodeWithText("019ff44f", substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -247,16 +272,16 @@ class ReleaseCriticalUiTest {
                 Box(Modifier.requiredSize(1200.dp, 700.dp)) {
                     SessionScreen(
                         state = UiState(),
-                        onSend = {},
+                        onSend = { true },
                         onStop = {},
-                        onSteer = {},
-                        onQueue = {},
+                        onSteer = { true },
+                        onQueue = { true },
                         onRemoveQueued = {},
                         onLoadOlder = {},
                         onAttachImage = {},
                         onRemoveImage = {},
                         onPermissionsChange = {},
-                        onSlashCommand = { _, _ -> },
+                        onSlashCommand = { _, _ -> true },
                         onListWorkspace = { emptyList() },
                         onDeleteWorkspaceFile = {},
                         onRenameWorkspaceFile = { _, _ -> },
@@ -279,16 +304,16 @@ class ReleaseCriticalUiTest {
                 Box(Modifier.requiredSize(400.dp, 700.dp)) {
                     SessionScreen(
                         state = UiState(), // Idle status, no events
-                        onSend = {},
+                        onSend = { true },
                         onStop = {},
-                        onSteer = {},
-                        onQueue = {},
+                        onSteer = { true },
+                        onQueue = { true },
                         onRemoveQueued = {},
                         onLoadOlder = {},
                         onAttachImage = {},
                         onRemoveImage = {},
                         onPermissionsChange = {},
-                        onSlashCommand = { _, _ -> },
+                        onSlashCommand = { _, _ -> true },
                         onListWorkspace = { emptyList() },
                         onDeleteWorkspaceFile = {},
                         onRenameWorkspaceFile = { _, _ -> },
@@ -442,7 +467,7 @@ class ReleaseCriticalUiTest {
                             permissions = PermissionsMode.Default,
                         ),
                     ),
-                    onSend = {},
+                    onSend = { true },
                     onStop = {},
                     onAttachImage = {},
                     onRemoveImage = {},
@@ -456,5 +481,31 @@ class ReleaseCriticalUiTest {
         compose.onNodeWithContentDescription("Remove queued turn").assertExists()
             .assertWidthIsAtLeast(44.dp)
             .assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun composerBlocksSubmissionWhileAnImageIsPreparing() {
+        compose.setContent {
+            RemotexTheme {
+                ComposerBar(
+                    connected = true,
+                    pending = false,
+                    planMode = false,
+                    pendingImages = emptyList(),
+                    imagePreparing = true,
+                    onSend = { true },
+                    onStop = {},
+                    onAttachImage = {},
+                    onRemoveImage = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText("Preparing image…").assertExists()
+        compose.onNode(hasSetTextAction()).performTextReplacement("describe this image")
+        compose.onNodeWithContentDescription("Attach image").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Send", useUnmergedTree = true)
+            .onChild()
+            .assertIsNotEnabled()
     }
 }

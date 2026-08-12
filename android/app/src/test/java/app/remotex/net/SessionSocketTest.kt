@@ -74,6 +74,16 @@ class SessionSocketTest {
     }
 
     @Test
+    fun rejectsAFrameBeforeItReachesOkHttpsHardQueueLimit() {
+        assertTrue(outboundFrameFits("1234", maxBytes = 4))
+        org.junit.Assert.assertFalse(outboundFrameFits("12345", maxBytes = 4))
+        assertTrue(outboundFrameFits("12", queuedBytes = 2, maxBytes = 4))
+        org.junit.Assert.assertFalse(outboundFrameFits("123", queuedBytes = 2, maxBytes = 4))
+        // The production guard deliberately stays below OkHttp's 16 MiB cap.
+        assertTrue(MAX_OUTBOUND_FRAME_BYTES < 16L * 1024 * 1024)
+    }
+
+    @Test
     fun opensClientWebSocketAndSendsHelloFrame() = runBlocking {
         val firstMessage = CompletableDeferred<String>()
         val secondMessage = CompletableDeferred<String>()

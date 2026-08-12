@@ -32,6 +32,40 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-12 — repair Android images and tablet post-login layouts
+**Agent:** Codex team · **Branch:** agent/android-image-tablet-repair · **Status:** done locally; publication pending CI
+
+- **Why:** Android image prompts failed for ordinary large camera photos and
+  unsupported gallery formats, while the connected tablet Hosts/Threads flow
+  wasted most of the screen in permanent side rails.
+- **Changed:** `android/app/src/main/java/app/remotex/ui/ImageAttachment.kt`,
+  `RemotexViewModel.kt`, `SessionSocket.kt`, and the session composer wiring —
+  normalize device-decodable formats to Codex-supported JPEG, cap prompt
+  images below OkHttp's cumulative 16 MiB WebSocket queue limit, expose a
+  preparation state, prevent send/session races, keep drafts on failed sends,
+  preserve image correlations, and send attached slash-like text as a prompt.
+- **Changed:** Android Hosts/Threads/session components — connected tablets
+  now use a centered 840dp content column, expand relay settings on demand,
+  use compact one-line session rows without internal IDs, disclose folder
+  selection in the new-session CTA, render unclipped telemetry, and restore
+  at least 44dp picker/control targets.
+- **Changed:** Android unit/instrumentation coverage and release metadata —
+  added normalization, exact/cumulative frame-budget, attached-slash,
+  failed-draft, image-preparation, 1280×800 host/thread layout, and phone
+  responsive regressions; local fallback/docs now identify v0.4.1.
+- **Verified:** 55 debug + 55 release JVM tests, lint with zero errors, and
+  minified release assembly passed. All 21 connected tests passed on Android
+  15 Pixel Tablet and all 21 on Android 16 phone. Android CLI layout trees and
+  final 2560×1600 captures were inspected. Real Photo Picker flows passed end
+  to end through APK → relay → daemon → Codex: PNG returned `Red`, standard
+  8-bit HEIC returned `Orange`, and a 14 MiB 4000×4000 JPEG was normalized,
+  sent, acknowledged as an attached image, and left the socket connected.
+- **Left open:** daemon temp-file cleanup after a rejected image turn is
+  tracked as `I-036`; it does not affect successful sends or socket health.
+  Public signing and release publication remain pending exact-SHA GitHub CI.
+- **Restart needed:** install the rebuilt Android APK. No relay/web or daemon
+  restart is required for these Android-only product changes.
+
 ## 2026-08-12 — complete Android and web responsive UI audit
 **Agent:** Codex team · **Branch:** main · **Status:** done
 

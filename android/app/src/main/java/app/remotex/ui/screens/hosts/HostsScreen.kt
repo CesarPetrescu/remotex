@@ -2,6 +2,7 @@ package app.remotex.ui.screens.hosts
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -71,7 +73,8 @@ fun HostsScreen(
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val twoPane = useTwoPane(maxWidth, maxHeight)
             val connectionWidth = (maxWidth * 0.4f).coerceIn(280.dp, 360.dp)
-            if (twoPane) {
+            val showConnectionPane = twoPane && (state.hosts.isEmpty() || connectionExpanded)
+            if (showConnectionPane) {
                 Row(
                     modifier = Modifier.fillMaxSize().padding(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -104,23 +107,32 @@ fun HostsScreen(
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.TopCenter,
                 ) {
-                    item {
-                        ConnectionSection(
-                            state = state,
-                            relayUrl = relayUrl,
-                            onRelayUrlChange = onRelayUrlChange,
-                            onTokenChange = onTokenChange,
-                            onRefresh = onRefresh,
-                            expanded = connectionExpanded,
-                            onExpandedChange = { connectionExpanded = it },
-                            modifier = Modifier.testTag("connection-pane"),
-                        )
+                    LazyColumn(
+                        modifier = Modifier
+                            .widthIn(max = 840.dp)
+                            .fillMaxSize()
+                            .padding(12.dp)
+                            .testTag("hosts-content"),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        item {
+                            ConnectionSection(
+                                state = state,
+                                relayUrl = relayUrl,
+                                onRelayUrlChange = onRelayUrlChange,
+                                onTokenChange = onTokenChange,
+                                onRefresh = onRefresh,
+                                expanded = connectionExpanded,
+                                onExpandedChange = { connectionExpanded = it },
+                                modifier = Modifier.testTag("connection-pane"),
+                            )
+                        }
+                        hostItems(state, onHostTap)
                     }
-                    hostItems(state, onHostTap)
                 }
             }
         }

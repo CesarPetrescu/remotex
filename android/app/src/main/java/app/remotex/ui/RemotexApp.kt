@@ -190,6 +190,7 @@ fun RemotexApp(
                                 onRemoveQueued = vm::removeQueuedTurn,
                                 onLoadOlder = vm::loadOlderHistory,
                                 onAttachImage = vm::attachImage,
+                                onImagePickerActive = vm::setImagePickerActive,
                                 onRemoveImage = vm::removeImage,
                                 onModelChange = vm::setModel,
                                 onEffortChange = vm::setEffort,

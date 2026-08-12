@@ -141,7 +141,7 @@ private fun MetaButton(
         shape = RectangleShape,
         onClick = onClick,
         modifier = Modifier
-            .sizeIn(minWidth = 36.dp, minHeight = 32.dp)
+            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
             .semantics { contentDescription = accessibilityLabel },
     ) {
         Text(

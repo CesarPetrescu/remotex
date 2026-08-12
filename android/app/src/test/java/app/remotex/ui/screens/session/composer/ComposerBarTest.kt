@@ -15,7 +15,10 @@ class ComposerBarTest {
         val handled = handleSubmit(
             text = "/collab",
             hasAttachments = false,
-            onSlashCommand = { command, args -> commands += command to args },
+            onSlashCommand = { command, args ->
+                commands += command to args
+                true
+            },
             onSend = { error("slash command became a user turn") },
         )
 
@@ -30,12 +33,32 @@ class ComposerBarTest {
         val handled = handleSubmit(
             text = "",
             hasAttachments = true,
-            onSlashCommand = { _, _ -> },
-            onSend = sent::add,
+            onSlashCommand = { _, _ -> true },
+            onSend = { sent += it; true },
         )
 
         assertTrue(handled)
         assertEquals(listOf(""), sent)
+    }
+
+    @Test
+    fun slashTextWithAnImageIsSentAsAPrompt() {
+        val commands = mutableListOf<Pair<String, String>>()
+        val sent = mutableListOf<String>()
+
+        val handled = handleSubmit(
+            text = "/goal inspect this screenshot",
+            hasAttachments = true,
+            onSlashCommand = { command, args ->
+                commands += command to args
+                true
+            },
+            onSend = { sent += it; true },
+        )
+
+        assertTrue(handled)
+        assertTrue(commands.isEmpty())
+        assertEquals(listOf("/goal inspect this screenshot"), sent)
     }
 
     @Test
@@ -45,11 +68,35 @@ class ComposerBarTest {
         val handled = handleSubmit(
             text = "   ",
             hasAttachments = false,
-            onSlashCommand = { _, _ -> },
-            onSend = sent::add,
+            onSlashCommand = { _, _ -> true },
+            onSend = { sent += it; true },
         )
 
         assertFalse(handled)
         assertTrue(sent.isEmpty())
+    }
+
+    @Test
+    fun rejectedSubmissionKeepsTheDraft() {
+        val handled = handleSubmit(
+            text = "keep this text",
+            hasAttachments = true,
+            onSlashCommand = { _, _ -> true },
+            onSend = { false },
+        )
+
+        assertFalse(handled)
+    }
+
+    @Test
+    fun rejectedSlashCommandKeepsTheDraft() {
+        val handled = handleSubmit(
+            text = "/cd /work",
+            hasAttachments = false,
+            onSlashCommand = { _, _ -> false },
+            onSend = { error("known slash became a user turn") },
+        )
+
+        assertFalse(handled)
     }
 }
