@@ -91,10 +91,11 @@ fun SessionScreen(
             }
         }
     }
-    // imePadding() lifts the bottom of the column above the soft keyboard
-    // so the composer stays visible while the user is typing.
-    // enableEdgeToEdge() at the activity level + a transparent Scaffold
-    // means the composer otherwise sits underneath the IME / nav bar.
+    // imePadding() lifts the bottom of the column above the soft keyboard.
+    // This ONLY works with android:windowSoftInputMode="adjustResize" in the
+    // manifest: the unspecified default resolves to adjustPan here, which
+    // pans the whole window AND lets imePadding lift again — composer ends
+    // up a full keyboard-height above the IME (the 2026-08-12 bug).
     Box(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter,

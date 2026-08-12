@@ -2339,3 +2339,22 @@ saw it.
   test asserts tag present, caption gone). Relay rebuilt + redeployed
   (200); fresh APK on both emulators.
 - **Not done:** apple client (no Mac here) — filed I-035.
+
+## 2026-08-12 — Android keyboard double-lift fix (Claude)
+
+- **Task:** with the soft keyboard open the composer floated a full
+  keyboard-height above the IME with a giant void (user report, real
+  device; reproduced on medium_phone AVD with
+  show_ime_with_hard_keyboard=1).
+- **Cause:** the manifest set no windowSoftInputMode, so the
+  unspecified default resolved to adjustPan — the window panned up
+  (top bar off-screen) AND SessionScreen's imePadding lifted again.
+  Regressed when targetSdk went to 35 in #22.
+- **Fix:** `android:windowSoftInputMode="adjustResize"` on
+  MainActivity + keep `imePadding()` (comment updated to document the
+  contract). Verified by first probing a build with imePadding removed
+  (composer flush but pan hid the top bar) then the final combo: top
+  bar visible, transcript resizes, composer flush above the keyboard.
+- **Verified:** keyboard screenshots before/after on the phone AVD;
+  16/16 ReleaseCriticalUiTest on the tablet AVD; installed on both
+  emulators.
