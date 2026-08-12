@@ -1278,13 +1278,17 @@ final class RemotexViewModel: ObservableObject {
             if historyBuffer != nil, data.bool("replayed") { return }
             guard let itemId = data.string("item_id") else { return }
             updateItem(id: itemId) { item in
-                if let text = data.string("text"), !text.isEmpty {
+                let toolOutput = Self.completedToolOutput(data)
+                if !toolOutput.isEmpty {
+                    item.text = toolOutput
+                } else if let text = data.string("text"), !text.isEmpty {
                     item.text = text
                 }
                 if let output = data.string("output"), !output.isEmpty {
                     item.text = output
                 }
                 item.completed = true
+                item.failed = Self.toolCallFailed(data)
             }
 
         case "turn-started":
@@ -1704,6 +1708,53 @@ final class RemotexViewModel: ObservableObject {
                 detail: args?.string("command") ?? "",
                 completed: data.bool("replayed")
             )
+        case "mcp_tool_call":
+            let name = [data.string("server"), data.string("tool")]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: ".")
+            item = StreamItem(
+                id: itemId,
+                role: .tool,
+                title: "MCP · \(name.isEmpty ? "tool" : name)",
+                text: Self.mcpToolOutput(data),
+                detail: Self.jsonText(data["arguments"]),
+                completed: Self.toolCallCompleted(data),
+                failed: Self.toolCallFailed(data)
+            )
+        case "dynamic_tool_call":
+            let name = [data.string("namespace"), data.string("tool")]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: ".")
+            item = StreamItem(
+                id: itemId,
+                role: .tool,
+                title: "TOOL · \(name.isEmpty ? "dynamic" : name)",
+                text: Self.dynamicToolOutput(data),
+                detail: Self.jsonText(data["arguments"]),
+                completed: Self.toolCallCompleted(data),
+                failed: Self.toolCallFailed(data)
+            )
+        case "collab_agent_tool_call":
+            let title: String
+            switch data.string("tool") {
+            case "spawnAgent": title = "spawn agent"
+            case "sendInput": title = "send input"
+            case "resumeAgent": title = "resume agent"
+            case "wait": title = "wait agents"
+            case "closeAgent": title = "close agent"
+            default: title = data.string("tool") ?? "subagent"
+            }
+            item = StreamItem(
+                id: itemId,
+                role: .tool,
+                title: title,
+                text: Self.collabToolOutput(data),
+                detail: data.string("prompt") ?? "",
+                completed: Self.toolCallCompleted(data),
+                failed: Self.toolCallFailed(data)
+            )
         case "user_message":
             let localImages = sentImagesByMessageId[itemId] ?? []
             item = StreamItem(
@@ -1725,6 +1776,81 @@ final class RemotexViewModel: ObservableObject {
             )
         }
         return item
+    }
+
+    private static func toolCallCompleted(_ data: [String: Any]) -> Bool {
+        let status = data.string("status")
+        return data.bool("replayed") || status == "completed" || status == "failed"
+    }
+
+    private static func toolCallFailed(_ data: [String: Any]) -> Bool {
+        if data.string("status") == "failed" { return true }
+        if let error = data.string("error"), !error.isEmpty { return true }
+        return data.optionalBool("success") == false
+    }
+
+    private static func completedToolOutput(_ data: [String: Any]) -> String {
+        switch data.string("item_type") {
+        case "mcp_tool_call": return mcpToolOutput(data)
+        case "dynamic_tool_call": return dynamicToolOutput(data)
+        case "collab_agent_tool_call": return collabToolOutput(data)
+        default: return ""
+        }
+    }
+
+    private static func mcpToolOutput(_ data: [String: Any]) -> String {
+        var parts = [data.string("status") ?? "inProgress"]
+        if let duration = data.int("duration_ms") { parts.append("\(duration)ms") }
+        if let error = data.string("error"), !error.isEmpty {
+            parts.append("error: \(error)")
+        }
+        if let result = data.dictionary("result") {
+            let content = result["content"] as? [Any] ?? []
+            let text = content.compactMap { value -> String? in
+                if let value = value as? String { return value }
+                return (value as? [String: Any])?.string("text")
+            }.filter { !$0.isEmpty }.joined(separator: "\n")
+            if !text.isEmpty {
+                parts.append(text)
+            } else {
+                let structured = jsonText(result["structuredContent"])
+                if !structured.isEmpty {
+                    parts.append(structured)
+                } else {
+                    let raw = jsonText(result)
+                    if !raw.isEmpty { parts.append(raw) }
+                }
+            }
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    private static func dynamicToolOutput(_ data: [String: Any]) -> String {
+        var parts = [data.string("status") ?? "inProgress"]
+        if let duration = data.int("duration_ms") { parts.append("\(duration)ms") }
+        if let success = data.optionalBool("success") {
+            parts.append(success ? "success" : "failed")
+        }
+        let content = jsonText(data["content_items"])
+        if !content.isEmpty { parts.append(content) }
+        return parts.joined(separator: "\n")
+    }
+
+    private static func collabToolOutput(_ data: [String: Any]) -> String {
+        var output = data.string("status") ?? "inProgress"
+        if let model = data.string("model"), !model.isEmpty { output += " · \(model)" }
+        if let receivers = data["receiver_thread_ids"] as? [Any], !receivers.isEmpty {
+            output += " · \(receivers.count) thread\(receivers.count == 1 ? "" : "s")"
+        }
+        return output
+    }
+
+    private static func jsonText(_ value: Any?) -> String {
+        if let value = value as? String { return value }
+        if let value = value as? Bool { return value ? "true" : "false" }
+        if let value = value as? NSNumber { return value.stringValue }
+        if value is NSNull { return "" }
+        return prettyJSON(value) ?? ""
     }
 
     // Contract (C): the relay evicted frames we asked to replay. Mark the
@@ -1799,7 +1925,16 @@ private extension Dictionary where Key == String, Value == Any {
     }
 
     func optionalBool(_ key: String) -> Bool? {
-        guard self[key] != nil else { return nil }
-        return bool(key)
+        if let value = self[key] as? Bool {
+            return value
+        }
+        if let value = self[key] as? NSNumber {
+            return value.boolValue
+        }
+        if let value = self[key] as? String {
+            if value == "true" { return true }
+            if value == "false" { return false }
+        }
+        return nil
     }
 }
