@@ -23,6 +23,7 @@ export function HostsSidebar({
   onSelectHost,
   onNewSession,
   onResumeThread,
+  onOpenThreadInTab,
   onPrefetchThread,
   onAddHost,
   onOpenSettings,
@@ -117,6 +118,7 @@ export function HostsSidebar({
                 onPrefetch={onPrefetchThread}
                 active={state.session?.threadId === t.id || state.session?.thread_id === t.id}
                 onClick={() => onResumeThread(t)}
+                onOpenInTab={onOpenThreadInTab ? () => onOpenThreadInTab(t) : null}
               />
             ))
           )}
@@ -192,7 +194,7 @@ function HostRow({ host, active, onClick }) {
   );
 }
 
-function SessionRow({ thread, active, onClick, onPrefetch }) {
+function SessionRow({ thread, active, onClick, onPrefetch, onOpenInTab }) {
   const intent = usePrefetchIntent(() => onPrefetch?.(thread));
   const hasSpecificTitle = thread.title && thread.title_is_generic === false;
   const title = hasSpecificTitle ? thread.title : (thread.preview || '(no preview)');
@@ -212,6 +214,27 @@ function SessionRow({ thread, active, onClick, onPrefetch }) {
           {thread.cwd && <span>· {shortenCwd(thread.cwd)}</span>}
         </span>
       </span>
+      {onOpenInTab && (
+        <span
+          className="sidebar-session-tab-btn"
+          role="button"
+          tabIndex={0}
+          aria-label={`Open ${title} in a new session tab`}
+          title="Open in new session tab"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenInTab();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.stopPropagation();
+              onOpenInTab();
+            }
+          }}
+        >
+          ⊞
+        </span>
+      )}
     </button>
   );
 }

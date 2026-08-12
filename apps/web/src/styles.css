@@ -4605,3 +4605,205 @@ html, body { overscroll-behavior-y: none; }
     min-width: 44px;
   }
 }
+
+/* --- desktop multi-session tabs (VS Code style) ------------------------
+   Extra sessions open as tabs; up to 4 sessions render at once as a
+   grid, the rest stay connected in the background. Desktop-only — the
+   open-in-tab affordances are hidden on compact layouts. */
+
+.session-tabstrip,
+.sidebar-session-tab-btn {
+  display: none;
+}
+
+@media (min-width: 1001px) {
+  .dashboard-main.with-session-grid {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .session-tabstrip {
+    display: flex;
+    align-items: stretch;
+    flex: none;
+    overflow-x: auto;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    scrollbar-width: thin;
+  }
+
+  .session-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 220px;
+    padding: 7px 10px 7px 12px;
+    border: 0;
+    border-right: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink-dim);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .session-tab:hover {
+    background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  }
+
+  .session-tab.active {
+    background: var(--bg);
+    color: var(--ink);
+    box-shadow: inset 0 2px 0 var(--amber);
+  }
+
+  .session-tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .session-tab-close {
+    flex: none;
+    padding: 2px 4px;
+    color: var(--ink-dim);
+    border: 1px solid transparent;
+  }
+
+  .session-tab-close:hover {
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
+
+  .session-grid {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-auto-rows: 1fr;
+  }
+
+  .session-grid.count-2 {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .session-grid.count-3 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+
+  .session-grid.count-3 > .session-cell:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .session-grid.count-4 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+
+  .session-cell {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .session-pane {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .session-pane-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    font-size: 11px;
+  }
+
+  .session-pane-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink);
+  }
+
+  .session-pane-status {
+    flex: none;
+    color: var(--warn, #e0aa4e);
+  }
+
+  .session-pane-status.ok {
+    color: var(--ink-dim);
+  }
+
+  .session-pane-close {
+    flex: none;
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink-dim);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .session-pane-close:hover {
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
+
+  .session-pane-prompts {
+    flex: none;
+    max-height: 45%;
+    overflow: auto;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .session-pane-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  .sidebar-session {
+    position: relative;
+  }
+
+  .sidebar-session-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    margin-left: 4px;
+    border: 1px solid transparent;
+    color: var(--ink-dim);
+    font-size: 13px;
+    opacity: 0;
+  }
+
+  .sidebar-session:hover .sidebar-session-tab-btn,
+  .sidebar-session-tab-btn:focus-visible {
+    opacity: 1;
+  }
+
+  .sidebar-session-tab-btn:hover {
+    color: var(--amber);
+    border-color: var(--line-strong);
+  }
+}

@@ -2139,3 +2139,32 @@ saw it.
   re-entered the demo token. Watch for recurrence.
 - **Not mine:** parallel agent's uncommitted responsive pass still in the
   tree; untouched.
+
+## 2026-08-12 — web desktop multi-session tabs (Claude)
+
+- **Task:** VS Code-style session tabs in the web desktop view; max 4
+  sessions on screen at once, the rest stay as background tabs.
+- **Changed:**
+  - `apps/web/src/util/sessionTabs.js` — **new**. Pure LRU tab
+    bookkeeping (`openTab`/`focusTab`/`closeTab`, `MAX_ON_SCREEN = 4`)
+    + `threadTabTitle`. Unit-tested (6 tests in `sessionTabs.test.js`).
+  - `apps/web/src/components/SessionPane.jsx` — **new**. Extra chat
+    column: own `useRemotex` instance (own socket + approval queues),
+    header (title · status · ✕), inline PendingPromptsPanel, then the
+    stock SessionScreen. Safe: web persistence is keyed per sessionId.
+  - `apps/web/src/App.jsx` — tab strip above the main area, session
+    grid (1/2/3/4 → full, 2-col, 2+1, 2×2). Hidden tabs stay mounted
+    (display:none) so sockets and transcripts survive backgrounding.
+    Primary session is the first tab; extras cap at 3 while it exists.
+  - `apps/web/src/components/HostsSidebar.jsx` — hover ⊞ on session
+    rows opens that thread as a new tab (desktop only).
+  - `apps/web/src/styles.css` — tabstrip/grid/pane styles behind
+    `@media (min-width: 1001px)`; mobile untouched.
+- **Verified:** eslint clean; vitest 112/112; live Playwright drive
+  against the dev relay — opened primary + 4 tabs: strip showed 5 tabs
+  with exactly 4 visible panes (LRU evicted), all four sessions
+  streaming with working composers. Relay image rebuilt and redeployed
+  (healthy, HTTP 200).
+- **Note:** each pane runs its own inventory socket (same trade-off as
+  the Android split pane). Fine at ~4 tabs; revisit only if tab counts
+  grow.

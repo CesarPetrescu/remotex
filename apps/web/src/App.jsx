@@ -12,9 +12,17 @@ import { HostsSidebar } from './components/HostsSidebar';
 import { RightSidebar } from './components/RightSidebar';
 import { JumpPicker } from './components/JumpPicker';
 import { SettingsPanel } from './components/SettingsPanel';
+import { SessionPane } from './components/SessionPane';
 import { hostHomePath, hostDisplayName } from './util/host';
 import { recordVisit } from './util/folderHistory';
 import { clearToken } from './util/tokenStorage';
+import {
+  MAX_ON_SCREEN,
+  focusTab,
+  openTab,
+  closeTab,
+  threadTabTitle,
+} from './util/sessionTabs';
 
 const RIGHT_VIEWS = ['prompts', 'telemetry', 'off'];
 const RIGHT_VIEW_KEY = 'remotex.rightView';
@@ -159,8 +167,50 @@ function AuthenticatedApp({ auth, onLogout }) {
 
   const openNewSessionBrowser = () => openJump('search');
 
+  // Desktop multi-session tabs. Extra sessions beyond the primary one,
+  // VS Code style: every tab stays connected; at most MAX_ON_SCREEN
+  // sessions (primary + extras) render as a grid, the rest are
+  // background tabs that swap in on focus.
+  const [sessionTabs, setSessionTabs] = useState([]);
+  const [shownPanes, setShownPanes] = useState([]);
+
   const isSessionActive = !!state.session || state.status !== STATUS.Idle;
+  const maxExtras = isSessionActive ? MAX_ON_SCREEN - 1 : MAX_ON_SCREEN;
+  const visibleExtras = shownPanes.slice(0, maxExtras);
+
+  const openThreadInTab = (thread) => {
+    const next = openTab(
+      sessionTabs,
+      shownPanes,
+      {
+        key: thread.id,
+        threadId: thread.id,
+        hostId: thread.host_id || state.selectedHostId,
+        cwd: thread.cwd || null,
+        title: threadTabTitle(thread),
+      },
+      maxExtras,
+    );
+    setSessionTabs(next.tabs);
+    setShownPanes(next.shown);
+    r.goToSession();
+    closeDrawers();
+  };
+  const focusPane = (key) => {
+    setShownPanes(focusTab(shownPanes, key, maxExtras));
+    r.goToSession();
+  };
+  const closePane = (key) => {
+    const next = closeTab(sessionTabs, shownPanes, key);
+    setSessionTabs(next.tabs);
+    setShownPanes(next.shown);
+  };
+
   const onSessionScreen = state.screen === SCREENS.Session && isSessionActive;
+  // Tabs alone can hold the session screen open even with no primary
+  // session (e.g. every chat was opened as a tab from the sidebar).
+  const onSessionGrid =
+    state.screen === SCREENS.Session && (isSessionActive || sessionTabs.length > 0);
   const onFilesScreen = state.screen === SCREENS.Files;
 
   const layoutClass = [
@@ -216,31 +266,106 @@ function AuthenticatedApp({ auth, onLogout }) {
           threadId: thread.id,
           cwd: thread.cwd || null,
         })}
+        onOpenThreadInTab={openThreadInTab}
         onPrefetchThread={r.prefetchThreadPreview}
       />
 
-      <main className="dashboard-main">
-        {onSessionScreen ? (
-          <SessionScreen
-            state={state}
-            onSend={r.sendTurn}
-            onStop={r.interruptTurn}
-            onSteer={r.steerTurn}
-            onQueue={r.queueTurn}
-            onRemoveQueued={r.removeQueuedTurn}
-            onLoadOlder={r.loadOlderHistory}
-            onModelChange={r.setModel}
-            onEffortChange={r.setEffort}
-            onPermissionsChange={r.setPermissions}
-            onAttachImage={r.attachImage}
-            onRemoveImage={r.removeImage}
-            workspaceApi={{
-              apiRef: r.apiRef,
-              upload: r.workspaceUploadFile,
-              sendSlash: r.sendSlash,
-            }}
-          />
-        ) : onFilesScreen ? (
+      <main className={`dashboard-main ${onSessionGrid ? 'with-session-grid' : ''}`}>
+        {sessionTabs.length > 0 && (
+          <div className="session-tabstrip" role="tablist" aria-label="Open sessions">
+            {isSessionActive && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={onSessionScreen}
+                className={`session-tab primary ${onSessionScreen ? 'active' : ''}`}
+                onClick={() => r.goToSession()}
+                title={state.session?.cwd || 'session'}
+              >
+                {state.session?.cwd?.split('/').filter(Boolean).pop() || 'session'}
+              </button>
+            )}
+            {sessionTabs.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={visibleExtras.includes(t.key)}
+                className={`session-tab ${visibleExtras.includes(t.key) ? 'active' : ''}`}
+                onClick={() => focusPane(t.key)}
+                title={t.title}
+              >
+                <span className="session-tab-label">{t.title}</span>
+                <span
+                  className="session-tab-close"
+                  role="button"
+                  aria-label={`Close session tab ${t.title}`}
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closePane(t.key);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.stopPropagation();
+                      closePane(t.key);
+                    }
+                  }}
+                >
+                  ✕
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div
+          className={`session-grid count-${(onSessionScreen ? 1 : 0) + visibleExtras.length}`}
+          style={{ display: onSessionGrid ? undefined : 'none' }}
+        >
+          {onSessionScreen && (
+            <div className="session-cell">
+              <SessionScreen
+                state={state}
+                onSend={r.sendTurn}
+                onStop={r.interruptTurn}
+                onSteer={r.steerTurn}
+                onQueue={r.queueTurn}
+                onRemoveQueued={r.removeQueuedTurn}
+                onLoadOlder={r.loadOlderHistory}
+                onModelChange={r.setModel}
+                onEffortChange={r.setEffort}
+                onPermissionsChange={r.setPermissions}
+                onAttachImage={r.attachImage}
+                onRemoveImage={r.removeImage}
+                workspaceApi={{
+                  apiRef: r.apiRef,
+                  upload: r.workspaceUploadFile,
+                  sendSlash: r.sendSlash,
+                }}
+              />
+            </div>
+          )}
+          {/* Hidden tabs stay mounted so their sockets and transcripts
+              survive being backgrounded, exactly like editor tabs. */}
+          {sessionTabs.map((t) => (
+            <div
+              key={t.key}
+              className="session-cell session-cell-extra"
+              style={{ display: visibleExtras.includes(t.key) ? undefined : 'none' }}
+            >
+              <SessionPane
+                token={auth.token}
+                remember={auth.remember}
+                hostId={t.hostId}
+                threadId={t.threadId}
+                cwd={t.cwd}
+                title={t.title}
+                onClose={() => closePane(t.key)}
+              />
+            </div>
+          ))}
+        </div>
+        {onSessionGrid ? null : onFilesScreen ? (
           <FilesScreen
             state={state}
             onNavigate={r.browseDir}
