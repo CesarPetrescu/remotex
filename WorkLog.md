@@ -2232,3 +2232,16 @@ saw it.
   with all three sections and correct checkmarks; 4-pane grid shows a
   per-pane summary next to each send button. Relay rebuilt + redeployed
   (HTTP 200).
+
+## 2026-08-12 — grid panes: chat fills the pane (Claude)
+
+- **Task:** user flagged big dead space beside the chat in split panes.
+- **Cause:** single-column reading typography applied inside panes —
+  `.agent-group` width `min(82%, 900px)` and `--measure: 72ch` on
+  markdown left an ~18% empty gutter in every split pane.
+- **Changed:** `styles.css` — inside `.session-grid:not(.count-1)`:
+  agent groups 100% width, `--measure: 100%`, user bubbles 92%,
+  stream padding/gap 14/12 → 10/10. Single full-width view keeps the
+  reading measure.
+- **Verified:** vitest 112/112; Playwright 2-pane at 2000px — content
+  spans the full pane, no gutter. Relay rebuilt + redeployed (200).

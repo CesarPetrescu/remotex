@@ -4880,3 +4880,23 @@ html, body { overscroll-behavior-y: none; }
 @media (max-width: 1000px) {
   .composer-options-btn { max-width: 150px; }
 }
+
+/* Multi-pane grids: reading-measure gutters (82% agent column, 72ch
+   markdown measure) are single-wide-column typography. In a split every
+   pixel is chat real estate — content uses the full pane width. */
+.session-grid:not(.count-1) .session-cell {
+  --measure: 100%;
+}
+
+.session-grid:not(.count-1) .agent-group {
+  width: 100%;
+}
+
+.session-grid:not(.count-1) .user-bubble {
+  max-width: 92%;
+}
+
+.session-grid:not(.count-1) .stream {
+  padding: 10px;
+  gap: 10px;
+}
