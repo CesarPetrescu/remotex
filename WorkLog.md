@@ -2288,3 +2288,26 @@ saw it.
 - **Verified:** vitest 112/112; Playwright screenshots single + 2-pane:
   one shell per pane, aligned heights, round send. Relay rebuilt +
   redeployed (200).
+
+## 2026-08-12 — Claude-style composer footer + duplicate-chat guards (Claude)
+
+- **Task:** model/reasoning bottom-right and permissions bottom-left of
+  the composer shell (Claude layout); stop the same chat opening twice
+  on screen.
+- **Changed:**
+  - `Pickers.jsx` — rewritten: `ModelSelect` / `ReasoningSelect` /
+    `PermissionsSelect`, quiet text buttons with a tiny caret sharing a
+    `MiniSelect` portal primitive (same dd menu styling; phone bottom
+    sheet for free). ⚙ popover + settings summary removed.
+  - `Composer.jsx` — shell is now prompt on top + footer row: 📎 +
+    permissions left, spacer, model + reasoning + round send right.
+  - `App.jsx` — dedupe guards: ⊞ on the primary session's thread just
+    focuses it; resuming a thread already open as a tab focuses that
+    pane instead of loading it into the primary next to itself.
+  - `HostsSidebar.jsx` — no ⊞ on the active row.
+  - `styles.css` — column shell, `.composer-foot`, `.mini-select` rules;
+    obsolete ⚙/summary rules dropped; 44px touch minimums kept.
+- **Verified:** eslint clean, vitest 112/112, Playwright: footer laid out
+  left/right as asked, model menu opens with ✓ on current, active row
+  has no ⊞ (count 0), grid panes each show their own values. Relay
+  rebuilt + redeployed (200).

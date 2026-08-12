@@ -4831,34 +4831,6 @@ html, body { overscroll-behavior-y: none; }
    One popover next to send replaces the three chips; the trigger shows
    the live per-chat values so small grid panes still display them. */
 
-.composer-options { display: flex; min-width: 0; }
-
-.composer-options-btn {
-  min-width: 44px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  font-size: 15px;
-  color: var(--ink-dim);
-  cursor: pointer;
-}
-.composer-options-btn:hover { color: var(--ink); }
-
-/* Read-only settings line, right end of the /plan · /goal row — keeps
-   per-chat model/effort/perms visible without shrinking the input. */
-.composer-settings {
-  margin-left: auto;
-  align-self: center;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--ink-dim);
-}
-.composer-settings .co-model { color: var(--amber); }
-.composer-settings .co-perms.danger { color: var(--warn); }
-.composer-options-btn.danger { border-color: var(--warn); color: var(--warn); }
 
 
 .dd-options { max-height: min(62vh, 520px); overflow-y: auto; }
@@ -4900,13 +4872,50 @@ html, body { overscroll-behavior-y: none; }
    send. Replaces the four separate boxes of mismatched heights. */
 
 .prompt-row {
-  align-items: flex-end;
-  gap: 2px;
-  padding: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 4px 6px 6px;
   background: var(--panel-2);
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: 18px;
 }
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.composer-foot-spacer { flex: 1; }
+
+/* Quiet text selectors, Claude-style: value only, tiny caret. */
+.mini-select-wrap { display: flex; min-width: 0; }
+
+.mini-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 180px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-select:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.mini-select.model { color: var(--amber); }
+.mini-select.danger { color: var(--warn); }
+.mini-select-caret { font-size: 8px; opacity: 0.7; }
 
 .prompt-row:focus-within {
   border-color: var(--line-strong);
@@ -4920,29 +4929,6 @@ html, body { overscroll-behavior-y: none; }
   padding: 8px 6px;
 }
 
-.composer .attach,
-.composer .composer-options-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  flex: none;
-}
-
-.composer .attach:hover:not(:disabled),
-.composer .composer-options-btn:hover {
-  background: color-mix(in srgb, var(--ink) 10%, transparent);
-}
-
-.composer .composer-options-btn.danger {
-  color: var(--warn);
-}
 
 .composer .turn-actions {
   flex: none;
@@ -4975,7 +4961,6 @@ html, body { overscroll-behavior-y: none; }
 /* Touch layouts keep their 44px minimums inside the shell. */
 @media (max-width: 1000px) {
   .composer .attach,
-  .composer .composer-options-btn,
   .composer .send-stop.send {
     width: 44px;
     height: 44px;
@@ -4986,3 +4971,28 @@ html, body { overscroll-behavior-y: none; }
     min-height: 44px;
   }
 }
+
+/* Footer attach matches the mini-selects: quiet, round, borderless. */
+.composer .attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  flex: none;
+}
+.composer .attach:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.composer .send-stop.send {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  font-size: 16px;
+}
+.composer .prompt { min-height: 30px; padding: 8px 8px 4px; }

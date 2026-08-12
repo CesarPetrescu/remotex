@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ComposerOptions, ComposerSettingsSummary } from './Pickers';
+import { ModelSelect, ReasoningSelect, PermissionsSelect } from './Pickers';
 import { SendOrStopButton } from './SendOrStopButton';
 
 // Daemon-supported slash commands. Wire matches services/daemon/adapters/stdio.py.
@@ -255,12 +255,6 @@ export function Composer({
           <span className="plan-chip-dot" />
           {goalMode ? 'goal on' : '/goal'}
         </button>
-        <ComposerSettingsSummary
-          model={model}
-          effort={effort}
-          permissions={permissions}
-          models={models}
-        />
       </div>
       {slashOpen && slashMatches.length > 0 && (
         <div className="slash-popover" role="listbox">
@@ -299,24 +293,10 @@ export function Composer({
           </div>
         </div>
       )}
+      {/* One shell, Claude-style: prompt on top, then a footer row with
+          attach + permissions bottom-left and model + reasoning + send
+          bottom-right. */}
       <div className="prompt-row">
-        <button
-          type="button"
-          className="attach"
-          disabled={!enabled}
-          onClick={() => fileInputRef.current?.click()}
-          aria-label="Attach image"
-        >
-          📎
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={onPickFiles}
-        />
         <textarea
           ref={promptRef}
           className="prompt"
@@ -327,24 +307,43 @@ export function Composer({
           onKeyDown={onKeyDown}
           disabled={!enabled}
         />
-        <ComposerOptions
-          model={model}
-          effort={effort}
-          permissions={permissions}
-          models={models}
-          onModelChange={onModelChange}
-          onEffortChange={onEffortChange}
-          onPermissionsChange={onPermissionsChange}
-        />
-        <SendOrStopButton
-          pending={pending}
-          canSend={canSend}
-          canSteer={canSteer}
-          canQueue={canQueue}
-          onSend={submit}
-          onSteer={submit}
-          onQueue={queue}
-        />
+        <div className="composer-foot">
+          <button
+            type="button"
+            className="attach"
+            disabled={!enabled}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach image"
+          >
+            📎
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={onPickFiles}
+          />
+          <PermissionsSelect value={permissions} onChange={onPermissionsChange} />
+          <span className="composer-foot-spacer" />
+          <ModelSelect value={model} models={models} onChange={onModelChange} />
+          <ReasoningSelect
+            model={model}
+            value={effort}
+            models={models}
+            onChange={onEffortChange}
+          />
+          <SendOrStopButton
+            pending={pending}
+            canSend={canSend}
+            canSteer={canSteer}
+            canQueue={canQueue}
+            onSend={submit}
+            onSteer={submit}
+            onQueue={queue}
+          />
+        </div>
       </div>
     </div>
   );

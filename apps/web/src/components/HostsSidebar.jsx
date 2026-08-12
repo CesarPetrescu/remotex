@@ -111,16 +111,21 @@ export function HostsSidebar({
               {selectedHost?.online ? 'no previous sessions' : 'select an online host'}
             </SidebarEmpty>
           ) : (
-            state.threads.map((t) => (
-              <SessionRow
-                key={t.id}
-                thread={t}
-                onPrefetch={onPrefetchThread}
-                active={state.session?.threadId === t.id || state.session?.thread_id === t.id}
-                onClick={() => onResumeThread(t)}
-                onOpenInTab={onOpenThreadInTab ? () => onOpenThreadInTab(t) : null}
-              />
-            ))
+            state.threads.map((t) => {
+              const active = state.session?.threadId === t.id || state.session?.thread_id === t.id;
+              return (
+                <SessionRow
+                  key={t.id}
+                  thread={t}
+                  onPrefetch={onPrefetchThread}
+                  active={active}
+                  onClick={() => onResumeThread(t)}
+                  // The active chat is already on screen — no ⊞, a second
+                  // copy of the same session is never useful.
+                  onOpenInTab={onOpenThreadInTab && !active ? () => onOpenThreadInTab(t) : null}
+                />
+              );
+            })
           )}
         </SidebarSection>
       </div>

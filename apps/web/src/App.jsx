@@ -151,6 +151,14 @@ function AuthenticatedApp({ auth, onLogout }) {
   };
 
   const openSession = ({ threadId, cwd, hostId } = {}) => {
+    // Mirror guard: resuming a thread that's already open as a tab
+    // focuses that pane instead of loading the same chat into the
+    // primary session next to it.
+    if (threadId && sessionTabs.some((t) => t.key === threadId)) {
+      focusPane(threadId);
+      closeDrawers();
+      return;
+    }
     if (cwd) recordVisit(hostId || state.selectedHostId, cwd);
     r.openSession({ threadId, cwd, hostId });
     closeDrawers();
@@ -179,6 +187,14 @@ function AuthenticatedApp({ auth, onLogout }) {
   const visibleExtras = shownPanes.slice(0, maxExtras);
 
   const openThreadInTab = (thread) => {
+    // Never the same chat twice on screen: if this thread IS the primary
+    // session, just focus it instead of opening a duplicate pane.
+    const primaryThreadId = state.session?.threadId || state.session?.thread_id;
+    if (thread.id && thread.id === primaryThreadId) {
+      r.goToSession();
+      closeDrawers();
+      return;
+    }
     const next = openTab(
       sessionTabs,
       shownPanes,
