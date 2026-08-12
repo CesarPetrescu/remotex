@@ -32,6 +32,47 @@ file is the only shared memory.
 
 ---
 
+## 2026-08-12 — publish and independently verify Codex Security parity in v0.2.2
+**Agent:** Codex team · **Branch:** agent/v022-security-release-record · **Status:** done; shared-host reload safely deferred
+
+- **Why:** close the Codex Security compatibility work only after the native
+  clients and the exact public release files passed independent verification.
+- **Changed:** PR `#24` was squash-merged as
+  `0c3f3b0c27a8c09bdc35c5c76d747ff0fbdc1d9e`; annotated tag `v0.2.2`
+  points to that exact commit, and GitHub Release `v0.2.2` is the latest
+  stable with Android, iPhone, Windows setup/portable, checksums, and build
+  provenance. This entry changes no product code.
+- **Verified:** PR CI run `31570916497` passed all 13 checks, including iPhone
+  compile/XCTest, Android JVM/lint/emulator UI, Windows packaging, web, backend,
+  audits, and relay↔daemon e2e. Post-merge CI `31571723018`, rolling Release
+  `31571723029`, and stable Release `31572536203` all passed.
+- **Verified:** fresh public downloads pass `SHA256SUMS.txt`; all four binaries
+  pass GitHub attestation verification pinned to this repository, release
+  workflow, tag ref, and source commit. The APK is `app.remotex` v0.2.2/code
+  202, non-debuggable, v2-signed by exactly one signer with the pinned release
+  certificate, and installed/cold-launched from the public file. Phone and
+  tablet onboarding layouts were inspected through Android CLI layout dumps
+  and screenshots. The unsigned IPA is `app.remotex.ios` 0.2.2/build 131;
+  both Windows NSIS packages contain Electron app version 0.2.2. Extracted
+  scans found no maintainer relay URL or demo credentials.
+- **Verified:** the official `codex-security` checkout at `455d7c8` builds,
+  lints, packages, audits, initializes its 43-tool MCP server, parses all 34
+  Python files, and passes 1,038 TypeScript tests with 10 platform skips and
+  zero failures. The curated `codex-security` plugin is installed and enabled
+  under `/root/.codex`; a real Remotex stdio adapter completed its safe empty-
+  repository chat-flow smoke with no file changes.
+- **Live state:** the public HTTPS app returns 200, relay/Postgres are healthy,
+  SparkTunnel and `remotex-daemon` are running. No web bundle changed in this
+  release, so no relay rebuild was required.
+- **Left open:** the generic MCP App workbench host remains `I-026`; newer
+  detached deep-scan lifetime behavior remains `I-027`. No paid/non-empty
+  security scan was run. Existing distribution limitations `I-022`–`I-024`
+  are unchanged.
+- **Restart needed:** new stdio sessions already load the plugin. The managed
+  shared app-server and `remotex-daemon` still need a coordinated restart after
+  the two currently open Remotex sessions finish; restarting now would disrupt
+  live work.
+
 ## 2026-08-12 — add Codex Security chat compatibility and iPhone tool parity
 **Agent:** Codex team · **Branch:** agent/codex-security-compat · **Status:** local implementation done; macOS CI/publication pending
 
